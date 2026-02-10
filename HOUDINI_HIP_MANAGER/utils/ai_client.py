@@ -538,25 +538,8 @@ HOUDINI_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_node_details",
-            "description": "获取节点概况：类型、状态标志(display/render/bypass)、错误信息、输入输出连接、以及用户修改过的非默认参数值。用于了解节点整体状况和连接关系，不含完整参数列表。如需查看所有可用参数请用 get_node_parameters。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "node_path": {
-                        "type": "string",
-                        "description": "节点完整路径如 '/obj/geo1/box1'"
-                    }
-                },
-                "required": ["node_path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "get_node_parameters",
-            "description": "获取节点的完整参数列表：每个参数的内部名称、类型(Float/Int/Menu等)、标签、默认值、当前值、菜单选项。设置参数前必须先调用此工具确认正确的参数名和类型，不要猜测。不含连接和错误信息，如需查看请用 get_node_details。参数较多时支持分页。",
+            "description": "获取节点的完整参数列表及概况信息：类型、状态标志(display/render/bypass)、错误信息、输入输出连接、以及每个参数的内部名称、类型(Float/Int/Menu等)、标签、默认值、当前值、菜单选项。设置参数前必须先调用此工具确认正确的参数名和类型，不要猜测。参数较多时支持分页。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1185,7 +1168,7 @@ class AIClient:
 
     # 查询型工具 & 操作型工具分类（共用常量）
     _QUERY_TOOLS = frozenset({
-        'get_network_structure', 'get_node_details', 'get_node_parameters',
+        'get_network_structure', 'get_node_parameters',
         'list_children',
         'read_selection', 'search_node_types',
         'semantic_search_nodes', 'find_nodes_by_param', 'check_errors',
@@ -2682,8 +2665,7 @@ class AIClient:
 
 安全操作规则（必须遵守）:
 -操作节点前先用get_network_structure确认节点存在
--了解节点状况(连接/错误/状态)用get_node_details
--设置参数前必须先用get_node_parameters查询正确的参数名和类型,不要猜测参数名
+-设置参数前必须先用get_node_parameters查询正确的参数名和类型,不要猜测参数名(该工具同时返回节点状态、连接、错误等概况信息)
 -execute_python中必须检查None:node=hou.node(path);if node:...
 -创建节点后用返回的路径操作,不要猜测路径
 -连接节点前确认两个节点都已存在

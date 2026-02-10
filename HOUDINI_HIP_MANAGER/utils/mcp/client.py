@@ -2107,13 +2107,6 @@ class HoudiniMCP:
                 text, cache_key, hint, page)}
         return {"success": False, "error": data.get("error", "未知错误")}
 
-    def _tool_get_node_details(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        node_path = args.get("node_path", "")
-        if not node_path:
-            return {"success": False, "error": "缺少 node_path 参数"}
-        ok, text = self.get_node_details_text(node_path)
-        return {"success": ok, "result": text if ok else "", "error": "" if ok else text}
-
     def _tool_get_node_parameters(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """获取节点的所有可用参数（名称、类型、默认值、当前值），支持分页"""
         node_path = args.get("node_path", "")
@@ -2139,10 +2132,46 @@ class HoudiniMCP:
             node_type = node.type()
             type_key = f"{node_type.category().name().lower()}/{node_type.name()}"
             lines = [
-                f"## {node.name()} 的可用参数",
+                f"## {node.name()} ({node.path()})",
                 f"类型: {type_key} ({node_type.description()})",
-                "",
             ]
+
+            # ★ 节点概况（原 get_node_details 功能合并） ★
+            # 状态标志
+            flags = []
+            if hasattr(node, 'isDisplayFlagSet') and node.isDisplayFlagSet():
+                flags.append('display')
+            if hasattr(node, 'isRenderFlagSet') and node.isRenderFlagSet():
+                flags.append('render')
+            if hasattr(node, 'isBypassed') and node.isBypassed():
+                flags.append('bypass')
+            if hasattr(node, 'isLocked') and node.isLocked():
+                flags.append('locked')
+            if flags:
+                lines.append(f"标志: {', '.join(flags)}")
+
+            # 错误信息
+            try:
+                errs = node.errors()
+                if errs:
+                    lines.append(f"⚠ 错误: {'; '.join(errs[:3])}")
+            except Exception:
+                pass
+
+            # 输入连接
+            inputs = []
+            for i, inp in enumerate(node.inputs()):
+                if inp is not None:
+                    inputs.append(f"[{i}]{inp.path()}")
+            if inputs:
+                lines.append(f"输入: {', '.join(inputs)}")
+
+            # 输出连接
+            outputs = [o.path() for o in node.outputs()] if node.outputs() else []
+            if outputs:
+                lines.append(f"输出: {', '.join(outputs[:5])}")
+
+            lines.append("")  # 空行分隔
 
             # 遍历所有参数模板（完整列表）
             parm_group = node_type.parmTemplateGroup()
@@ -2664,7 +2693,6 @@ class HoudiniMCP:
     # 工具用法提示：参数缺失或调用出错时附带正确调用方式
     _TOOL_USAGE: Dict[str, str] = {
         "get_network_structure": 'get_network_structure(network_path="/obj/geo1", page=1)',
-        "get_node_details": 'get_node_details(node_path="/obj/geo1/box1")',
         "get_node_parameters": 'get_node_parameters(node_path="/obj/geo1/box1", page=1)',
         "set_node_parameter": 'set_node_parameter(node_path="/obj/geo1/box1", param_name="sizex", value=2.0)',
         "create_node": 'create_node(parent_path="/obj/geo1", node_type="box", node_name="box1")',
@@ -2696,7 +2724,6 @@ class HoudiniMCP:
     _TOOL_DISPATCH: Dict[str, str] = {
         "create_wrangle_node": "_tool_create_wrangle_node",
         "get_network_structure": "_tool_get_network_structure",
-        "get_node_details": "_tool_get_node_details",
         "get_node_parameters": "_tool_get_node_parameters",
         "set_node_parameter": "_tool_set_node_parameter",
         "create_node": "_tool_create_node",

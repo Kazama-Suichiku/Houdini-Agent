@@ -2042,7 +2042,7 @@ Todo 管理规则（严格遵守）:
     # ------------------------------------------------------------------
     # 所有注册的工具名称（用于检测伪造）
     _ALL_TOOL_NAMES = (
-        'create_wrangle_node|get_network_structure|get_node_details'
+        'create_wrangle_node|get_network_structure'
         '|get_node_parameters|set_node_parameter|create_node|create_nodes_batch'
         '|connect_nodes|delete_node|search_node_types|semantic_search_nodes'
         '|list_children|read_selection|set_display_flag'
@@ -2158,7 +2158,6 @@ Todo 管理规则（严格遵守）:
             'connect_nodes': ['from_path', 'to_path', 'input_index'],
             'set_node_parameter': ['node_path', 'param_name', 'value'],
             'get_node_parameters': ['node_path'],
-            'get_node_details': ['node_path'],
             'get_network_structure': ['network_path'],
             'set_display_flag': ['node_path', 'display', 'render'],
             'execute_python': ['code'],
