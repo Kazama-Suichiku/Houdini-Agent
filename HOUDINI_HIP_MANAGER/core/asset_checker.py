@@ -58,7 +58,7 @@ class AssetChecker:
             if issues:
                 return False, "\n".join(issues)
             
-            return True, f"检测通过！点数: {len(geo.points())}, 图元数: {len(geo.prims())}\n请检查是否遗漏属性或点/图元数量是否符合预期。"
+            return True, f"检测通过！点数: {geo.intrinsicValue('pointcount')}, 图元数: {geo.intrinsicValue('primitivecount')}\n请检查是否遗漏属性或点/图元数量是否符合预期。"
         except Exception as e:
             QtWidgets.QMessageBox.critical(self.parent_window, "错误", f"检查属性失败:\n{e}", QtWidgets.QMessageBox.Ok)
             return False, f"检查属性失败: {e}"

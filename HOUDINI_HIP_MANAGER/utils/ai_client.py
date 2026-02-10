@@ -40,7 +40,7 @@ except ImportError:
 # ============================================================
 
 class WebSearcher:
-    """联网搜索工具 - 多引擎自动降级（Brave → DuckDuckGo）"""
+    """联网搜索工具 - 多引擎自动降级（Brave → DuckDuckGo）+ 缓存"""
     
     # Brave Search（免费 HTML 抓取，Svelte SSR，结果质量好）
     BRAVE_URL = "https://search.brave.com/search"
@@ -59,10 +59,26 @@ class WebSearcher:
         'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate',
     }
+
+    # 搜索结果缓存：key -> (timestamp, result)
+    _search_cache: Dict[str, tuple] = {}
+    _CACHE_TTL = 300  # 5 分钟
+
+    # 网页正文缓存：url -> (timestamp, text_lines)
+    _page_cache: Dict[str, tuple] = {}
+    _PAGE_CACHE_TTL = 600  # 10 分钟
+
+    # Trafilatura 可用性
+    _HAS_TRAFILATURA = False
     
     def __init__(self):
-        pass
-
+        # 检测 trafilatura 可用性（只检测一次）
+        if not WebSearcher._HAS_TRAFILATURA:
+            try:
+                import trafilatura  # noqa: F401
+                WebSearcher._HAS_TRAFILATURA = True
+            except ImportError:
+                pass
     # ------------------------------------------------------------------
     # 编码修复：requests 默认 ISO-8859-1 会导致中文乱码
     # ------------------------------------------------------------------
@@ -119,26 +135,38 @@ class WebSearcher:
             return text
     
     # ------------------------------------------------------------------
-    # 搜索
+    # 搜索（带缓存 + 三级降级）
     # ------------------------------------------------------------------
 
     def search(self, query: str, max_results: int = 5, timeout: int = 10) -> Dict[str, Any]:
-        """执行网络搜索（多引擎自动降级）
+        """执行网络搜索（缓存 + 多引擎自动降级）
         
-        优先级：Brave 抓取 → DuckDuckGo 抓取
+        优先级：缓存 → Brave 抓取 → DuckDuckGo 抓取
         任一引擎成功且有结果即返回，否则尝试下一个。
         """
+        # --- 缓存查找 ---
+        cache_key = f"{query}|{max_results}"
+        cached = self._search_cache.get(cache_key)
+        if cached:
+            ts, cached_result = cached
+            if (time.time() - ts) < self._CACHE_TTL:
+                cached_result = dict(cached_result)
+                cached_result['source'] = cached_result.get('source', '') + '(cached)'
+                return cached_result
+
         errors = []
         
         # 1. Brave Search（免费 HTML 抓取，结果质量好）
         result = self._search_brave(query, max_results, timeout)
         if result.get('success') and result.get('results'):
+            self._search_cache[cache_key] = (time.time(), result)
             return result
         errors.append(f"Brave: {result.get('error', 'no results')}")
         
-        # 2. DuckDuckGo 降级
+        # 2. DuckDuckGo（备用）
         result = self._search_duckduckgo(query, max_results, timeout)
         if result.get('success') and result.get('results'):
+            self._search_cache[cache_key] = (time.time(), result)
             return result
         errors.append(f"DDG: {result.get('error', 'no results')}")
         
@@ -330,12 +358,12 @@ class WebSearcher:
     # (Bing API 已移除 — 需要付费 Azure Key，不实用)
 
     # ------------------------------------------------------------------
-    # 网页抓取
+    # 网页抓取（trafilatura 优先 → 正则降级 + 页面缓存）
     # ------------------------------------------------------------------
-    
+
     def fetch_page_content(self, url: str, max_lines: int = 80,
                            start_line: int = 1, timeout: int = 15) -> Dict[str, Any]:
-        """获取网页内容（自动修正编码 + 按行分页，支持翻页）
+        """获取网页内容（trafilatura 正文提取 + 按行分页，支持翻页）
         
         Args:
             url: 网页 URL
@@ -345,74 +373,105 @@ class WebSearcher:
         """
         if not HAS_REQUESTS:
             return {"success": False, "error": "需要安装 requests 库"}
-        
+
         try:
+            # --- 页面缓存查找（翻页时复用已抓取的内容） ---
+            cached = self._page_cache.get(url)
+            if cached:
+                ts, cached_lines = cached
+                if (time.time() - ts) < self._PAGE_CACHE_TTL:
+                    return self._paginate_lines(url, cached_lines, start_line, max_lines)
+
             response = requests.get(url, headers=self._HEADERS, timeout=timeout)
             response.raise_for_status()
             
             # 修正编码（防乱码核心）
             page_html = self._fix_encoding(response)
-            
-            # 移除无用区块
-            for tag in ('script', 'style', 'nav', 'footer', 'header', 'aside', 'noscript'):
-                page_html = re.sub(
-                    rf'<{tag}[^>]*>.*?</{tag}>',
-                    '', page_html, flags=re.DOTALL | re.IGNORECASE,
-                )
-            
-            # 块级标签 → 换行
-            page_html = re.sub(r'<br\s*/?\s*>', '\n', page_html, flags=re.IGNORECASE)
-            page_html = re.sub(
-                r'</(?:p|div|li|tr|td|th|h[1-6]|blockquote|section|article)>',
-                '\n', page_html, flags=re.IGNORECASE,
-            )
-            
-            # 移除剩余 HTML 标签
-            text = re.sub(r'<[^>]+>', ' ', page_html)
-            
-            # 解码 HTML 实体
-            text = self._decode_entities(text)
-            
+
+            # --- 正文提取：trafilatura 优先，正则降级 ---
+            text = None
+            if self._HAS_TRAFILATURA:
+                try:
+                    import trafilatura
+                    text = trafilatura.extract(
+                        page_html,
+                        include_comments=False,
+                        include_tables=True,
+                        output_format='txt',
+                        favor_recall=True,
+                    )
+                except Exception:
+                    text = None
+
+            if not text:
+                # 降级到正则剥标签
+                text = self._fallback_html_to_text(page_html)
+
             # 清理：每行合并多余空格，保留换行结构
             lines = []
             for line in text.split('\n'):
                 cleaned = re.sub(r'[ \t]+', ' ', line).strip()
                 if cleaned:
                     lines.append(cleaned)
-            
-            total_lines = len(lines)
-            
-            # 按 start_line 偏移（1-based → 0-based）
-            offset = max(0, start_line - 1)
-            page_lines = lines[offset:offset + max_lines]
-            end_line = offset + len(page_lines)
-            
-            if not page_lines:
-                return {
-                    "success": True,
-                    "url": url,
-                    "content": f"[已到末尾] 该网页共 {total_lines} 行，start_line={start_line} 超出范围。"
-                }
-            
-            content = '\n'.join(page_lines)
-            
-            # 如果后面还有更多行，附带翻页提示
-            if end_line < total_lines:
-                next_start = end_line + 1
-                content += (
-                    f"\n\n[分页提示] 当前显示第 {offset+1}-{end_line} 行，共 {total_lines} 行。"
-                    f"如需后续内容，请调用 fetch_webpage(url=\"{url}\", start_line={next_start})。"
-                )
-            else:
-                content += f"\n\n[全部内容已显示] 第 {offset+1}-{end_line} 行，共 {total_lines} 行。"
-            
+
+            # 缓存此页面（翻页时复用）
+            self._page_cache[url] = (time.time(), lines)
+            # 限制缓存大小
+            if len(self._page_cache) > 50:
+                oldest_key = min(self._page_cache, key=lambda k: self._page_cache[k][0])
+                del self._page_cache[oldest_key]
+
+            return self._paginate_lines(url, lines, start_line, max_lines)
+
+        except Exception as e:
+            return {"success": False, "error": str(e), "url": url}
+
+    def _fallback_html_to_text(self, page_html: str) -> str:
+        """正则剥标签降级方案（trafilatura 不可用时）"""
+        # 移除无用区块
+        for tag in ('script', 'style', 'nav', 'footer', 'header', 'aside', 'noscript'):
+            page_html = re.sub(
+                rf'<{tag}[^>]*>.*?</{tag}>',
+                '', page_html, flags=re.DOTALL | re.IGNORECASE,
+            )
+        # 块级标签 → 换行
+        page_html = re.sub(r'<br\s*/?\s*>', '\n', page_html, flags=re.IGNORECASE)
+        page_html = re.sub(
+            r'</(?:p|div|li|tr|td|th|h[1-6]|blockquote|section|article)>',
+            '\n', page_html, flags=re.IGNORECASE,
+        )
+        # 移除剩余 HTML 标签
+        text = re.sub(r'<[^>]+>', ' ', page_html)
+        # 解码 HTML 实体
+        return self._decode_entities(text)
+
+    @staticmethod
+    def _paginate_lines(url: str, lines: List[str], start_line: int, max_lines: int) -> Dict[str, Any]:
+        """对已提取的行列表做分页返回"""
+        total_lines = len(lines)
+        offset = max(0, start_line - 1)
+        page_lines = lines[offset:offset + max_lines]
+        end_line = offset + len(page_lines)
+
+        if not page_lines:
             return {
                 "success": True,
                 "url": url,
-                "content": content
+                "content": f"[已到末尾] 该网页共 {total_lines} 行，start_line={start_line} 超出范围。"
             }
-        except Exception as e:
-            return {"success": False, "error": str(e), "url": url}
+
+        content = '\n'.join(page_lines)
+
+        if end_line < total_lines:
+            next_start = end_line + 1
+            content += (
+                f"\n\n[分页提示] 当前显示第 {offset+1}-{end_line} 行，共 {total_lines} 行。"
+                f"如需后续内容，请调用 fetch_webpage(url=\"{url}\", start_line={next_start})。"
+            )
+        else:
+            content += f"\n\n[全部内容已显示] 第 {offset+1}-{end_line} 行，共 {total_lines} 行。"
+
+        return {"success": True, "url": url, "content": content}
 
 
 # ============================================================
@@ -671,21 +730,6 @@ HOUDINI_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_geometry_info",
-            "description": "获取节点输出的几何体信息，包括点数、面数、属性列表等。用于了解数据结构。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "node_path": {"type": "string", "description": "节点路径"},
-                    "output_index": {"type": "integer", "description": "输出端口索引，默认 0"}
-                },
-                "required": ["node_path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "read_selection",
             "description": "读取当前选中节点的详细信息。不需要知道节点路径，直接读取用户选中的内容。",
             "parameters": {
@@ -908,6 +952,35 @@ HOUDINI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "execute_shell",
+            "description": "在系统 Shell 中执行命令（非 Houdini Python Shell）。可运行 pip、git、dir/ls、ffmpeg 等系统命令。工作目录默认为项目根目录。命令有 30 秒超时限制。危险命令（如 rm -rf、format、del /s）会被拦截。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的 Shell 命令"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "工作目录（可选，默认为项目根目录）"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "超时秒数（可选，默认 30，最大 120）"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "页码（从1开始），输出较长时翻页查看后续内容"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_errors",
             "description": "检查节点或网络中的错误和警告。这是修复问题的重要工具，在创建节点后应该调用来验证是否有错误。",
             "parameters": {
@@ -1013,6 +1086,39 @@ HOUDINI_TOOLS = [
                 "required": ["check_items", "expected_result"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_skill",
+            "description": "执行预定义的 Skill（高级分析脚本）。Skill 是经过优化的专用脚本，比手写 execute_python 更可靠。用 list_skills 查看可用 skill。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Skill 名称（用 list_skills 获取）"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "传给 Skill 的参数（键值对）"
+                    }
+                },
+                "required": ["skill_name", "params"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "列出所有可用的 Skill 及其参数说明。在需要复杂分析（如几何属性统计、批量检查等）时，先调用此工具查看是否有现成 Skill。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
     }
 ]
 
@@ -1081,10 +1187,11 @@ class AIClient:
     _QUERY_TOOLS = frozenset({
         'get_network_structure', 'get_node_details', 'get_node_parameters',
         'list_children',
-        'get_geometry_info', 'read_selection', 'search_node_types',
+        'read_selection', 'search_node_types',
         'semantic_search_nodes', 'find_nodes_by_param', 'check_errors',
         'search_local_doc', 'get_houdini_node_doc', 'get_node_inputs',
-        'execute_python', 'web_search', 'fetch_webpage',
+        'execute_python', 'execute_shell', 'web_search', 'fetch_webpage',
+        'run_skill', 'list_skills',
     })
     _OP_TOOLS = frozenset({
         'create_node', 'create_nodes_batch', 'connect_nodes',
@@ -1147,85 +1254,169 @@ class AIClient:
             tc['function'] = fn
         return tool_calls
 
+    # ----------------------------------------------------------
+    # 智能摘要：提取工具结果的关键信息
+    # ----------------------------------------------------------
+
+    _PATH_RE = re.compile(r'/(?:obj|out|stage|tasks|ch|shop|img|mat|vex)/[\w/]+')
+    _COUNT_RE = re.compile(r'(?:节点数量|点数量|错误数|警告数|count|total)[：:\s]*(\d+)', re.IGNORECASE)
+
+    @classmethod
+    def _summarize_tool_content(cls, content: str, max_len: int = 200) -> str:
+        """智能摘要工具结果——提取关键信息而非简单截断
+
+        提取优先级: 路径 > 数值统计 > 第一行摘要 > 截断
+        """
+        if not content or len(content) <= max_len:
+            return content
+
+        parts = []
+
+        # 1. 提取节点路径
+        paths = cls._PATH_RE.findall(content)
+        if paths:
+            unique_paths = list(dict.fromkeys(paths))[:5]  # 去重保留顺序
+            parts.append("路径: " + ", ".join(unique_paths))
+
+        # 2. 提取数量信息
+        counts = cls._COUNT_RE.findall(content)
+        if counts:
+            parts.append("统计: " + ", ".join(counts[:4]))
+
+        # 3. 检测成功/失败状态
+        if '错误' in content[:100] or 'error' in content[:100].lower():
+            # 错误信息——保留更多内容
+            first_line = content.split('\n', 1)[0][:200]
+            parts.append(first_line)
+        elif not parts:
+            # 没提取到结构化信息，保留第一行
+            first_line = content.split('\n', 1)[0][:150]
+            parts.append(first_line)
+
+        summary = " | ".join(parts)
+        if len(summary) > max_len:
+            summary = summary[:max_len]
+        return summary + '...[摘要]'
+
+    # ----------------------------------------------------------
+    # 渐进式裁剪
+    # ----------------------------------------------------------
+
     def _progressive_trim(self, working_messages: list, tool_calls_history: list,
                           trim_level: int = 1) -> list:
         """渐进式裁剪上下文，根据 trim_level 逐步加大裁剪力度
-        
-        trim_level=1: 轻度 - 压缩 tool 结果 + 移除中间部分旧消息（保留最近 60%）
-        trim_level=2: 中度 - 保留 system + 最近 10 条消息
-        trim_level=3+: 重度 - 保留 system + 最近 6 条消息
-        
-        Returns:
-            裁剪后的消息列表
+
+        核心原则:
+        - **永不截断 user 消息**（含任务目标）
+        - 按「轮次」裁剪（assistant + 其 tool 结果 = 一轮）
+        - tool 结果用智能摘要而非简单截断
+        - 保留最近 N 轮完整对话
+
+        trim_level=1: 轻度 - 智能压缩旧轮工具结果，保留最近 60% 消息
+        trim_level=2: 中度 - 保留最近 5 轮完整对话
+        trim_level=3+: 重度 - 保留最近 3 轮，激进压缩
         """
         if not working_messages:
             return working_messages
-        
-        sys_msg = working_messages[0] if working_messages and working_messages[0].get('role') == 'system' else None
+
+        sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
         body = working_messages[1:] if sys_msg else working_messages[:]
-        
+
+        if not body:
+            return working_messages
+
+        # --- 划分轮次：以 user 消息为分界 ---
+        rounds = []  # [[msg, msg, ...], ...]
+        current_round = []
+        for m in body:
+            if m.get('role') == 'user' and current_round:
+                rounds.append(current_round)
+                current_round = []
+            current_round.append(m)
+        if current_round:
+            rounds.append(current_round)
+
         if trim_level <= 1:
-            # 轻度裁剪：先压缩所有 tool/assistant 消息的内容，再移除前 40% 的消息
-            for m in body:
-                if m.get('role') == 'tool':
-                    c = m.get('content', '')
-                    if len(c) > 150:
-                        m['content'] = c[:150] + '...[已截断]'
-                elif m.get('role') == 'assistant':
-                    c = m.get('content', '')
-                    if len(c) > 300:
-                        m['content'] = c[:300] + '...[已截断]'
-            
-            # 保留后 60% 的消息（至少保留最后 8 条）
-            keep_n = max(8, int(len(body) * 0.6))
-            if len(body) > keep_n:
-                body = body[-keep_n:]
-        
+            # 轻度：压缩非最近 40% 轮次的工具结果
+            n_rounds = len(rounds)
+            protect_n = max(3, int(n_rounds * 0.6))  # 保护最近 60%
+            for r_idx, rnd in enumerate(rounds):
+                if r_idx >= n_rounds - protect_n:
+                    break  # 最近的轮次不压缩
+                for m in rnd:
+                    role = m.get('role', '')
+                    if role == 'user':
+                        continue  # 永不截断 user
+                    c = m.get('content') or ''
+                    if role == 'tool' and len(c) > 200:
+                        m['content'] = self._summarize_tool_content(c, 200)
+                    elif role == 'assistant' and len(c) > 400:
+                        m['content'] = c[:400] + '...[已截断]'
+
+            # 如果总消息仍然太多，移除最早的轮次
+            keep_rounds = max(4, int(n_rounds * 0.6))
+            if n_rounds > keep_rounds:
+                rounds = rounds[-keep_rounds:]
+
         elif trim_level == 2:
-            # 中度裁剪：只保留最近 10 条，并压缩内容
-            keep_n = 10
-            body = body[-keep_n:] if len(body) > keep_n else body
-            for m in body:
-                if m.get('role') == 'tool':
-                    c = m.get('content', '')
-                    if len(c) > 100:
-                        m['content'] = c[:100] + '...[已截断]'
-                elif m.get('role') == 'assistant':
-                    c = m.get('content', '')
-                    if len(c) > 200:
-                        m['content'] = c[:200] + '...[已截断]'
-        
+            # 中度：保留最近 5 轮，工具结果用短摘要
+            rounds = rounds[-5:] if len(rounds) > 5 else rounds
+            for r_idx, rnd in enumerate(rounds):
+                if r_idx >= len(rounds) - 2:
+                    break  # 最近 2 轮不压缩
+                for m in rnd:
+                    role = m.get('role', '')
+                    if role == 'user':
+                        continue
+                    c = m.get('content') or ''
+                    if role == 'tool' and len(c) > 120:
+                        m['content'] = self._summarize_tool_content(c, 120)
+                    elif role == 'assistant' and len(c) > 250:
+                        m['content'] = c[:250] + '...[已截断]'
+
         else:
-            # 重度裁剪：只保留最近 6 条，并激进压缩
-            keep_n = 6
-            body = body[-keep_n:] if len(body) > keep_n else body
-            for m in body:
-                c = m.get('content', '')
-                if len(c) > 100:
-                    m['content'] = c[:100] + '...[已截断]'
-        
-        # 重组消息
+            # 重度：保留最近 3 轮，激进压缩
+            rounds = rounds[-3:] if len(rounds) > 3 else rounds
+            for rnd in rounds[:-1]:  # 最后一轮不压缩
+                for m in rnd:
+                    role = m.get('role', '')
+                    if role == 'user':
+                        continue
+                    c = m.get('content') or ''
+                    if len(c) > 100:
+                        m['content'] = self._summarize_tool_content(c, 100)
+
+        # 重组
+        body = [m for rnd in rounds for m in rnd]
         result = ([sys_msg] if sys_msg else []) + body
-        
-        # 添加恢复提示（使用 system 角色而非 user）
+
+        # 恢复提示——只列操作型工具的摘要（跳过查询型）
         history_summary = ""
         if tool_calls_history:
-            recent = tool_calls_history[-8:]
-            summaries = [f"  - {h['tool_name']}: {str(h.get('result', ''))[:80]}" for h in recent]
-            history_summary = "\n已完成的操作:\n" + "\n".join(summaries)
-        
-        # 在 body 的最后一条 assistant 或 user 消息之后插入 system 恢复提示
+            op_history = [h for h in tool_calls_history
+                          if h['tool_name'] not in self._QUERY_TOOLS]
+            if op_history:
+                recent = op_history[-8:]
+                lines = []
+                for h in recent:
+                    r = h.get('result', {})
+                    status = 'ok' if (isinstance(r, dict) and r.get('success')) else 'err'
+                    r_str = str(r.get('result', '') if isinstance(r, dict) else r)[:60]
+                    lines.append(f"  [{status}] {h['tool_name']}: {r_str}")
+                history_summary = "\n已完成的操作:\n" + "\n".join(lines)
+
         result.append({
             'role': 'system',
             'content': (
-                f'[上下文管理] 由于消息过长，已自动裁剪历史（裁剪级别 {trim_level}）。'
+                f'[上下文管理] 已自动裁剪历史（级别 {trim_level}）。'
                 f'{history_summary}'
-                f'\n请继续完成当前任务。不要提及或解释此裁剪操作。'
+                f'\n请继续完成当前任务。不要提及此裁剪。'
             )
         })
-        
+
         print(f"[AI Client] 渐进式裁剪: level={trim_level}, "
-              f"消息 {len(working_messages)} → {len(result)}")
+              f"消息 {len(working_messages)} → {len(result)}, "
+              f"轮次 {len(rounds)}")
         return result
     
     def _sanitize_working_messages(self, messages: list) -> list:
@@ -1259,7 +1450,7 @@ class AIClient:
     # 已自带分页的工具，不再二次截断
     _SELF_PAGED_TOOLS = frozenset({
         'get_houdini_node_doc', 'get_network_structure', 'get_node_parameters',
-        'list_children', 'execute_python',
+        'list_children', 'execute_python', 'execute_shell',
     })
 
     def _compress_tool_result(self, tool_name: str, result: dict) -> str:
@@ -1488,10 +1679,8 @@ class AIClient:
     # Duojie 模型 → think 变体映射
     # 当 Think 开关 ON 时，自动替换模型名以启用原生 Extended Thinking
     _DUOJIE_THINK_MAP = {
-        'claude-opus-4-5-20251101': 'claude-opus-4-5-think',
         'claude-opus-4-5-kiro': 'claude-opus-4-5-kiro',      # kiro 本身已含思考
         'claude-opus-4-5-max': 'claude-opus-4-5-max',         # 保持不变
-        'claude-opus-4-5-think': 'claude-opus-4-5-think',     # 已是 think 变体
         'claude-sonnet-4-5': 'claude-sonnet-4-5',             # 无已知 think 变体
         'claude-haiku-4-5': 'claude-haiku-4-5',               # 无已知 think 变体
     }
@@ -1953,17 +2142,19 @@ class AIClient:
             # ⚠️ 主动防御：每轮迭代前检查 working_messages 大小
             # agent loop 多轮后工具结果会不断累积，如果不提前压缩会导致 API 报错
             if iteration > 1 and len(working_messages) > 20:
-                # 压缩中间的长消息（不改变消息数量，只压缩内容）
+                # 保护最近 6 条消息不压缩（通常是当前轮次的完整交互）
+                protect_start = max(1, len(working_messages) - 6)
                 for i, m in enumerate(working_messages):
-                    if i == 0:  # 跳过 system 消息
+                    if i == 0 or i >= protect_start:  # 跳过 system + 最近消息
                         continue
-                    c = m.get('content', '')
                     role = m.get('role', '')
-                    if role == 'tool' and len(c) > 500:
-                        m['content'] = c[:500] + '...[已截断]'
-                    elif role == 'assistant' and len(c) > 800 and i < len(working_messages) - 3:
-                        # 只压缩非最近3条的 assistant 消息
-                        m['content'] = c[:800] + '...[已截断]'
+                    if role == 'user':  # 永不截断 user 消息
+                        continue
+                    c = m.get('content') or ''
+                    if role == 'tool' and len(c) > 400:
+                        m['content'] = self._summarize_tool_content(c, 400)
+                    elif role == 'assistant' and len(c) > 600:
+                        m['content'] = c[:600] + '...[已截断]'
             
             # 诊断：打印第二次及之后请求的消息结构
             if iteration > 1:
@@ -2189,81 +2380,106 @@ class AIClient:
                 assistant_msg['reasoning_content'] = round_thinking or ''
             working_messages.append(assistant_msg)
             
-            # 执行工具调用
+            # 执行工具调用（web 工具并行，Houdini 工具串行）
+            # 预处理所有工具调用
+            parsed_calls = []
             for tool_call in round_tool_calls:
                 tool_id = tool_call.get('id', '')
                 function = tool_call.get('function', {})
                 tool_name = function.get('name', '')
                 args_str = function.get('arguments', '{}')
-                
                 try:
                     arguments = json.loads(args_str)
                 except:
                     arguments = {}
-                
-                # ⚠️ 防止死循环：检测重复工具调用
+                parsed_calls.append((tool_id, tool_name, arguments, tool_call))
+
+            # 分离可并行工具（web + shell）和 Houdini 工具（需主线程串行）
+            _ASYNC_TOOL_NAMES = frozenset({'web_search', 'fetch_webpage', 'execute_shell'})
+            async_calls = [(i, pc) for i, pc in enumerate(parsed_calls) if pc[1] in _ASYNC_TOOL_NAMES]
+            houdini_calls = [(i, pc) for i, pc in enumerate(parsed_calls) if pc[1] not in _ASYNC_TOOL_NAMES]
+
+            # 结果槽位：保持原始顺序
+            results_ordered = [None] * len(parsed_calls)
+
+            # --- 并行执行 async 工具（web + shell） ---
+            if len(async_calls) > 1:
+                import concurrent.futures
+                def _exec_async(idx_pc):
+                    idx, (tid, tname, targs, _tc) = idx_pc
+                    if tname == 'web_search':
+                        return idx, self._execute_web_search(targs)
+                    elif tname == 'fetch_webpage':
+                        return idx, self._execute_fetch_webpage(targs)
+                    else:  # execute_shell
+                        return idx, self._tool_executor(tname, **targs)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(async_calls))) as pool:
+                    for idx, result in pool.map(_exec_async, async_calls):
+                        results_ordered[idx] = result
+            elif len(async_calls) == 1:
+                idx, (tid, tname, targs, _tc) = async_calls[0]
+                if tname == 'web_search':
+                    results_ordered[idx] = self._execute_web_search(targs)
+                elif tname == 'fetch_webpage':
+                    results_ordered[idx] = self._execute_fetch_webpage(targs)
+                else:  # execute_shell
+                    results_ordered[idx] = self._tool_executor(tname, **targs)
+
+            # --- 串行执行 Houdini 工具（需主线程） ---
+            for idx, (tid, tname, targs, _tc) in houdini_calls:
+                results_ordered[idx] = self._tool_executor(tname, **targs)
+                # Houdini 工具间延迟，防止 API 过快
+                time.sleep(0.05)
+
+            # --- 统一处理结果（保持原始顺序） ---
+            should_break_tool_limit = False
+            for i, (tool_id, tool_name, arguments, _tc) in enumerate(parsed_calls):
+                result = results_ordered[i]
+
+                # 防止死循环：检测重复工具调用
                 total_tool_calls += 1
                 call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True)}"
-                
-                # 检查总调用次数
+
                 if total_tool_calls > max_tool_calls:
                     print(f"[AI Client] ⚠️ 达到最大工具调用次数限制 ({max_tool_calls})")
-                    return {
-                        'ok': True,
-                        'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
-                        'tool_calls_history': tool_calls_history,
-                        'iterations': iteration,
-                        'usage': total_usage
-                    }
-                
-                # 记录调用签名（仅日志用途，不再限制连续相同调用）
+                    should_break_tool_limit = True
+                    break
+
                 if call_signature == last_call_signature:
                     consecutive_same_calls += 1
                 else:
                     consecutive_same_calls = 1
                     last_call_signature = call_signature
-                
+
                 # 回调
                 if on_tool_call:
                     on_tool_call(tool_name, arguments)
-                
-                # 执行工具
-                if tool_name == 'web_search':
-                    result = self._execute_web_search(arguments)
-                elif tool_name == 'fetch_webpage':
-                    result = self._execute_fetch_webpage(arguments)
-                elif tool_name == 'get_houdini_node_doc':
-                    # Houdini 本地文档查询也需要在主线程执行（访问 hou 模块）
-                    result = self._tool_executor(tool_name, **arguments)
-                else:
-                    # 使用 **arguments 展开字典作为关键字参数
-                    # 注意：Houdini 工具执行需要在主线程，通过队列同步
-                    result = self._tool_executor(tool_name, **arguments)
-                
-                # ⚠️ 工具调用间延迟：防止 Houdini API 调用过快导致崩溃
-                # 给 Houdini 主线程一些时间处理 UI 事件
-                import time
-                time.sleep(0.05)  # 50ms 延迟
-                
-                # 记录
+
                 tool_calls_history.append({
                     'tool_name': tool_name,
                     'arguments': arguments,
                     'result': result
                 })
-                
-                # 回调
+
                 if on_tool_result:
                     on_tool_result(tool_name, arguments, result)
-                
-                # 按行分页 + 分类压缩（查询工具分页，操作工具提取路径）
+
                 result_content = self._compress_tool_result(tool_name, result)
-                
+
                 working_messages.append({
                     'role': 'tool',
                     'tool_call_id': tool_id,
                     'content': result_content
                 })
+
+            if should_break_tool_limit:
+                return {
+                    'ok': True,
+                    'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
+                    'tool_calls_history': tool_calls_history,
+                    'iterations': iteration,
+                    'usage': total_usage
+                }
             
             # 多轮思考引导：在最后一条工具结果后附加提示
             if enable_thinking and working_messages and working_messages[-1].get('role') == 'tool':
@@ -2346,7 +2562,7 @@ class AIClient:
                     lines.append(f"   摘要: {snippet[:300]}")
                 lines.append("")
             
-            lines.append("提示: 如需查看某条结果的详细内容，请用 fetch_webpage(url=...) 获取对应 URL 的网页正文（支持 start_line 翻页）。请勿用相同关键词重复搜索。")
+            lines.append("提示: 如需查看详细内容，请用 fetch_webpage(url=...) 获取网页正文。引用信息时务必在段落末标注 [来源: 标题](URL)。请勿用相同关键词重复搜索。")
             
             return {"success": True, "result": "\n".join(lines)}
         else:
@@ -2581,15 +2797,18 @@ class AIClient:
             
             # ⚠️ 主动防御：每轮迭代前压缩过长的消息内容
             if iteration > 1 and len(working_messages) > 20:
+                protect_start = max(1, len(working_messages) - 6)
                 for i, m in enumerate(working_messages):
-                    if i == 0:
+                    if i == 0 or i >= protect_start:
                         continue
-                    c = m.get('content', '')
                     role = m.get('role', '')
-                    if role == 'tool' and len(c) > 500:
-                        m['content'] = c[:500] + '...[已截断]'
-                    elif role == 'assistant' and len(c) > 800 and i < len(working_messages) - 3:
-                        m['content'] = c[:800] + '...[已截断]'
+                    if role == 'user':
+                        continue
+                    c = m.get('content') or ''
+                    if role == 'tool' and len(c) > 400:
+                        m['content'] = self._summarize_tool_content(c, 400)
+                    elif role == 'assistant' and len(c) > 600:
+                        m['content'] = c[:600] + '...[已截断]'
             
             # 流式请求（不传 tools 参数）
             for chunk in self.chat_stream(
@@ -2734,85 +2953,105 @@ class AIClient:
                 json_assistant_msg['reasoning_content'] = ''
             working_messages.append(json_assistant_msg)
             
-            # 执行工具调用
+            # 执行工具调用（web 工具并行，Houdini 工具串行）
             tool_results = []
-            for tc in tool_calls:
+
+            _ASYNC_TOOL_NAMES_JSON = frozenset({'web_search', 'fetch_webpage', 'execute_shell'})
+            async_tc = [(i, tc) for i, tc in enumerate(tool_calls) if tc['name'] in _ASYNC_TOOL_NAMES_JSON]
+            houdini_tc = [(i, tc) for i, tc in enumerate(tool_calls) if tc['name'] not in _ASYNC_TOOL_NAMES_JSON]
+
+            # 结果槽位
+            exec_results = [None] * len(tool_calls)
+
+            # 并行 async 工具（web + shell）
+            if len(async_tc) > 1:
+                import concurrent.futures
+                def _exec_async_json(idx_tc):
+                    idx, tc = idx_tc
+                    tname, targs = tc['name'], tc['arguments']
+                    if tname == 'web_search':
+                        return idx, self._execute_web_search(targs)
+                    elif tname == 'fetch_webpage':
+                        return idx, self._execute_fetch_webpage(targs)
+                    else:  # execute_shell
+                        return idx, self._tool_executor(tname, **targs)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(async_tc))) as pool:
+                    for idx, res in pool.map(_exec_async_json, async_tc):
+                        exec_results[idx] = res
+            elif len(async_tc) == 1:
+                idx, tc = async_tc[0]
+                tname, targs = tc['name'], tc['arguments']
+                if tname == 'web_search':
+                    exec_results[idx] = self._execute_web_search(targs)
+                elif tname == 'fetch_webpage':
+                    exec_results[idx] = self._execute_fetch_webpage(targs)
+                else:  # execute_shell
+                    exec_results[idx] = self._tool_executor(tname, **targs)
+
+            # 串行 Houdini 工具
+            for idx, tc in houdini_tc:
+                tname, targs = tc['name'], tc['arguments']
+                if not self._tool_executor:
+                    exec_results[idx] = {"success": False, "error": f"工具执行器未设置，无法执行工具: {tname}"}
+                else:
+                    try:
+                        exec_results[idx] = self._tool_executor(tname, **targs)
+                    except Exception as e:
+                        import traceback
+                        exec_results[idx] = {"success": False, "error": f"工具执行异常: {str(e)}\n{traceback.format_exc()[:200]}"}
+                time.sleep(0.05)
+
+            # 统一处理结果
+            should_break_limit = False
+            for i, tc in enumerate(tool_calls):
                 tool_name = tc['name']
                 arguments = tc['arguments']
-                
-                # ⚠️ 防止死循环：检测重复工具调用
+                result = exec_results[i]
+
                 total_tool_calls += 1
                 call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True)}"
-                
-                # 检查总调用次数
+
                 if total_tool_calls > max_tool_calls:
                     print(f"[AI Client] ⚠️ JSON模式：达到最大工具调用次数限制 ({max_tool_calls})")
-                    return {
-                        'ok': True,
-                        'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
-                        'tool_calls_history': tool_calls_history,
-                        'iterations': iteration
-                    }
-                
-                # 记录调用签名（仅日志用途，不再限制连续相同调用）
+                    should_break_limit = True
+                    break
+
                 if call_signature == last_call_signature:
                     consecutive_same_calls += 1
                 else:
                     consecutive_same_calls = 1
                     last_call_signature = call_signature
-                
+
                 if on_tool_call:
                     on_tool_call(tool_name, arguments)
-                
-                # 检查工具执行器是否设置
-                if not self._tool_executor:
-                    result = {
-                        "success": False,
-                        "error": f"工具执行器未设置，无法执行工具: {tool_name}"
-                    }
-                else:
-                    # 执行工具
-                    try:
-                        if tool_name == 'web_search':
-                            result = self._execute_web_search(arguments)
-                        elif tool_name == 'fetch_webpage':
-                            result = self._execute_fetch_webpage(arguments)
-                        elif tool_name == 'get_houdini_node_doc':
-                            result = self._tool_executor(tool_name, **arguments)
-                        else:
-                            result = self._tool_executor(tool_name, **arguments)
-                    except Exception as e:
-                        import traceback
-                        result = {
-                            "success": False,
-                            "error": f"工具执行异常: {str(e)}\n{traceback.format_exc()[:200]}"
-                        }
-                
-                # ⚠️ 工具调用间延迟：防止 Houdini API 调用过快导致崩溃
-                import time
-                time.sleep(0.05)  # 50ms 延迟
-                
+
                 tool_calls_history.append({
                     'tool_name': tool_name,
                     'arguments': arguments,
                     'result': result
                 })
-                
-                # 如果工具执行失败，记录详细错误（帮助调试）
+
                 if not result.get('success'):
                     error_detail = result.get('error', '未知错误')
                     print(f"[AI Client] ⚠️ 工具执行失败: {tool_name}")
                     print(f"[AI Client]   错误详情: {error_detail[:200]}")
-                
+
                 if on_tool_result:
                     on_tool_result(tool_name, arguments, result)
-                
-                # 按行分页 + 分类压缩
+
                 compressed = self._compress_tool_result(tool_name, result)
                 if result.get('success'):
                     tool_results.append(f"{tool_name}:{compressed}")
                 else:
                     tool_results.append(f"{tool_name}:错误:{compressed}")
+
+            if should_break_limit:
+                return {
+                    'ok': True,
+                    'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
+                    'tool_calls_history': tool_calls_history,
+                    'iterations': iteration
+                }
             
             # 极简格式：工具结果，继续或总结
             # 检查是否有工具执行失败

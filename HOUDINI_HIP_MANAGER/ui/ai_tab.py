@@ -36,7 +36,8 @@ from .cursor_widgets import (
     TodoList,
     NodeOperationLabel,
     NodeContextBar,
-    PythonShellWidget
+    PythonShellWidget,
+    SystemShellWidget
 )
 import re
 
@@ -54,6 +55,7 @@ class AITab(QtWidgets.QWidget):
     _updateTodo = QtCore.Signal(str, str, str)  # (todo_id, text, status)
     _addNodeOperation = QtCore.Signal(str, str)  # (name, result_json)
     _addPythonShell = QtCore.Signal(str, str)  # (code, result_json)
+    _addSystemShell = QtCore.Signal(str, str)  # (command, result_json)
     _executeToolRequest = QtCore.Signal(str, dict)  # 工具执行请求信号（线程安全）
     _addThinking = QtCore.Signal(str)  # 思考内容更新信号（线程安全）
     _finalizeThinkingSignal = QtCore.Signal()  # 结束思考区块（线程安全）
@@ -108,10 +110,10 @@ class AITab(QtWidgets.QWidget):
         self._max_thinking_length = float('inf')  # 不限制思考长度
         self._thinking_length_warning = float('inf')  # 不警告
         
-        # 输出 Token 限制（硬限制，仅计正式内容，不含思考）
-        self._max_output_tokens = 4000  # 单次输出最大 token 数（硬限制）
-        self._output_token_warning = 3000  # 警告阈值
-        self._current_output_tokens = 0  # 当前输出 token 计数
+        # 输出 Token 限制（不限制）
+        self._max_output_tokens = float('inf')
+        self._output_token_warning = float('inf')
+        self._current_output_tokens = 0
         
         # <think> 标签流式解析状态
         self._in_think_block = False
@@ -142,6 +144,7 @@ class AITab(QtWidgets.QWidget):
         self._updateTodo.connect(self._on_update_todo)
         self._addNodeOperation.connect(self._on_add_node_operation)
         self._addPythonShell.connect(self._on_add_python_shell)
+        self._addSystemShell.connect(self._on_add_system_shell)
         self._executeToolRequest.connect(self._on_execute_tool_main_thread, QtCore.Qt.BlockingQueuedConnection)
         self._addThinking.connect(self._on_add_thinking)
         self._finalizeThinkingSignal.connect(self._finalize_thinking_main_thread)
@@ -151,10 +154,10 @@ class AITab(QtWidgets.QWidget):
         self._system_prompt_think = self._build_system_prompt(with_thinking=True)
         self._system_prompt_no_think = self._build_system_prompt(with_thinking=False)
         self._cached_prompt_think = self.token_optimizer.optimize_system_prompt(
-            self._system_prompt_think, max_length=1500
+            self._system_prompt_think, max_length=1800
         )
         self._cached_prompt_no_think = self.token_optimizer.optimize_system_prompt(
-            self._system_prompt_no_think, max_length=1200
+            self._system_prompt_no_think, max_length=1500
         )
         # 兼容旧引用
         self._system_prompt = self._system_prompt_think
@@ -252,6 +255,29 @@ copytopoints 第0输入=模板几何体，第1输入=目标点。需要一个小
 
 工具优先级: create_wrangle_node(VEX优先) > create_nodes_batch > create_node
 节点输入: 0=主输入, 1=第二输入 | from_path=上游, to_path=下游
+
+系统 Shell 工具（execute_shell）:
+-用于执行系统命令（pip、git、dir、ffmpeg、hython 等），不限于 Houdini Python 环境
+-适用场景: 安装 Python 包、查看文件系统、运行外部工具链、检查环境变量
+-execute_python 用于 Houdini 场景内操作（hou 模块），execute_shell 用于系统级操作
+-命令有超时限制（默认 30 秒，最大 120 秒），危险命令会被拦截
+
+Skill 系统（几何分析必须优先使用）:
+-Skill 是预定义的高级分析脚本，比手写代码更可靠、更高效
+-涉及几何体信息（点数、面数、属性、边界盒、连通性等）时，必须优先用 run_skill 而非 execute_python
+-常用 skill: analyze_geometry_attribs(属性统计), get_bounding_info(边界盒), analyze_connectivity(连通性), compare_attributes(属性对比), find_dead_nodes(死节点), trace_node_dependencies(依赖追溯), find_attribute_references(属性引用查找)
+-不确定有哪些 skill 时先调用 list_skills 查看
+-示例: run_skill(skill_name="analyze_geometry_attribs", params={"node_path": "/obj/geo1/box1"}) 可列出全部属性
+-示例: run_skill(skill_name="get_bounding_info", params={"node_path": "/obj/geo1/box1"}) 获取边界盒
+
+联网搜索策略（使用 web_search 前必须遵守）:
+-将用户问题转化为精准搜索关键词，不要直接用原始问题当搜索词
+-Houdini 相关问题优先加 "SideFX Houdini" 前缀
+-中文问题如果首次搜索结果不佳，尝试用英文关键词重搜（最多重搜 2 次）
+-搜索结果中如有有用链接，用 fetch_webpage 获取详细内容后再回答
+-使用搜索结果中的信息时，**必须**在相关段落末尾标注来源，格式: [来源: 标题](URL)
+-不要照搬搜索结果原文，用自己的语言综合整理后回答
+-禁止用相同关键词重复搜索（缓存会返回相同结果）
 
 Todo 管理规则（严格遵守）:
 -收到复杂任务时，先用 add_todo 创建任务清单，拆分为具体步骤
@@ -365,15 +391,9 @@ Todo 管理规则（严格遵守）:
             'openai': ['gpt-4o-mini', 'gpt-4o'],
             'duojie': [
                 'claude-sonnet-4-5',
-                'claude-opus-4-5-20251101',
                 'claude-opus-4-5-kiro',
                 'claude-opus-4-5-max',
-                'claude-opus-4-5-think',
                 'claude-haiku-4-5',
-                'gpt-5.2-codex',
-                'glm-4.7',
-                'gemini-3-flash-preview',
-                'gemini-3-pro-preview',
                 'gemini-3-pro-image-preview',
             ],
         }
@@ -388,14 +408,9 @@ Todo 管理规则（严格遵守）:
             'gpt-4o-mini': 128000, 'gpt-4o': 128000,
             # Duojie 模型
             'claude-sonnet-4-5': 200000,
-            'claude-opus-4-5-20251101': 200000,
             'claude-opus-4-5-kiro': 200000,
             'claude-opus-4-5-max': 200000,
-            'claude-opus-4-5-think': 200000,
             'claude-haiku-4-5': 200000,
-            'gpt-5.2-codex': 200000,
-            'gemini-3-flash-preview': 128000,
-            'gemini-3-pro-preview': 128000,
             'gemini-3-pro-image-preview': 128000,
         }
         self._refresh_models('ollama')
@@ -1665,13 +1680,20 @@ Todo 管理规则（严格遵守）:
                     'content': f"[工具执行结果]\n" + "\n".join(tool_summary_parts)
                 })
         
-        # 记录 AI 回复到历史（去除 <think> 标签内容，只保留正式回复）
+        # 记录 AI 回复到历史（thinking 单独保存，便于恢复时渲染折叠区）
         content = result.get('content', '')
         if content:
+            # 提取 thinking 内容
+            thinking_parts = re.findall(r'<think>([\s\S]*?)</think>', content)
+            thinking_text = '\n'.join(thinking_parts).strip() if thinking_parts else ''
+            # 正式回复（去除 think 标签）
             clean = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
             clean = self._strip_fake_tool_results(clean)
-            if clean:
-                history.append({'role': 'assistant', 'content': clean})
+            if clean or thinking_text:
+                msg = {'role': 'assistant', 'content': clean}
+                if thinking_text:
+                    msg['thinking'] = thinking_text
+                history.append(msg)
         
         # 管理上下文
         self._manage_context()
@@ -1926,11 +1948,11 @@ Todo 管理规则（严格遵守）:
         'create_wrangle_node|get_network_structure|get_node_details'
         '|get_node_parameters|set_node_parameter|create_node|create_nodes_batch'
         '|connect_nodes|delete_node|search_node_types|semantic_search_nodes'
-        '|list_children|get_geometry_info|read_selection|set_display_flag'
+        '|list_children|read_selection|set_display_flag'
         '|copy_node|batch_set_parameters|find_nodes_by_param|save_hip|undo_redo'
         '|web_search|fetch_webpage|search_local_doc|get_houdini_node_doc'
-        '|execute_python|check_errors|get_node_inputs|add_todo|update_todo'
-        '|verify_and_summarize'
+        '|execute_python|execute_shell|check_errors|get_node_inputs|add_todo|update_todo'
+        '|verify_and_summarize|run_skill|list_skills'
     )
     _FAKE_TOOL_PATTERNS = re.compile(
         r'^\[(?:ok|err)\]\s*(?:' + _ALL_TOOL_NAMES + r')\s*[:\uff1a]',
@@ -2375,15 +2397,12 @@ Todo 管理规则（严格遵守）:
                 tools = self._cached_optimized_tools_no_web
             
             if use_agent:
-                # 自动选择合适的 Agent Loop 模式（原生 Function Calling 或 JSON 解析）
-                max_output_tokens = self._max_output_tokens
-                
                 result = self.client.agent_loop_auto(
                     messages=messages,
                     model=model,
                     provider=provider,
                     max_iterations=25,  # 安全限制：最多 25 轮对话（防止死循环）
-                    max_tokens=max_output_tokens,
+                    max_tokens=None,  # 不限制输出长度
                     enable_thinking=use_think,
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
@@ -2398,7 +2417,7 @@ Todo 管理规则（严格遵守）:
                     model=model, 
                     provider=provider, 
                     tools=None,
-                    max_tokens=self._max_output_tokens
+                    max_tokens=None,
                 ):
                     if self.client.is_stop_requested():
                         self._agentStopped.emit()
@@ -2470,6 +2489,27 @@ Todo 管理规则（严格遵守）:
                 self._addPythonShell.emit(code, json.dumps(shell_data))
                 # 同时关闭 ToolCallItem 进度条
                 short = f"[ok] Python ({len(code.splitlines())} lines)" if success else f"[err] {result_text[:50]}"
+                QtCore.QMetaObject.invokeMethod(
+                    self, "_add_tool_result_ui",
+                    QtCore.Qt.QueuedConnection,
+                    QtCore.Q_ARG(str, name),
+                    QtCore.Q_ARG(str, short)
+                )
+                return
+        
+        # === execute_shell 专用展示 ===
+        if name == 'execute_shell' and arguments:
+            command = arguments.get('command', '')
+            if command:
+                shell_data = {
+                    'command': command,
+                    'output': result.get('result', ''),
+                    'error': result.get('error', ''),
+                    'success': success,
+                    'cwd': arguments.get('cwd', ''),
+                }
+                self._addSystemShell.emit(command, json.dumps(shell_data))
+                short = f"[ok] $ {command[:40]}" if success else f"[err] {result_text[:50]}"
                 QtCore.QMetaObject.invokeMethod(
                     self, "_add_tool_result_ui",
                     QtCore.Qt.QueuedConnection,
@@ -2760,7 +2800,63 @@ Todo 管理规则（严格遵守）:
         # 放入 Python Shell 折叠区块（而非 details_layout）
         resp.add_shell_widget(widget)
         self._scroll_agent_to_bottom()
-    
+
+    @QtCore.Slot(str, str)
+    def _on_add_system_shell(self, command: str, result_json: str):
+        """处理 execute_shell 的专用 UI 展示"""
+        resp = self._agent_response or self._current_response
+        if not resp:
+            return
+
+        try:
+            data = json.loads(result_json)
+        except Exception:
+            data = {}
+
+        raw_output = data.get('output', '')
+        error = data.get('error', '')
+        success = data.get('success', True)
+        cwd = data.get('cwd', '')
+
+        # 从输出中提取执行时间和退出码
+        exec_time = 0.0
+        exit_code = 0
+        stdout_parts = []
+        stderr_parts = []
+
+        for line in raw_output.split('\n'):
+            # 匹配 "退出码: 0, 耗时: 0.123s" 或 "⛔ 命令执行失败: 退出码: 1, 耗时: ..."
+            time_match = re.search(r'耗时:\s*([\d.]+)s', line)
+            code_match = re.search(r'退出码:\s*(\d+)', line)
+            if time_match:
+                exec_time = float(time_match.group(1))
+            if code_match:
+                exit_code = int(code_match.group(1))
+            if time_match or code_match:
+                continue
+            # 分离 stdout / stderr
+            if line.strip() == '--- stdout ---':
+                continue
+            if line.strip() == '--- stderr ---':
+                continue
+            # 简单处理：在 stderr 标记之后的内容归入 stderr
+            stdout_parts.append(line)
+
+        clean_output = '\n'.join(stdout_parts).strip()
+
+        widget = SystemShellWidget(
+            command=command,
+            output=clean_output,
+            error=error,
+            exit_code=exit_code,
+            exec_time=exec_time,
+            success=success,
+            cwd=cwd,
+            parent=resp
+        )
+        resp.add_sys_shell_widget(widget)
+        self._scroll_agent_to_bottom()
+
     def _on_stop(self):
         self.client.request_stop()
 
@@ -3787,13 +3883,26 @@ Todo 管理规则（严格遵守）:
                     self._render_tool_summary_history(content)
                 else:
                     response = self._add_ai_response()
+                    # 恢复 thinking 内容（如果有）
+                    thinking = msg.get('thinking', '')
+                    if thinking:
+                        response.add_thinking(thinking)
+                        response.thinking_section.finalize()
+                        # 历史恢复时默认折叠
+                        if not response.thinking_section._collapsed:
+                            response.thinking_section.toggle()
                     # 旧格式 tool 消息
                     self._render_old_tool_msgs(response, tool_msgs)
                     # AI 回复内容
                     response.set_content(content)
                     response.status_label.setText("历史")
                     response.finalize()
-                    label = f"历史 | {len(tool_msgs)}次调用" if tool_msgs else "历史"
+                    parts = []
+                    if thinking:
+                        parts.append("思考")
+                    if tool_msgs:
+                        parts.append(f"{len(tool_msgs)}次调用")
+                    label = f"历史 | {', '.join(parts)}" if parts else "历史"
                     response.status_label.setText(label)
 
                 i = j  # 跳过已处理的 tool 消息

@@ -47,6 +47,44 @@ except ImportError:
     HAS_DOC_RAG = False
     print("[MCP Client] DocRAG 模块未找到，本地文档检索功能不可用")
 
+# 导入 Skill 系统
+HAS_SKILLS = False
+_list_skills = None   # type: ignore
+_run_skill = None     # type: ignore
+try:
+    from ...skills import list_skills as _list_skills, run_skill as _run_skill
+    HAS_SKILLS = True
+except (ImportError, ValueError, SystemError):
+    pass
+
+if not HAS_SKILLS:
+    try:
+        import importlib
+        _skills_mod = importlib.import_module('HOUDINI_HIP_MANAGER.skills')
+        _list_skills = _skills_mod.list_skills
+        _run_skill = _skills_mod.run_skill
+        HAS_SKILLS = True
+    except Exception:
+        pass
+
+if not HAS_SKILLS:
+    # 最后尝试：基于文件路径直接导入
+    try:
+        import importlib.util
+        _skills_init = Path(__file__).parent.parent.parent / 'skills' / '__init__.py'
+        if _skills_init.exists():
+            _spec = importlib.util.spec_from_file_location('houdini_skills', str(_skills_init))
+            _skills_mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_skills_mod)
+            _list_skills = _skills_mod.list_skills
+            _run_skill = _skills_mod.run_skill
+            HAS_SKILLS = True
+    except Exception:
+        pass
+
+if not HAS_SKILLS:
+    print("[MCP Client] Skill 系统未加载，run_skill/list_skills 不可用")
+
 
 class HoudiniMCP:
     """Houdini 节点操作客户端
@@ -997,9 +1035,9 @@ class HoudiniMCP:
                 return False, f"节点 {node_path} 没有几何体输出"
             
             info = {
-                "点数": len(geo.points()),
-                "顶点数": len(geo.vertices()),
-                "图元数": len(geo.prims()),
+                "点数": geo.intrinsicValue("pointcount"),
+                "顶点数": geo.intrinsicValue("vertexcount"),
+                "图元数": geo.intrinsicValue("primitivecount"),
             }
             
             # 点属性
@@ -2329,6 +2367,200 @@ class HoudiniMCP:
         error_parts.append(f"执行时间: {result.get('execution_time', 0):.3f}s")
         return {"success": False, "error": "\n".join(error_parts), "result": partial_output}
 
+    # ========================================
+    # 系统 Shell 沙盒执行
+    # ========================================
+
+    # Shell 命令黑名单（正则，忽略大小写）
+    _SHELL_DANGEROUS_PATTERNS = [
+        # 文件/目录批量删除
+        (r'\brm\s+.*-r', "禁止递归删除 (rm -r)"),
+        (r'\brm\s+.*-f', "禁止强制删除 (rm -f)"),
+        (r'\brmdir\s+/s', "禁止递归删除目录 (rmdir /s)"),
+        (r'\bdel\s+/s', "禁止递归删除 (del /s)"),
+        (r'\bdel\s+/q', "禁止静默删除 (del /q)"),
+        (r'\brd\s+/s', "禁止递归删除 (rd /s)"),
+        # 格式化
+        (r'\bformat\s+[a-zA-Z]:', "禁止格式化磁盘"),
+        # 注册表
+        (r'\breg\s+(delete|add)', "禁止修改注册表"),
+        # 关机/重启
+        (r'\bshutdown\b', "禁止关机"),
+        (r'\breboot\b', "禁止重启"),
+        # 权限提升
+        (r'\brunas\b', "禁止 runas 提权"),
+        (r'\bsudo\b', "禁止 sudo 提权"),
+        # 网络配置
+        (r'\bnetsh\b', "禁止修改网络配置"),
+        # 进程注入
+        (r'\btaskkill\s+/f', "禁止强制结束进程"),
+        # 危险 PowerShell
+        (r'Remove-Item\s+.*-Recurse', "禁止 PowerShell 递归删除"),
+        (r'Invoke-Expression', "禁止 Invoke-Expression"),
+        (r'\biex\b', "禁止 iex (Invoke-Expression 别名)"),
+        # 磁盘操作
+        (r'\bdiskpart\b', "禁止 diskpart"),
+        # fork bomb
+        (r'%0\|%0', "禁止 fork bomb"),
+        (r':\(\)\{.*\}', "禁止 fork bomb"),
+    ]
+
+    # 允许的命令前缀白名单（粗粒度，不在名单中的也可以执行，只有黑名单才拦截）
+    # 这个白名单仅用于日志提示
+    _SHELL_COMMON_COMMANDS = frozenset({
+        'pip', 'python', 'git', 'dir', 'ls', 'cd', 'echo', 'type', 'cat',
+        'where', 'which', 'whoami', 'hostname', 'ipconfig', 'ifconfig',
+        'curl', 'wget', 'ffmpeg', 'ffprobe', 'magick', 'convert',
+        'hython', 'hbatch', 'mantra', 'hcmd',
+        'node', 'npm', 'npx', 'conda', 'env', 'set', 'tree',
+        'find', 'grep', 'rg', 'awk', 'sed', 'head', 'tail', 'wc',
+        'mkdir', 'copy', 'cp', 'move', 'mv', 'ren', 'rename',
+        'tar', 'zip', 'unzip', '7z',
+    })
+
+    def _check_shell_security(self, command: str) -> Optional[str]:
+        """检查 Shell 命令是否包含危险操作"""
+        for pattern, msg in self._SHELL_DANGEROUS_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return f"安全拦截: {msg}\n命令: {command}\n如确需执行，请在系统终端中手动运行。"
+        return None
+
+    def _tool_execute_shell(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """在系统 Shell 中执行命令（沙盒环境）"""
+        import subprocess
+        import hashlib
+
+        command = args.get("command", "").strip()
+        if not command:
+            return {"success": False, "error": "缺少 command 参数"}
+
+        page = int(args.get("page", 1))
+        timeout = min(int(args.get("timeout", 30)), 120)  # 最大 120 秒
+
+        # 分页快速路径
+        cmd_hash = hashlib.md5(command.encode()).hexdigest()[:12]
+        cache_key = f"shell:{cmd_hash}"
+        if page > 1 and cache_key in self._tool_page_cache:
+            hint = f'execute_shell(command="...同上...", page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                self._tool_page_cache[cache_key], cache_key, hint, page)}
+
+        # 安全检查
+        security_msg = self._check_shell_security(command)
+        if security_msg:
+            return {"success": False, "error": security_msg}
+
+        # 工作目录
+        cwd = args.get("cwd", "")
+        if not cwd:
+            # 默认：项目根目录
+            cwd = str(Path(__file__).parent.parent.parent.parent)
+        if not os.path.isdir(cwd):
+            return {"success": False, "error": f"工作目录不存在: {cwd}"}
+
+        start_time = time.time()
+        try:
+            # Windows 上用 cmd /c，其他平台用 /bin/sh -c
+            if sys.platform == 'win32':
+                proc = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=cwd,
+                    encoding='utf-8',
+                    errors='replace',
+                    env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                )
+            else:
+                proc = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=cwd,
+                )
+
+            elapsed = time.time() - start_time
+
+            # 组装输出
+            parts = []
+            if proc.stdout:
+                parts.append(proc.stdout.rstrip())
+            if proc.stderr:
+                parts.append(f"[stderr]\n{proc.stderr.rstrip()}")
+            parts.append(f"[退出码: {proc.returncode}, 耗时: {elapsed:.2f}s]")
+            full_text = "\n".join(parts)
+
+            success = proc.returncode == 0
+            hint = f'execute_shell(command="...同上...", page={page})'
+            return {"success": success, "result": self._paginate_tool_result(
+                full_text, cache_key, hint, page)}
+
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - start_time
+            return {"success": False, "error": f"命令超时（{timeout}s 限制）\n命令: {command}\n耗时: {elapsed:.2f}s"}
+        except Exception as e:
+            return {"success": False, "error": f"Shell 执行失败: {e}"}
+
+    # ========================================
+    # Skill 系统
+    # ========================================
+
+    def _tool_list_skills(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """列出所有可用 Skill"""
+        if not HAS_SKILLS or _list_skills is None:
+            return {"success": False, "error": "Skill 系统未加载"}
+        try:
+            skills = _list_skills()
+            if not skills:
+                return {"success": True, "result": "当前没有可用的 Skill。"}
+            lines = [f"可用 Skill ({len(skills)} 个):\n"]
+            for s in skills:
+                lines.append(f"### {s['name']}")
+                lines.append(f"  {s.get('description', '')}")
+                params = s.get('parameters', {})
+                if params:
+                    lines.append("  参数:")
+                    for pname, pinfo in params.items():
+                        req = " (必填)" if pinfo.get('required') else ""
+                        lines.append(f"    - {pname}: {pinfo.get('description', '')}{req}")
+                lines.append("")
+            return {"success": True, "result": "\n".join(lines)}
+        except Exception as e:
+            return {"success": False, "error": f"列出 Skill 失败: {e}"}
+
+    def _tool_run_skill(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """执行指定 Skill"""
+        if not HAS_SKILLS or _run_skill is None:
+            return {"success": False, "error": "Skill 系统未加载"}
+
+        skill_name = args.get("skill_name", "")
+        if not skill_name:
+            return {"success": False, "error": "缺少 skill_name 参数"}
+
+        params = args.get("params", {})
+        if not isinstance(params, dict):
+            try:
+                params = json.loads(str(params))
+            except Exception:
+                return {"success": False, "error": "params 必须是 JSON 对象"}
+
+        try:
+            result = _run_skill(skill_name, params)
+            if "error" in result:
+                return {"success": False, "error": result["error"]}
+
+            # 格式化输出
+            import json as _json
+            formatted = _json.dumps(result, ensure_ascii=False, indent=2)
+            return {"success": True, "result": formatted}
+        except Exception as e:
+            import traceback
+            return {"success": False, "error": f"Skill 执行异常: {e}\n{traceback.format_exc()[:500]}"}
+
     def _tool_check_errors(self, args: Dict[str, Any]) -> Dict[str, Any]:
         ok, text = self.check_node_errors_text(args.get("node_path"))
         return {"success": ok, "result": text if ok else "", "error": "" if ok else text}
@@ -2386,7 +2618,7 @@ class HoudiniMCP:
         "search_node_types": "_tool_search_node_types",
         "semantic_search_nodes": "_tool_semantic_search_nodes",
         "list_children": "_tool_list_children",
-        "get_geometry_info": "_tool_get_geometry_info",
+        # "get_geometry_info" 已移除，由 skill 替代
         "read_selection": "_tool_read_selection",
         "set_display_flag": "_tool_set_display_flag",
         "copy_node": "_tool_copy_node",
@@ -2395,10 +2627,13 @@ class HoudiniMCP:
         "save_hip": "_tool_save_hip",
         "undo_redo": "_tool_undo_redo",
         "execute_python": "_tool_execute_python",
+        "execute_shell": "_tool_execute_shell",
         "check_errors": "_tool_check_errors",
         "search_local_doc": "_tool_search_local_doc",
         "get_houdini_node_doc": "_tool_get_houdini_node_doc",
         "get_node_inputs": "_tool_get_node_inputs",
+        "run_skill": "_tool_run_skill",
+        "list_skills": "_tool_list_skills",
     }
 
     # Python 代码安全黑名单

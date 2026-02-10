@@ -594,6 +594,26 @@ class AIResponse(QtWidgets.QWidget):
         """)
         layout.addWidget(self.shell_section)
         
+        # === System Shell 区块（可折叠，默认折叠）===
+        self._sys_shell_count = 0
+        self.sys_shell_section = CollapsibleSection("System Shell", collapsed=True, parent=self)
+        self.sys_shell_section.setVisible(False)
+        self.sys_shell_section.header.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.ACCENT_GREEN};
+                font-size: 14px;
+                font-family: {CursorTheme.FONT_BODY};
+                text-align: left;
+                padding: 4px 8px;
+                border: none;
+                background: {CursorTheme.BG_TERTIARY};
+            }}
+            QPushButton:hover {{
+                background: {CursorTheme.BG_HOVER};
+            }}
+        """)
+        layout.addWidget(self.sys_shell_section)
+        
         # === 总结/回复区域 ===
         self.summary_frame = QtWidgets.QFrame()
         self.summary_frame.setStyleSheet(f"""
@@ -662,6 +682,14 @@ class AIResponse(QtWidgets.QWidget):
             self.shell_section.setVisible(True)
         self.shell_section.set_title(f"Python Shell ({self._shell_count})")
         self.shell_section.add_widget(widget)
+    
+    def add_sys_shell_widget(self, widget: 'SystemShellWidget'):
+        """将 SystemShellWidget 添加到 System Shell 折叠区块"""
+        self._sys_shell_count += 1
+        if not self.sys_shell_section.isVisible():
+            self.sys_shell_section.setVisible(True)
+        self.sys_shell_section.set_title(f"System Shell ({self._sys_shell_count})")
+        self.sys_shell_section.add_widget(widget)
     
     def add_status(self, text: str):
         """添加状态（处理工具调用）"""
@@ -1678,6 +1706,162 @@ class PythonShellWidget(QtWidgets.QFrame):
         elif not success:
             # 没有输出也没有错误但失败了
             err_label = QtWidgets.QLabel("执行失败（无详细信息）")
+            err_label.setStyleSheet(
+                f"color:{CursorTheme.ACCENT_RED};font-size:12px;padding:6px 8px;"
+            )
+            layout.addWidget(err_label)
+
+
+class SystemShellWidget(QtWidgets.QFrame):
+    """System Shell 执行结果 — 显示命令 + stdout/stderr + 退出码"""
+
+    def __init__(self, command: str, output: str = "", error: str = "",
+                 exit_code: int = 0, exec_time: float = 0.0,
+                 success: bool = True, cwd: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("SystemShellWidget")
+
+        border_color = CursorTheme.ACCENT_GREEN if success else CursorTheme.ACCENT_RED
+        self.setStyleSheet(f"""
+            #SystemShellWidget {{
+                background: #1a1a1a;
+                border: 1px solid {CursorTheme.BORDER};
+                border-left: 3px solid {border_color};
+            }}
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ---- header: SHELL + cwd + 执行时间 + 退出码 ----
+        header = QtWidgets.QWidget()
+        header.setStyleSheet("background:#252525;")
+        hl = QtWidgets.QHBoxLayout(header)
+        hl.setContentsMargins(8, 4, 8, 4)
+        hl.setSpacing(6)
+
+        title_lbl = QtWidgets.QLabel("SHELL")
+        title_lbl.setStyleSheet(
+            f"color:{CursorTheme.ACCENT_GREEN};font-size:11px;font-weight:bold;"
+            f"font-family:{CursorTheme.FONT_CODE};"
+        )
+        hl.addWidget(title_lbl)
+
+        if cwd:
+            # 只显示最后两层目录
+            parts = cwd.replace('\\', '/').rstrip('/').split('/')
+            short_cwd = '/'.join(parts[-2:]) if len(parts) >= 2 else cwd
+            cwd_lbl = QtWidgets.QLabel(short_cwd)
+            cwd_lbl.setStyleSheet(
+                f"color:{CursorTheme.TEXT_MUTED};font-size:10px;"
+                f"font-family:{CursorTheme.FONT_CODE};"
+            )
+            hl.addWidget(cwd_lbl)
+
+        hl.addStretch()
+
+        if exec_time > 0:
+            time_lbl = QtWidgets.QLabel(f"{exec_time:.2f}s")
+            time_lbl.setStyleSheet(f"color:{CursorTheme.TEXT_MUTED};font-size:11px;")
+            hl.addWidget(time_lbl)
+
+        code_lbl = QtWidgets.QLabel(f"exit {exit_code}")
+        code_color = CursorTheme.ACCENT_GREEN if exit_code == 0 else CursorTheme.ACCENT_RED
+        code_lbl.setStyleSheet(
+            f"color:{code_color};font-size:11px;font-weight:bold;"
+            f"font-family:Consolas,Monaco,monospace;"
+        )
+        hl.addWidget(code_lbl)
+
+        layout.addWidget(header)
+
+        # ---- 命令区域 ----
+        cmd_widget = QtWidgets.QTextEdit()
+        cmd_widget.setReadOnly(True)
+        cmd_widget.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
+        cmd_widget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        cmd_widget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        cmd_widget.setStyleSheet(f"""
+            QTextEdit {{
+                background: #1e1e1e;
+                color: {CursorTheme.TEXT_PRIMARY};
+                border: none;
+                border-bottom: 1px solid {CursorTheme.BORDER};
+                padding: 6px 8px;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 13px;
+            }}
+            QTextEdit QScrollBar:vertical {{ width:5px; background:transparent; }}
+            QTextEdit QScrollBar::handle:vertical {{ background:#3c3c3c; border-radius:2px; }}
+            QTextEdit QScrollBar:horizontal {{ height:5px; background:transparent; }}
+            QTextEdit QScrollBar::handle:horizontal {{ background:#3c3c3c; border-radius:2px; }}
+        """)
+
+        # 命令显示：带 $ 或 > 前缀
+        import html as _html
+        prefix = "&gt;" if "win" in __import__('sys').platform else "$"
+        cmd_html = (
+            f'<pre style="margin:0;white-space:pre;">'
+            f'<span style="color:{CursorTheme.ACCENT_GREEN};">{prefix}</span> '
+            f'{_html.escape(command)}</pre>'
+        )
+        cmd_widget.setHtml(cmd_html)
+
+        doc = cmd_widget.document()
+        doc.setDocumentMargin(4)
+        cmd_h = min(int(doc.size().height()) + 16, 80)
+        cmd_widget.setFixedHeight(cmd_h)
+        layout.addWidget(cmd_widget)
+
+        # ---- 输出区域 ----
+        has_output = bool(output and output.strip())
+        has_error = bool(error and error.strip())
+
+        if has_output or has_error:
+            output_widget = QtWidgets.QTextEdit()
+            output_widget.setReadOnly(True)
+            output_widget.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
+            output_widget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            output_widget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+
+            parts = []
+            if has_output:
+                parts.append(f'<span style="color:{CursorTheme.TEXT_PRIMARY};">'
+                             f'{_html.escape(output.strip())}</span>')
+            if has_error:
+                parts.append(f'<span style="color:{CursorTheme.ACCENT_RED};">'
+                             f'{_html.escape(error.strip())}</span>')
+
+            content_html = '<br>'.join(parts)
+            output_widget.setHtml(
+                f'<pre style="margin:0;white-space:pre;font-family:Consolas,Monaco,monospace;'
+                f'font-size:12px;">{content_html}</pre>'
+            )
+
+            output_widget.setStyleSheet(f"""
+                QTextEdit {{
+                    background: #141414;
+                    color: {CursorTheme.TEXT_PRIMARY};
+                    border: none;
+                    padding: 6px 8px;
+                    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                    font-size: 12px;
+                }}
+                QTextEdit QScrollBar:vertical {{ width:5px; background:transparent; }}
+                QTextEdit QScrollBar::handle:vertical {{ background:#3c3c3c; border-radius:2px; }}
+                QTextEdit QScrollBar:horizontal {{ height:5px; background:transparent; }}
+                QTextEdit QScrollBar::handle:horizontal {{ background:#3c3c3c; border-radius:2px; }}
+            """)
+
+            doc2 = output_widget.document()
+            doc2.setDocumentMargin(4)
+            out_h = min(int(doc2.size().height()) + 16, 250)
+            output_widget.setFixedHeight(out_h)
+            layout.addWidget(output_widget)
+
+        elif not success:
+            err_label = QtWidgets.QLabel("命令执行失败（无详细信息）")
             err_label.setStyleSheet(
                 f"color:{CursorTheme.ACCENT_RED};font-size:12px;padding:6px 8px;"
             )
