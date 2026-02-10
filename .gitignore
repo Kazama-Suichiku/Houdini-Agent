@@ -19,6 +19,10 @@ cache/
 # Config (contains API keys)
 config/houdini_ai.ini
 
+# Temp/backup files
+*_backup.py
+*_new.py
+
 # OS
 Thumbs.db
 .DS_Store

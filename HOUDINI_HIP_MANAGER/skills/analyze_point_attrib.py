@@ -1,35 +1,35 @@
 ﻿# -*- coding: utf-8 -*-
-"""閫氱敤鍑犱綍灞炴€у垎鏋?Skill
+"""通用几何属性分析 Skill
 
-鍒嗘瀽 Houdini 鑺傜偣鍑犱綍浣撶殑灞炴€х粺璁′俊鎭紝鏀寔 point/vertex/prim/detail 鍥涚灞炴€х被鍒€?
-涓嶆寚瀹氬睘鎬у悕鏃惰繑鍥炲睘鎬у垪琛紝鎸囧畾鏃惰繑鍥炵粺璁′俊鎭紙min/max/mean/std/nan/inf锛夈€?
+分析 Houdini 节点几何体的属性统计信息，支持 point/vertex/prim/detail 四种属性类别。
+不指定属性名时返回属性列表，指定时返回统计信息（min/max/mean/std/nan/inf）。
 """
 
 SKILL_INFO = {
     "name": "analyze_geometry_attribs",
     "description": (
-        "鍒嗘瀽鑺傜偣鍑犱綍浣撳睘鎬с€傛敮鎸?point/vertex/prim/detail 鍥涚绫诲埆銆?
-        "涓嶄紶 attrib_name 鏃惰繑鍥炲睘鎬у垪琛紱浼犲叆鏃惰繑鍥炵粺璁′俊鎭紙min/max/mean/std/nan/inf锛夈€?
+        "分析节点几何体属性。支持 point/vertex/prim/detail 四种类别。"
+        "不传 attrib_name 时返回属性列表；传入时返回统计信息（min/max/mean/std/nan/inf）。"
     ),
     "parameters": {
         "node_path": {
             "type": "string",
-            "description": "鑺傜偣璺緞锛屽 /obj/geo1/box1",
+            "description": "节点路径，如 /obj/geo1/box1",
             "required": True,
         },
         "attrib_name": {
             "type": "string",
-            "description": "灞炴€у悕锛堝 P, N, uv, Cd锛夈€傜暀绌哄垯杩斿洖璇ョ被鍒殑灞炴€у垪琛?,
+            "description": "属性名（如 P, N, uv, Cd）。留空则返回该类别的属性列表",
             "required": False,
         },
         "attrib_class": {
             "type": "string",
-            "description": "灞炴€х被鍒? point, vertex, prim, detail锛堥粯璁?point锛?,
+            "description": "属性类别: point, vertex, prim, detail（默认 point）",
             "required": False,
         },
         "max_sample": {
             "type": "integer",
-            "description": "鏈€澶ч噰鏍锋暟锛堥粯璁?100000锛岃秴杩囨椂闅忔満閲囨牱锛?,
+            "description": "最大采样数（默认 100000，超过时随机采样）",
             "required": False,
         },
     },
@@ -37,26 +37,26 @@ SKILL_INFO = {
 
 
 def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
-    """鍏ュ彛鍑芥暟
+    """入口函数
 
     Args:
-        node_path: 鑺傜偣璺緞
-        attrib_name: 灞炴€у悕锛圢one 鍒欒繑鍥炲睘鎬у垪琛級
-        attrib_class: 灞炴€х被鍒?- point/vertex/prim/detail
-        max_sample: 鏈€澶ч噰鏍锋暟
+        node_path: 节点路径
+        attrib_name: 属性名（None 则返回属性列表）
+        attrib_class: 属性类别 - point/vertex/prim/detail
+        max_sample: 最大采样数
     """
     import hou  # type: ignore
     import numpy as np
 
     node = hou.node(node_path)
     if not node:
-        return {"error": f"鑺傜偣涓嶅瓨鍦? {node_path}"}
+        return {"error": f"节点不存在: {node_path}"}
 
     geo = node.geometry()
     if not geo:
-        return {"error": "鏃犳硶鑾峰彇鍑犱綍浣?}
+        return {"error": "无法获取几何体"}
 
-    # 灞炴€х被鍒槧灏?
+    # 属性类别映射
     attrib_map = {
         "point": (
             geo.findPointAttrib,
@@ -89,11 +89,11 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
     }
 
     if attrib_class not in attrib_map:
-        return {"error": f"鏃犳晥鐨勫睘鎬х被鍒? {attrib_class}锛屽彲閫? point, vertex, prim, detail"}
+        return {"error": f"无效的属性类别: {attrib_class}，可选: point, vertex, prim, detail"}
 
     find_func, float_func, int_func, str_func, elem_count = attrib_map[attrib_class]
 
-    # 濡傛灉娌℃湁鎸囧畾灞炴€у悕锛岃繑鍥炲睘鎬у垪琛?
+    # 如果没有指定属性名，返回属性列表
     if attrib_name is None:
         attrib_list_map = {
             "point": geo.pointAttribs,
@@ -116,15 +116,15 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
             ],
         }
 
-    # 鏌ユ壘鎸囧畾灞炴€?
+    # 查找指定属性
     attrib = find_func(attrib_name)
     if not attrib:
-        return {"error": f"灞炴€т笉瀛樺湪: {attrib_name} (绫诲埆: {attrib_class})"}
+        return {"error": f"属性不存在: {attrib_name} (类别: {attrib_class})"}
 
     size = attrib.size()
     data_type = str(attrib.dataType()).split(".")[-1]
 
-    # Detail 灞炴€х壒娈婂鐞?
+    # Detail 属性特殊处理
     if attrib_class == "detail":
         if data_type == "Float":
             val = (
@@ -152,7 +152,7 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
             "value": val,
         }
 
-    # 鑾峰彇灞炴€у€?
+    # 获取属性值
     if data_type == "Float":
         vals = np.array(float_func(attrib_name))
     elif data_type == "Int":
@@ -169,11 +169,11 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
             "unique_values": unique[:20],
         }
 
-    # 閲嶅澶氱淮灞炴€?
+    # 重塑多维属性
     if size > 1:
         vals = vals.reshape((-1, size))
 
-    # 閲囨牱锛堝ぇ鏁版嵁閲忔椂锛?
+    # 采样（大数据量时）
     max_sample = min(int(max_sample), 500000)
     n = len(vals) if vals.ndim == 1 else vals.shape[0]
     sampled = False
@@ -182,7 +182,7 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
         vals = vals[idx] if vals.ndim == 1 else vals[idx, :]
         sampled = True
 
-    # 杩斿洖缁熻淇℃伅
+    # 返回统计信息
     result = {
         "node_path": node_path,
         "name": attrib_name,
@@ -196,12 +196,9 @@ def run(node_path, attrib_name=None, attrib_class="point", max_sample=100000):
         "std": vals.std(axis=0).tolist() if size > 1 else float(vals.std()),
     }
 
-    # NaN/Inf 妫€娴嬶紙浠?float锛?
+    # NaN/Inf 检测（仅 float）
     if data_type == "Float":
         result["nan_count"] = int(np.isnan(vals).sum())
         result["inf_count"] = int(np.isinf(vals).sum())
 
     return result
-
-
-

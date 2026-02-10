@@ -80,6 +80,8 @@ class AITab(QtWidgets.QWidget):
         self._agent_scroll_area = None  # 运行中 session 的 scroll_area
         self._agent_history: Optional[List[Dict[str, Any]]] = None
         self._agent_token_stats: Optional[Dict] = None
+        self._agent_todo_list = None       # 运行中 session 的 TodoList
+        self._agent_chat_layout = None     # 运行中 session 的 chat_layout
         
         # 上下文管理
         self._max_context_messages = 20
@@ -284,10 +286,11 @@ copytopoints 第0输入=模板几何体，第1输入=目标点。需要一个小
 Skill 系统（几何分析必须优先使用）:
 -Skill 是预定义的高级分析脚本，比手写代码更可靠、更高效
 -涉及几何体信息（点数、面数、属性、边界盒、连通性等）时，必须优先用 run_skill 而非 execute_python
--常用 skill: analyze_geometry_attribs(属性统计), get_bounding_info(边界盒), analyze_connectivity(连通性), compare_attributes(属性对比), find_dead_nodes(死节点), trace_node_dependencies(依赖追溯), find_attribute_references(属性引用查找)
+-常用 skill: analyze_geometry_attribs(属性统计), get_bounding_info(边界盒), analyze_connectivity(连通性), compare_attributes(属性对比), find_dead_nodes(死节点), trace_node_dependencies(依赖追溯), find_attribute_references(属性引用查找), analyze_normals(法线质量检测)
 -不确定有哪些 skill 时先调用 list_skills 查看
 -示例: run_skill(skill_name="analyze_geometry_attribs", params={"node_path": "/obj/geo1/box1"}) 可列出全部属性
 -示例: run_skill(skill_name="get_bounding_info", params={"node_path": "/obj/geo1/box1"}) 获取边界盒
+-示例: run_skill(skill_name="analyze_normals", params={"node_path": "/obj/geo1/box1"}) 检测法线质量
 
 联网搜索策略（使用 web_search 前必须遵守）:
 -将用户问题转化为精准搜索关键词，不要直接用原始问题当搜索词
@@ -665,17 +668,24 @@ Todo 管理规则（严格遵守）:
         """为会话创建 TodoList 控件（初始隐藏，首次使用时插入 chat_layout）"""
         return TodoList(parent)
     
-    def _ensure_todo_in_chat(self):
-        """确保 todo_list 已在 chat_layout 中（跟随对话流）"""
-        if not self.todo_list:
+    def _ensure_todo_in_chat(self, todo=None, layout=None):
+        """确保 todo_list 已在 chat_layout 中（跟随对话流）
+        
+        Args:
+            todo: 要插入的 TodoList，默认使用 self.todo_list
+            layout: 目标 chat_layout，默认使用 self.chat_layout
+        """
+        todo = todo or self.todo_list
+        layout = layout or self.chat_layout
+        if not todo or not layout:
             return
         # 如果已在 layout 中，不要重复插入
-        for i in range(self.chat_layout.count()):
-            if self.chat_layout.itemAt(i).widget() is self.todo_list:
+        for i in range(layout.count()):
+            if layout.itemAt(i).widget() is todo:
                 return
         # 插入到当前最末的消息之后（stretch 之前）
-        idx = self.chat_layout.count() - 1  # -1 跳过末尾 stretch
-        self.chat_layout.insertWidget(idx, self.todo_list)
+        idx = layout.count() - 1  # -1 跳过末尾 stretch
+        layout.insertWidget(idx, todo)
     
     def _new_session(self):
         """新建对话会话"""
@@ -1359,6 +1369,8 @@ Todo 管理规则（严格遵守）:
             self._agent_scroll_area = self.scroll_area
             self._agent_history = self._conversation_history
             self._agent_token_stats = self._token_stats
+            self._agent_todo_list = self.todo_list
+            self._agent_chat_layout = self.chat_layout
             
             # 重置缓冲区
             self._thinking_buffer = ""
@@ -1382,12 +1394,16 @@ Todo 管理规则（严格遵守）:
                     s['conversation_history'] = self._agent_history
                 if self._agent_token_stats is not None:
                     s['token_stats'] = self._agent_token_stats
+                if self._agent_todo_list is not None:
+                    s['todo_list'] = self._agent_todo_list
             
             self._agent_session_id = None
             self._agent_response = None
             self._agent_scroll_area = None
             self._agent_history = None
             self._agent_token_stats = None
+            self._agent_todo_list = None
+            self._agent_chat_layout = None
             
             if self._thinking_timer:
                 self._thinking_timer.stop()
@@ -1667,64 +1683,82 @@ Todo 管理规则（严格遵守）:
         if resp:
             resp.finalize()
         
-        # 记录工具调用历史 + AI 回复到对话历史
-        # ⚠️ 关键设计：合并为一条 assistant 消息，避免连续 assistant 破坏 user/assistant 交替
-        # 参考 ChatGPT / Cursor 做法：保留工具名+关键参数+结果，让模型下一轮能理解上一轮做了什么
-        tool_calls_history = result.get('tool_calls_history', [])
-        tool_summary_text = ""
-        if tool_calls_history:
-            tool_summary_parts = []
-            for tool_call in tool_calls_history:
-                tool_name = tool_call.get('tool_name', '')
-                tool_args = tool_call.get('arguments', {})
-                tool_result = tool_call.get('result', {})
-                
-                # 格式：tool_name(key_args) → result（保留参数信息，让模型能参考）
-                args_brief = self._format_tool_args_brief(tool_name, tool_args)
-                
-                if tool_result.get('success'):
-                    result_text = str(tool_result.get('result', ''))
-                    # 提取路径等关键信息
-                    if tool_name in ('create_node', 'create_nodes_batch', 'connect_nodes', 
-                                     'set_node_parameter', 'create_wrangle_node'):
-                        paths = re.findall(r'/[\w/]+', result_text)
-                        if paths:
-                            result_text = ' '.join(paths[:3])
-                        elif len(result_text) > 120:
-                            result_text = result_text[:120] + '...'
-                    elif len(result_text) > 120:
-                        result_text = result_text[:120] + '...'
-                    tool_summary_parts.append(f"[ok] {tool_name}({args_brief}) → {result_text}")
-                else:
-                    error_t = str(tool_result.get('error', ''))[:100]
-                    tool_summary_parts.append(f"[err] {tool_name}({args_brief}) → {error_t}")
-            
-            if tool_summary_parts:
-                tool_summary_text = "[工具执行结果]\n" + "\n".join(tool_summary_parts)
+        # ================================================================
+        # Cursor 风格：保存原生消息链到对话历史
+        # ================================================================
+        # 格式：assistant(tool_calls) → tool → ... → assistant(reply)
+        # 完整保留工具调用链和 AI 回复，不做任何压缩
+        # 只有系统级上下文管理（_manage_context / _progressive_trim）才在超限时压缩
         
-        # 提取 AI 回复内容
-        content = result.get('content', '')
-        clean_content = ""
+        tool_calls_history = result.get('tool_calls_history', [])
+        new_messages = result.get('new_messages', [])
+        
+        # 1. 添加工具交互链（原生 OpenAI 格式）
+        # new_messages 包含：assistant(tool_calls) + tool(results) + ...
+        if new_messages:
+            for nm in new_messages:
+                clean = nm.copy()
+                clean.pop('reasoning_content', None)  # 推理模型专用，不需持久化
+                history.append(clean)
+        
+        # 2. 提取并添加最终 AI 回复
+        # 优先使用 final_content（最后一轮的纯文本），其次 full_content
+        final_content = result.get('final_content', '')
+        if not final_content or not final_content.strip():
+            # final_content 为空 → 尝试从 new_messages 中提取最后一个有 content 的 assistant 消息
+            for nm in reversed(new_messages):
+                if nm.get('role') == 'assistant' and nm.get('content'):
+                    c = nm['content']
+                    # 去掉 think 标签后还有内容吗？
+                    stripped = re.sub(r'<think>[\s\S]*?</think>', '', c).strip()
+                    if stripped:
+                        final_content = c
+                        break
+            # 仍然为空 → 回退到 full_content
+            if not final_content or not final_content.strip():
+                final_content = result.get('content', '')
+        
         thinking_text = ""
-        if content:
-            thinking_parts = re.findall(r'<think>([\s\S]*?)</think>', content)
+        clean_content = ""
+        if final_content:
+            thinking_parts = re.findall(r'<think>([\s\S]*?)</think>', final_content)
             thinking_text = '\n'.join(thinking_parts).strip() if thinking_parts else ''
-            clean_content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+            clean_content = re.sub(r'<think>[\s\S]*?</think>', '', final_content).strip()
             clean_content = self._strip_fake_tool_results(clean_content)
         
-        # 合并为一条 assistant 消息（工具摘要 + AI 回复）
-        # 这样保持 user → assistant → user → assistant 严格交替
-        combined_parts = []
-        if tool_summary_text:
-            combined_parts.append(tool_summary_text)
-        if clean_content:
-            combined_parts.append(clean_content)
-        
-        if combined_parts:
-            msg = {'role': 'assistant', 'content': '\n\n'.join(combined_parts)}
+        # 确保历史以 assistant 消息结尾（维持 user→assistant 交替）
+        need_final = clean_content or new_messages or (not new_messages and not clean_content)
+        if need_final:
+            final_msg = {'role': 'assistant', 'content': clean_content or '(任务完成)'}
             if thinking_text:
-                msg['thinking'] = thinking_text
-            history.append(msg)
+                final_msg['thinking'] = thinking_text
+            # 提取 shell 执行记录，供历史恢复时重建 Shell 折叠面板
+            py_shells = []
+            sys_shells = []
+            for tc in tool_calls_history:
+                tn = tc.get('tool_name', '')
+                ta = tc.get('arguments', {})
+                tr = tc.get('result', {})
+                if tn == 'execute_python' and ta.get('code'):
+                    py_shells.append({
+                        'code': ta['code'],
+                        'output': tr.get('result', ''),
+                        'error': tr.get('error', ''),
+                        'success': bool(tr.get('success')),
+                    })
+                elif tn == 'execute_shell' and ta.get('command'):
+                    sys_shells.append({
+                        'command': ta['command'],
+                        'output': tr.get('result', ''),
+                        'error': tr.get('error', ''),
+                        'success': bool(tr.get('success')),
+                        'cwd': ta.get('cwd', ''),
+                    })
+            if py_shells:
+                final_msg['python_shells'] = py_shells
+            if sys_shells:
+                final_msg['system_shells'] = sys_shells
+            history.append(final_msg)
         
         # 管理上下文
         self._manage_context()
@@ -1797,13 +1831,22 @@ Todo 管理规则（严格遵守）:
         self._set_running(False)
 
     def _on_update_todo(self, todo_id: str, text: str, status: str):
-        """更新 Todo 列表（跟随对话流内联显示）"""
-        # 首次创建 todo 时把 TodoList 插入当前 chat_layout
-        self._ensure_todo_in_chat()
+        """更新 Todo 列表（跟随对话流内联显示）
+        
+        使用 agent 锚定的 todo_list / chat_layout，防止切换会话后
+        写入错误的窗口。
+        """
+        # 优先使用 agent 锚定的目标（会话 A 运行时不受会话 B 影响）
+        todo = self._agent_todo_list or self.todo_list
+        layout = self._agent_chat_layout or self.chat_layout
+        if not todo:
+            return
+        # 确保 todo_list 已在对应 chat_layout 中
+        self._ensure_todo_in_chat(todo, layout)
         if text:
-            self.todo_list.add_todo(todo_id, text, status)
+            todo.add_todo(todo_id, text, status)
         else:
-            self.todo_list.update_todo(todo_id, status)
+            todo.update_todo(todo_id, status)
 
     # 不需要 Houdini 主线程的工具集合（纯 Python / 系统操作，可在后台线程直接执行）
     _BG_SAFE_TOOLS = frozenset({
@@ -2014,12 +2057,53 @@ Todo 管理规则（严格遵守）:
     )
 
     @staticmethod
+    def _split_and_compress_assistant(content: str, max_reply: int = 1500) -> str:
+        """分离工具摘要和 AI 回复并智能压缩
+        
+        用于旧格式 assistant 消息（没有 _reply_content 字段），
+        尝试将 [工具执行结果] 段落和后续 AI 回复分开，
+        压缩工具部分、保留回复部分。
+        """
+        # 查找工具结果段落结尾
+        if '[工具执行结果]' not in content and '[工具结果]' not in content:
+            # 没有工具摘要，直接截断
+            return content[:max_reply] + ('...' if len(content) > max_reply else '')
+        
+        # 找到最后一行 [ok] 或 [err]
+        last_tool_line = max(content.rfind('\n[ok]'), content.rfind('\n[err]'))
+        if last_tool_line <= 0:
+            return content[:max_reply] + ('...' if len(content) > max_reply else '')
+        
+        # 找到该行结束位置
+        next_nl = content.find('\n', last_tool_line + 1)
+        if next_nl <= 0 or next_nl >= len(content) - 5:
+            return content[:max_reply] + ('...' if len(content) > max_reply else '')
+        
+        tool_text = content[:next_nl]
+        reply_text = content[next_nl:].strip()
+        
+        # 压缩工具部分
+        tool_lines = tool_text.strip().split('\n')
+        if len(tool_lines) > 6:
+            tool_text = '\n'.join(tool_lines[:1] + tool_lines[-4:]) + f'\n... 共 {len(tool_lines)-1} 次调用'
+        elif len(tool_text) > 500:
+            tool_text = tool_text[:500] + '...'
+        
+        # 保留回复部分
+        if reply_text:
+            reply_text = reply_text[:max_reply] + ('...' if len(reply_text) > max_reply else '')
+        
+        return tool_text + '\n\n' + reply_text if reply_text else tool_text
+
+    @staticmethod
     def _fix_message_alternation(messages: list) -> list:
         """修复消息交替问题：合并连续的相同角色消息
         
-        OpenAI API 规范要求 user/assistant 严格交替。
-        ChatGPT/Cursor 也遵循这个规范。连续的 assistant 或 user 消息
-        会导致部分 provider（尤其是中转 API）行为异常或丢失上下文。
+        Cursor 风格消息格式支持：
+        - user → assistant(tool_calls) → tool → assistant → user（正常格式）
+        - 只合并连续的 user 或连续的 assistant（无 tool_calls 的）
+        - 不合并带 tool_calls 的 assistant 消息（它们需要对应的 tool 结果）
+        - tool 消息不参与合并
         """
         if not messages:
             return messages
@@ -2029,13 +2113,25 @@ Todo 管理规则（严格遵守）:
             role = msg.get('role', '')
             prev_role = fixed[-1].get('role', '')
             
+            # tool 消息永不合并（它们通过 tool_call_id 关联到 assistant）
+            if role == 'tool' or prev_role == 'tool':
+                fixed.append(msg)
+                continue
+            
+            # 带 tool_calls 的 assistant 消息不合并（API 格式要求独立）
+            if role == 'assistant' and msg.get('tool_calls'):
+                fixed.append(msg)
+                continue
+            if prev_role == 'assistant' and fixed[-1].get('tool_calls'):
+                fixed.append(msg)
+                continue
+            
             if role == prev_role and role in ('user', 'assistant'):
-                # 合并连续的相同角色消息
-                prev_content = fixed[-1].get('content', '')
-                curr_content = msg.get('content', '')
+                # 合并连续的相同角色消息（仅限纯文本消息）
+                prev_content = fixed[-1].get('content') or ''
+                curr_content = msg.get('content') or ''
                 fixed[-1] = fixed[-1].copy()
                 fixed[-1]['content'] = prev_content + '\n\n' + curr_content
-                # 合并 thinking 字段（如果有）
                 if 'thinking' in msg and msg['thinking']:
                     prev_thinking = fixed[-1].get('thinking', '')
                     fixed[-1]['thinking'] = (prev_thinking + '\n' + msg['thinking']).strip()
@@ -2126,39 +2222,97 @@ Todo 管理规则（严格遵守）:
         return '\n'.join(cleaned).strip()
 
     def _manage_context(self):
-        """管理上下文长度 - 智能压缩（使用 TokenOptimizer）"""
-        # 计算当前 token 使用量
-        current_tokens = self._calculate_context_tokens()
+        """管理上下文长度 — Cursor 风格轮次裁剪
+        
+        核心原则（与 _progressive_trim 一致）：
+        - **永不截断 user / assistant 消息**
+        - 只压缩 tool 结果（role='tool' 的 content）
+        - 按「轮次」（以 user 消息为分界）裁剪，保护最近 N 轮
+        - 如果仅压缩 tool 仍不够，整轮删除最早的轮次
+        - 保持 assistant(tool_calls) ↔ tool 的原生链不被打破
+        """
+        # ★ 使用 agent 锚定的 history（避免压缩错误 session）
+        history = self._agent_history if self._agent_history is not None else self._conversation_history
+        if len(history) < 6:
+            return  # 太少，不需管理
+        
+        current_tokens = self.token_optimizer.calculate_message_tokens(history)
         context_limit = self._get_current_context_limit()
         
-        # 更新 TokenOptimizer 的预算
+        # 更新预算
         self.token_optimizer.budget.max_tokens = context_limit
-        
-        # 检查是否需要压缩
         should_compress, reason = self.token_optimizer.should_compress(current_tokens, context_limit)
         
-        if should_compress and self._auto_optimize:
-            # 使用 TokenOptimizer 压缩
-            compressed_messages, stats = self.token_optimizer.compress_messages(
-                self._conversation_history,
-                keep_recent=self.token_optimizer.budget.keep_recent_messages,
-                strategy=self._optimization_strategy
-            )
-            
-            if stats['saved_tokens'] > 0:
-                self._conversation_history = compressed_messages
-                self._context_summary = compressed_messages[0].get('content', '') if compressed_messages and compressed_messages[0].get('role') == 'system' else self._context_summary
-                
-                # 显示优化信息
-                saved_percent = stats.get('saved_percent', 0)
-                self._addStatus.emit(f"自动优化: 节省 {saved_percent:.1f}% token ({stats['saved_tokens']:,} tokens)")
-                
-                # 重新渲染
-                self._render_conversation_history()
+        if not (should_compress and self._auto_optimize):
+            if reason and '警告' in reason:
+                self._addStatus.emit(f"注意: {reason}")
+            return
         
-        elif reason and '警告' in reason:
-            # 显示警告但不自动压缩
-            self._addStatus.emit(f"注意: {reason}")
+        old_tokens = current_tokens
+        
+        # --- 按 user 消息划分轮次 ---
+        rounds = []       # [[msg, msg, ...], ...]
+        current_round = []
+        for m in history:
+            if m.get('role') == 'user' and current_round:
+                rounds.append(current_round)
+                current_round = []
+            current_round.append(m)
+        if current_round:
+            rounds.append(current_round)
+        
+        if len(rounds) <= 2:
+            return  # 只有 1-2 轮，不裁剪
+        
+        # --- 第一遍：压缩旧轮次的 tool 结果（保留最近 60%）---
+        n_rounds = len(rounds)
+        protect_n = max(2, int(n_rounds * 0.6))
+        for r_idx in range(n_rounds - protect_n):
+            for m in rounds[r_idx]:
+                if m.get('role') == 'tool':
+                    c = m.get('content') or ''
+                    if len(c) > 200:
+                        m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[摘要]'
+        
+        # 重新计算
+        compressed = [m for rnd in rounds for m in rnd]
+        new_tokens = self.token_optimizer.calculate_message_tokens(compressed)
+        
+        if new_tokens < context_limit * self.token_optimizer.budget.compression_threshold:
+            # 压缩 tool 就够了
+            history.clear()
+            history.extend(compressed)
+            saved = old_tokens - new_tokens
+            if saved > 0:
+                pct = saved / old_tokens * 100 if old_tokens else 0
+                self._addStatus.emit(f"上下文优化: 压缩 tool 结果，节省 {pct:.0f}% ({saved:,} tokens)")
+            return
+        
+        # --- 第二遍：删除最早的完整轮次，直到低于阈值 ---
+        target = int(context_limit * 0.65)  # 目标降到 65%
+        while len(rounds) > 2:
+            # 删除最早的轮次
+            removed = rounds.pop(0)
+            compressed = [m for rnd in rounds for m in rnd]
+            new_tokens = self.token_optimizer.calculate_message_tokens(compressed)
+            if new_tokens <= target:
+                break
+        
+        # 在头部插入摘要提示
+        summary_note = {
+            'role': 'system',
+            'content': f'[上下文管理] 已裁剪 {n_rounds - len(rounds)} 个早期对话轮次以节省空间。请继续当前任务。'
+        }
+        
+        history.clear()
+        history.append(summary_note)
+        history.extend([m for rnd in rounds for m in rnd])
+        
+        saved = old_tokens - self.token_optimizer.calculate_message_tokens(history)
+        if saved > 0:
+            pct = saved / old_tokens * 100 if old_tokens else 0
+            self._addStatus.emit(f"上下文优化: 裁剪旧轮次，节省 {pct:.0f}% ({saved:,} tokens)")
+            self._render_conversation_history()
     
     def _compress_context(self):
         """压缩上下文 - 极简摘要，保留关键信息"""
@@ -2245,28 +2399,17 @@ Todo 管理规则（严格遵守）:
             return ""
 
     def _get_todo_summary_safe(self) -> str:
-        """线程安全地获取 Todo 摘要"""
-        result = [None]
-        
-        def get_summary():
-            result[0] = self.todo_list.get_todos_summary()
-        
-        # 在主线程执行
-        QtCore.QMetaObject.invokeMethod(
-            self, "_invoke_get_todo_summary",
-            QtCore.Qt.BlockingQueuedConnection,
-            QtCore.Q_RETURN_ARG(str)
-        )
-        
-        # 简化处理：直接调用
+        """线程安全地获取 Todo 摘要（优先使用 agent 锚定的 TodoList）"""
+        todo = self._agent_todo_list or self.todo_list
         try:
-            return self.todo_list.get_todos_summary()
-        except:
+            return todo.get_todos_summary() if todo else ""
+        except Exception:
             return ""
 
     @QtCore.Slot(result=str)
     def _invoke_get_todo_summary(self) -> str:
-        return self.todo_list.get_todos_summary()
+        todo = self._agent_todo_list or self.todo_list
+        return todo.get_todos_summary() if todo else ""
 
     # ===== URL 识别 =====
     
@@ -2373,74 +2516,62 @@ Todo 管理规则（严格遵守）:
             sys_prompt = self._cached_prompt_think if use_think else self._cached_prompt_no_think
             messages = [{'role': 'system', 'content': sys_prompt}]
             
-            # 2. 历史消息（保持原始顺序，不在此处修改）
-            # ⚠️ 为了 cache 命中率，历史消息应保持稳定
-            # ⚠️ 过滤掉不完整的 tool 消息（缺少 tool_call_id 会导致 API 400 错误）
-            # ⚠️ 关键：每条 user 消息后必须有 assistant 回复，不能出现连续 user
-            _HOUDINI_KW = ('错误', 'error', '成功', '完成', '创建', '删除', '连接', '节点', '工具执行结果')
-            _MAX_SUMMARY = 400  # assistant 消息摘要阈值（提高以保留更多上下文）
+            # ================================================================
+            # 2. Cursor 风格历史消息：原生格式直通，不预压缩
+            # ================================================================
+            # 核心原则：
+            # - assistant 消息完整保留（包括 content 和 tool_calls）
+            # - tool 消息完整保留（包括 tool_call_id 和 content）
+            # - user 消息完整保留
+            # - 只清理内部元数据字段（thinking, python_shells 等）
+            # - 压缩只在超限时由 _progressive_trim / auto_optimize 处理
+            
+            # 内部元数据字段列表（不发给 API）
+            _INTERNAL_FIELDS = frozenset({
+                '_reply_content', '_tool_summary', 'thinking',
+                'python_shells', 'system_shells',
+            })
             
             history_to_send = []
             for msg in self._conversation_history:
                 role = msg.get('role', '')
-                # ⚠️ 跳过 role="tool" 的消息（缺少 tool_call_id 会导致 API 400 错误）
-                # 工具结果现在保存为 assistant 格式的上下文摘要
+                
                 if role == 'tool':
-                    # 将旧格式的 tool 消息转换为 assistant 上下文（兼容旧缓存）
-                    tool_name = msg.get('name', 'unknown')
-                    content = msg.get('content', '')
-                    history_to_send.append({
-                        'role': 'assistant',
-                        'content': f"[工具结果] {tool_name}: {content}"
-                    })
-                # 保留用户消息（上下文参考）
-                elif role == 'user':
-                    history_to_send.append(msg)
-                # 保留 AI 回复（始终保留，长消息智能压缩，避免上下文断裂）
-                elif role == 'assistant':
-                    full_content = msg.get('content', '')
-                    
-                    # 包含工具执行结果的消息：保留更多内容（关键上下文）
-                    if '[工具执行结果]' in full_content or '[工具结果]' in full_content:
-                        if len(full_content) <= 800:
-                            history_to_send.append(msg)
-                        else:
-                            # 工具结果部分尽量保留，截断过长的自然语言部分
-                            compressed_msg = msg.copy()
-                            compressed_msg['content'] = full_content[:800] + '...'
-                            history_to_send.append(compressed_msg)
-                        continue
-                    
-                    # 短消息（<=_MAX_SUMMARY 字符）：原样保留
-                    if len(full_content) <= _MAX_SUMMARY:
-                        history_to_send.append(msg)
-                        continue
-                    
-                    # 长消息：智能压缩
-                    content_lower = full_content.lower()
-                    if any(kw in content_lower for kw in _HOUDINI_KW):
-                        # Houdini 操作相关 → 提取关键行（增加保留行数）
-                        lines = [l.strip() for l in full_content.split('\n') if l.strip()]
-                        key_lines = [l for l in lines if any(
-                            k in l.lower() for k in _HOUDINI_KW
-                        )]
-                        if key_lines:
-                            compressed_msg = msg.copy()
-                            compressed_msg['content'] = '\n'.join(key_lines[:6])  # 保留更多关键行
-                            history_to_send.append(compressed_msg)
-                        else:
-                            compressed_msg = msg.copy()
-                            compressed_msg['content'] = full_content[:_MAX_SUMMARY] + '...'
-                            history_to_send.append(compressed_msg)
+                    # ★ 新格式（Cursor 风格）：保留原生 tool 消息 ★
+                    # 必须有 tool_call_id 才能发给 API
+                    if msg.get('tool_call_id'):
+                        clean = {k: v for k, v in msg.items() if k not in _INTERNAL_FIELDS}
+                        history_to_send.append(clean)
                     else:
-                        # 非 Houdini 操作（天气、模型查询等）→ 截取摘要保留
-                        compressed_msg = msg.copy()
-                        compressed_msg['content'] = full_content[:_MAX_SUMMARY] + '...'
-                        history_to_send.append(compressed_msg)
+                        # 旧格式 tool 消息（无 tool_call_id）→ 转为 assistant 文本
+                        tool_name = msg.get('name', 'unknown')
+                        content = msg.get('content', '')
+                        history_to_send.append({
+                            'role': 'assistant',
+                            'content': f"[工具结果] {tool_name}: {content[:500]}"
+                        })
+                
+                elif role == 'assistant':
+                    # ★ 完整保留 assistant 消息 ★
+                    clean = {}
+                    for k, v in msg.items():
+                        if k in _INTERNAL_FIELDS:
+                            continue
+                        clean[k] = v
+                    # 如果是旧格式的 [工具执行结果] 文本，也原样保留
+                    # content 完整传递，不做任何截断
+                    # 同时保留 tool_calls（如果有的话 — 新格式）
+                    history_to_send.append(clean)
+                
+                elif role == 'user':
+                    # 用户消息完整保留
+                    history_to_send.append(msg)
+                
+                elif role == 'system':
+                    # 系统消息（如历史摘要）保留
+                    history_to_send.append(msg)
             
-            # ⚠️ 修复 user/assistant 交替问题
-            # OpenAI API 规范要求 user/assistant 严格交替（tool 消息除外）
-            # 连续的相同角色消息会导致某些 provider（如 duojie 中转）行为异常
+            # 修复 user/assistant 交替（仅处理连续的相同角色，不影响 tool 消息）
             history_to_send = self._fix_message_alternation(history_to_send)
             
             messages.extend(history_to_send)
@@ -2464,38 +2595,71 @@ Todo 管理规则（严格遵守）:
                 # 将上下文提醒作为系统消息添加到末尾
                 messages.append({'role': 'system', 'content': f"[上下文] {context_reminder}"})
             
-            # 如果启用了自动优化，检查是否需要压缩
+            # Cursor 风格预发送压缩：只压缩 tool 结果，保留 user/assistant 完整
             if self._auto_optimize:
                 current_tokens = self.token_optimizer.calculate_message_tokens(messages)
-                # ⚠️ 使用从主线程传入的 context_limit（不调用 _get_current_context_limit）
                 should_compress, _ = self.token_optimizer.should_compress(current_tokens, context_limit)
                 
                 if should_compress:
-                    # ⚠️ Cache 优化：压缩时保持前缀稳定
-                    # 只压缩中间的历史消息，保留第一个系统提示和最后的上下文提醒
+                    old_tokens = current_tokens
+                    # 分离系统提示和上下文提醒
                     first_system = messages[0] if messages and messages[0].get('role') == 'system' else None
                     last_context = messages[-1] if messages and '[上下文]' in messages[-1].get('content', '') else None
-                    
-                    # 分离需要压缩的中间消息
                     start_idx = 1 if first_system else 0
                     end_idx = -1 if last_context else len(messages)
-                    middle_msgs = messages[start_idx:end_idx] if end_idx != len(messages) else messages[start_idx:]
+                    body = messages[start_idx:end_idx] if end_idx != len(messages) else messages[start_idx:]
                     
-                    compressed_middle, stats = self.token_optimizer.compress_messages(
-                        middle_msgs,
-                        strategy=self._optimization_strategy
-                    )
+                    # 按 user 消息划分轮次
+                    rounds = []
+                    cur_rnd = []
+                    for m in body:
+                        if m.get('role') == 'user' and cur_rnd:
+                            rounds.append(cur_rnd)
+                            cur_rnd = []
+                        cur_rnd.append(m)
+                    if cur_rnd:
+                        rounds.append(cur_rnd)
                     
-                    # 重组消息：前缀 + 压缩后的中间 + 上下文提醒
+                    # 第一遍：压缩旧轮次 tool 结果
+                    n_rounds = len(rounds)
+                    protect_n = max(2, int(n_rounds * 0.6))
+                    for r_idx in range(n_rounds - protect_n):
+                        for m in rounds[r_idx]:
+                            if m.get('role') == 'tool':
+                                c = m.get('content') or ''
+                                if len(c) > 200:
+                                    m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[摘要]'
+                    
+                    compressed_body = [m for rnd in rounds for m in rnd]
+                    
+                    # 如果仍超限，删除最早轮次
+                    target = int(context_limit * 0.7)
+                    while len(rounds) > 2:
+                        test_body = [m for rnd in rounds for m in rnd]
+                        test_msgs = ([first_system] if first_system else []) + test_body + ([last_context] if last_context else [])
+                        if self.token_optimizer.calculate_message_tokens(test_msgs) <= target:
+                            break
+                        rounds.pop(0)
+                    
+                    compressed_body = [m for rnd in rounds for m in rnd]
+                    
+                    # 重组
                     messages = []
                     if first_system:
                         messages.append(first_system)
-                    messages.extend(compressed_middle)
+                    if n_rounds - len(rounds) > 0:
+                        messages.append({
+                            'role': 'system',
+                            'content': f'[上下文管理] 已裁剪 {n_rounds - len(rounds)} 个早期轮次。'
+                        })
+                    messages.extend(compressed_body)
                     if last_context:
                         messages.append(last_context)
                     
-                    if stats.get('saved_tokens', 0) > 0:
-                        self._addStatus.emit(f"请求前优化: 节省 {stats['saved_tokens']:,} tokens (cache友好)")
+                    new_tokens = self.token_optimizer.calculate_message_tokens(messages)
+                    saved = old_tokens - new_tokens
+                    if saved > 0:
+                        self._addStatus.emit(f"请求前优化: 节省 {saved:,} tokens (Cursor 风格)")
             
             # ⚠️ 使用从主线程传入的参数（不直接访问 Qt 控件）
             # provider, model, use_web, use_agent 已在方法开头从 agent_params 获取
@@ -2504,26 +2668,43 @@ Todo 管理规则（严格遵守）:
             self._addStatus.emit(f"Requesting {provider}/{model}...")
             
             # 推理模型兼容：清理消息格式
-            # 推理模型要求历史中的 assistant 消息必须包含 reasoning_content 字段
             is_reasoning_model = AIClient.is_reasoning_model(model)
             cleaned_messages = []
             for msg in messages:
-                clean_msg = {
-                    'role': msg.get('role', 'user'),
-                    'content': msg.get('content', '')
-                }
+                role = msg.get('role', 'user')
+                content = msg.get('content')
+                has_tool_calls = 'tool_calls' in msg
+                
+                clean_msg = {'role': role}
+                
+                # ★ Cursor 风格：assistant 有 tool_calls 时 content 可为 None ★
+                # Claude/Anthropic 代理拒绝 content="" + tool_calls 共存
+                if role == 'assistant' and has_tool_calls:
+                    clean_msg['content'] = content  # 保留 None（不转为空字符串）
+                else:
+                    clean_msg['content'] = content if content is not None else ''
+                
                 # 推理模型：assistant 消息需要 reasoning_content 字段
-                if is_reasoning_model and msg.get('role') == 'assistant':
+                if is_reasoning_model and role == 'assistant':
                     clean_msg['reasoning_content'] = msg.get('reasoning_content', '')
-                # 保留 tool_calls 字段（如果存在）
-                if 'tool_calls' in msg:
+                # 保留 tool_calls 字段
+                if has_tool_calls:
                     clean_msg['tool_calls'] = msg['tool_calls']
-                # 保留 tool_call_id 字段（如果存在）
+                # 保留 tool_call_id 字段
                 if 'tool_call_id' in msg:
                     clean_msg['tool_call_id'] = msg['tool_call_id']
-                # 保留 name 字段（如果存在，用于 tool 消息）
+                # 保留 name 字段（用于 tool 消息）
                 if 'name' in msg:
                     clean_msg['name'] = msg['name']
+                
+                # ★ 清理 assistant content 中的 <think> 标签 ★
+                # 历史中的 thinking 不需要发给 API（浪费 token）
+                if role == 'assistant' and clean_msg.get('content'):
+                    c = clean_msg['content']
+                    if '<think>' in c:
+                        c = re.sub(r'<think>[\s\S]*?</think>', '', c).strip()
+                        clean_msg['content'] = c or None
+                
                 cleaned_messages.append(clean_msg)
             messages = cleaned_messages
             
@@ -2543,7 +2724,7 @@ Todo 管理规则（严格遵守）:
                     messages=messages,
                     model=model,
                     provider=provider,
-                    max_iterations=25,  # 安全限制：最多 25 轮对话（防止死循环）
+                    max_iterations=999,  # 不限制迭代次数
                     max_tokens=None,  # 不限制输出长度
                     enable_thinking=use_think,
                     on_content=lambda c: self._on_content_with_limit(c),
@@ -4013,29 +4194,48 @@ Todo 管理规则（严格遵守）:
 
             # ─── 助手消息 ───
             elif role == 'assistant':
-                # 向前看，收集紧跟的旧格式 tool 消息
+                # ★ 新格式检测：assistant 带 tool_calls → Cursor 风格原生格式 ★
+                if msg.get('tool_calls'):
+                    # 收集整个工具交互轮次
+                    # 模式：assistant(tc) → tool → [assistant(tc) → tool →] ... → assistant(reply)
+                    turn_msgs = [msg]
+                    j = i + 1
+                    while j < len(messages):
+                        m = messages[j]
+                        r = m.get('role', '')
+                        if r == 'tool':
+                            turn_msgs.append(m)
+                            j += 1
+                        elif r == 'assistant':
+                            turn_msgs.append(m)
+                            j += 1
+                            if not m.get('tool_calls'):
+                                break  # 找到最终回复
+                        else:
+                            break
+                    self._render_native_tool_turn(turn_msgs)
+                    i = j
+                    continue
+
+                # ─── 旧格式处理（向后兼容） ───
                 tool_msgs = []
                 j = i + 1
                 while j < len(messages) and messages[j].get('role') == 'tool':
                     tool_msgs.append(messages[j])
                     j += 1
 
-                # 判断是否是 [工具执行结果] 格式
                 if content.lstrip().startswith('[工具执行结果]'):
-                    self._render_tool_summary_history(content)
+                    self._render_tool_summary_history(content, msg)
                 else:
                     response = self._add_ai_response()
-                    # 恢复 thinking 内容（如果有）
                     thinking = msg.get('thinking', '')
                     if thinking:
                         response.add_thinking(thinking)
                         response.thinking_section.finalize()
-                        # 历史恢复时默认折叠
                         if not response.thinking_section._collapsed:
                             response.thinking_section.toggle()
-                    # 旧格式 tool 消息
                     self._render_old_tool_msgs(response, tool_msgs)
-                    # AI 回复内容
+                    self._restore_shell_widgets(response, msg)
                     response.set_content(content)
                     response.status_label.setText("历史")
                     response.finalize()
@@ -4047,7 +4247,7 @@ Todo 管理规则（严格遵守）:
                     label = f"历史 | {', '.join(parts)}" if parts else "历史"
                     response.status_label.setText(label)
 
-                i = j  # 跳过已处理的 tool 消息
+                i = j
 
             # ─── 摘要 ───
             elif role == 'system' and '[历史对话摘要' in content:
@@ -4059,6 +4259,86 @@ Todo 管理规则（严格遵守）:
                 i += 1
             else:
                 i += 1
+
+    # ------------------------------------------------------------------
+    def _render_native_tool_turn(self, turn_msgs: list):
+        """渲染 Cursor 风格原生工具调用轮次
+        
+        turn_msgs 格式：
+          assistant(tool_calls) → tool → [assistant(tool_calls) → tool →] ... → assistant(reply)
+        """
+        response = self._add_ai_response()
+        tool_count = 0
+        final_content = ''
+        thinking = ''
+        final_msg = {}
+        
+        for m in turn_msgs:
+            r = m.get('role', '')
+            if r == 'assistant':
+                tc_list = m.get('tool_calls', [])
+                if tc_list:
+                    # 工具调用 assistant 消息：注册每个工具调用
+                    for tc in tc_list:
+                        fn = tc.get('function', {})
+                        name = fn.get('name', 'unknown')
+                        response.add_status(f"[tool]{name}")
+                        tool_count += 1
+                else:
+                    # 最终回复 assistant 消息
+                    final_content = m.get('content', '') or ''
+                    thinking = m.get('thinking', '')
+                    final_msg = m
+            elif r == 'tool':
+                tc_id = m.get('tool_call_id', '')
+                t_content = m.get('content', '') or ''
+                # 从 tool_call_id 查找对应的工具名
+                t_name = self._find_tool_name_by_id(turn_msgs, tc_id) or 'tool'
+                success = not t_content.lstrip().startswith('[err]') and 'error' not in t_content[:50].lower()
+                prefix = "[ok] " if success else "[err] "
+                if len(t_content) <= 200:
+                    response.add_tool_result(t_name, f"{prefix}{t_content}")
+                else:
+                    summary = t_content[:120].replace('\n', ' ') + "..."
+                    response.add_tool_result(t_name, f"{prefix}{summary}")
+                    response.add_collapsible(f"Result: {t_name}", t_content)
+        
+        # 恢复 thinking
+        if thinking:
+            response.add_thinking(thinking)
+            response.thinking_section.finalize()
+            if not response.thinking_section._collapsed:
+                response.thinking_section.toggle()
+        
+        # 恢复 Shell 折叠面板
+        self._restore_shell_widgets(response, final_msg)
+        
+        # AI 回复内容
+        if final_content:
+            response.set_content(final_content)
+        
+        # 状态标签
+        parts = []
+        if thinking:
+            parts.append("思考")
+        if tool_count > 0:
+            parts.append(f"{tool_count}次调用")
+        label = f"历史 | {', '.join(parts)}" if parts else "历史"
+        response.status_label.setText(label)
+        response.finalize()
+        response.status_label.setText(label)
+
+    @staticmethod
+    def _find_tool_name_by_id(messages: list, tool_call_id: str) -> str:
+        """从消息列表中根据 tool_call_id 查找对应的工具名"""
+        if not tool_call_id:
+            return ''
+        for m in messages:
+            if m.get('role') == 'assistant':
+                for tc in m.get('tool_calls', []):
+                    if tc.get('id') == tool_call_id:
+                        return tc.get('function', {}).get('name', '')
+        return ''
 
     # ------------------------------------------------------------------
     def _render_user_history(self, content: str):
@@ -4099,7 +4379,7 @@ Todo 管理规则（严格遵守）:
     # ------------------------------------------------------------------
     _TOOL_LINE_PREFIXES = ('[ok] ', '[err] ', '\u2705 ', '\u274c ')
 
-    def _render_tool_summary_history(self, content: str):
+    def _render_tool_summary_history(self, content: str, msg: dict = None):
         """渲染 [工具执行结果] 格式的 assistant 消息
 
         格式示例：
@@ -4109,6 +4389,8 @@ Todo 管理规则（严格遵守）:
           节点数量: 0            ← 上一条的续行
           [ok] create_node: /obj/geo1
         """
+        if msg is None:
+            msg = {}
         response = self._add_ai_response()
 
         # 先按行分组：以 [ok]/[err]/✅/❌ 开头的行开始新条目，
@@ -4164,9 +4446,102 @@ Todo 管理规则（严格遵守）:
                 response.add_tool_result(t_name, f"{result_prefix}{summary}")
                 response.add_collapsible(f"Result: {t_name}", t_result)
 
-        response.status_label.setText(f"历史 | {tool_count}次调用")
+        # 恢复 Shell 折叠面板
+        self._restore_shell_widgets(response, msg)
+
+        # 恢复 thinking
+        thinking = msg.get('thinking', '')
+        if thinking:
+            response.add_thinking(thinking)
+            response.thinking_section.finalize()
+            if not response.thinking_section._collapsed:
+                response.thinking_section.toggle()
+
+        # 恢复正文（[工具执行结果]之后可能还有 AI 正式回复）
+        # 找到工具摘要之后的正文部分
+        text_after_tools = ''
+        parts = content.split('\n\n')
+        for idx_p, part in enumerate(parts):
+            if not part.strip().startswith('[工具执行结果]') and not any(
+                part.strip().startswith(p) for p in self._TOOL_LINE_PREFIXES
+            ):
+                # 检查是否整段都是工具结果行
+                is_tool_block = all(
+                    any(line.strip().startswith(p) for p in self._TOOL_LINE_PREFIXES)
+                    or not line.strip()
+                    or line.strip() == '[工具执行结果]'
+                    for line in part.split('\n')
+                )
+                if not is_tool_block and part.strip():
+                    text_after_tools = '\n\n'.join(parts[idx_p:])
+                    break
+        if text_after_tools:
+            response.set_content(text_after_tools)
+
+        label_parts = []
+        if thinking:
+            label_parts.append("思考")
+        label_parts.append(f"{tool_count}次调用")
+        response.status_label.setText(f"历史 | {', '.join(label_parts)}")
         response.finalize()
-        response.status_label.setText(f"历史 | {tool_count}次调用")
+        response.status_label.setText(f"历史 | {', '.join(label_parts)}")
+
+    # ------------------------------------------------------------------
+    def _restore_shell_widgets(self, response, msg: dict):
+        """从历史消息中恢复 Python Shell / System Shell 折叠面板"""
+        # 恢复 Python Shell
+        for ps in msg.get('python_shells', []):
+            code = ps.get('code', '')
+            raw_output = ps.get('output', '')
+            error = ps.get('error', '')
+            success = ps.get('success', True)
+            # 提取执行时间（和 _on_add_python_shell 相同逻辑）
+            exec_time = 0.0
+            clean_parts = []
+            for line in raw_output.split('\n'):
+                time_match = re.match(r'^执行时间:\s*([\d.]+)s$', line.strip())
+                if time_match:
+                    exec_time = float(time_match.group(1))
+                    continue
+                if line.strip() == '输出:':
+                    continue
+                clean_parts.append(line)
+            clean_output = '\n'.join(clean_parts).strip()
+            widget = PythonShellWidget(
+                code=code, output=clean_output, error=error,
+                exec_time=exec_time, success=success, parent=response
+            )
+            response.add_shell_widget(widget)
+
+        # 恢复 System Shell
+        for ss in msg.get('system_shells', []):
+            command = ss.get('command', '')
+            raw_output = ss.get('output', '')
+            error = ss.get('error', '')
+            success = ss.get('success', True)
+            cwd = ss.get('cwd', '')
+            exec_time = 0.0
+            exit_code = 0
+            stdout_parts = []
+            for line in raw_output.split('\n'):
+                tm = re.search(r'耗时:\s*([\d.]+)s', line)
+                cm = re.search(r'退出码:\s*(\d+)', line)
+                if tm:
+                    exec_time = float(tm.group(1))
+                if cm:
+                    exit_code = int(cm.group(1))
+                if tm or cm:
+                    continue
+                if line.strip() in ('--- stdout ---', '--- stderr ---'):
+                    continue
+                stdout_parts.append(line)
+            clean_output = '\n'.join(stdout_parts).strip()
+            widget = SystemShellWidget(
+                command=command, output=clean_output, error=error,
+                exit_code=exit_code, exec_time=exec_time,
+                success=success, cwd=cwd, parent=response
+            )
+            response.add_sys_shell_widget(widget)
 
     # ------------------------------------------------------------------
     def _render_old_tool_msgs(self, response, tool_msgs: list):

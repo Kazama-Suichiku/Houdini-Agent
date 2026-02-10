@@ -626,14 +626,45 @@ class AIResponse(QtWidgets.QWidget):
         summary_layout.setContentsMargins(8, 8, 6, 8)
         summary_layout.setSpacing(4)
         
-        # 状态行
+        # 状态行（水平布局：状态文字 + 复制按钮）
+        status_row = QtWidgets.QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(8)
+        
         self.status_label = QtWidgets.QLabel("思考中...")
         self.status_label.setStyleSheet(f"""
             color: {CursorTheme.TEXT_MUTED};
             font-size: 13px;
             font-family: {CursorTheme.FONT_BODY};
         """)
-        summary_layout.addWidget(self.status_label)
+        status_row.addWidget(self.status_label)
+        status_row.addStretch()
+        
+        # 复制全部按钮（完成后才显示）
+        self._copy_btn = QtWidgets.QPushButton("复制")
+        self._copy_btn.setVisible(False)
+        self._copy_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._copy_btn.setFixedHeight(22)
+        self._copy_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.TEXT_SECONDARY};
+                background: transparent;
+                border: 1px solid {CursorTheme.BORDER};
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: {CursorTheme.FONT_BODY};
+                padding: 0 8px;
+            }}
+            QPushButton:hover {{
+                color: {CursorTheme.TEXT_PRIMARY};
+                background: {CursorTheme.BG_HOVER};
+                border-color: {CursorTheme.ACCENT_BLUE};
+            }}
+        """)
+        self._copy_btn.clicked.connect(self._copy_content)
+        status_row.addWidget(self._copy_btn)
+        
+        summary_layout.addLayout(status_row)
         
         # 内容（流式 + 最终渲染统一 14px）
         # PlainText 防止流式内容中 <node_name> 被当 HTML 标签吞掉
@@ -746,6 +777,49 @@ class AIResponse(QtWidgets.QWidget):
         self.details_layout.addWidget(section)
         return section
     
+    def _copy_content(self):
+        """复制完整正式回复内容到剪贴板"""
+        content = self._clean_content(self._content)
+        if content:
+            QtWidgets.QApplication.clipboard().setText(content)
+            # 临时反馈
+            self._copy_btn.setText("已复制")
+            self._copy_btn.setStyleSheet(f"""
+                QPushButton {{
+                    color: {CursorTheme.ACCENT_GREEN};
+                    background: transparent;
+                    border: 1px solid {CursorTheme.ACCENT_GREEN};
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-family: {CursorTheme.FONT_BODY};
+                    padding: 0 8px;
+                }}
+            """)
+            QtCore.QTimer.singleShot(1500, self._reset_copy_btn)
+    
+    def _reset_copy_btn(self):
+        """恢复复制按钮样式"""
+        try:
+            self._copy_btn.setText("复制")
+            self._copy_btn.setStyleSheet(f"""
+                QPushButton {{
+                    color: {CursorTheme.TEXT_SECONDARY};
+                    background: transparent;
+                    border: 1px solid {CursorTheme.BORDER};
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-family: {CursorTheme.FONT_BODY};
+                    padding: 0 8px;
+                }}
+                QPushButton:hover {{
+                    color: {CursorTheme.TEXT_PRIMARY};
+                    background: {CursorTheme.BG_HOVER};
+                    border-color: {CursorTheme.ACCENT_BLUE};
+                }}
+            """)
+        except RuntimeError:
+            pass  # widget 已销毁
+    
     def finalize(self):
         """完成回复 - 提取最终总结"""
         elapsed = time.time() - self._start_time
@@ -771,6 +845,10 @@ class AIResponse(QtWidgets.QWidget):
             status_text += f" | {', '.join(parts)}"
         
         self.status_label.setText(status_text)
+        
+        # 有内容时显示复制按钮
+        if self._clean_content(self._content):
+            self._copy_btn.setVisible(True)
         
         # 处理最终内容 — 使用富文本渲染
         content = self._clean_content(self._content)

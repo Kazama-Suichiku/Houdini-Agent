@@ -1306,15 +1306,16 @@ class AIClient:
                           trim_level: int = 1) -> list:
         """渐进式裁剪上下文，根据 trim_level 逐步加大裁剪力度
 
-        核心原则:
-        - **永不截断 user 消息**（含任务目标）
-        - 按「轮次」裁剪（assistant + 其 tool 结果 = 一轮）
-        - tool 结果用智能摘要而非简单截断
-        - 保留最近 N 轮完整对话
+        Cursor 风格核心原则:
+        - **永不截断 user 消息**
+        - **永不截断 assistant 消息**（保留完整回复——这是 Cursor 的关键设计）
+        - 只压缩 tool 结果（role='tool'）
+        - 按「轮次」裁剪，保留最近 N 轮完整对话
+        - 最早的轮次优先删除
 
-        trim_level=1: 轻度 - 智能压缩旧轮工具结果，保留最近 60% 消息
-        trim_level=2: 中度 - 保留最近 5 轮完整对话
-        trim_level=3+: 重度 - 保留最近 3 轮，激进压缩
+        trim_level=1: 轻度 - 压缩旧轮 tool 结果，保留最近 70% 轮次
+        trim_level=2: 中度 - 保留最近 5 轮，较短的 tool 摘要
+        trim_level=3+: 重度 - 保留最近 3 轮，激进压缩 tool 结果
         """
         if not working_messages:
             return working_messages
@@ -1337,60 +1338,49 @@ class AIClient:
             rounds.append(current_round)
 
         if trim_level <= 1:
-            # 轻度：压缩非最近 40% 轮次的工具结果
+            # 轻度：只压缩非最近 30% 轮次的 tool 结果
             n_rounds = len(rounds)
-            protect_n = max(3, int(n_rounds * 0.6))  # 保护最近 60%
+            protect_n = max(3, int(n_rounds * 0.7))  # 保护最近 70%
             for r_idx, rnd in enumerate(rounds):
                 if r_idx >= n_rounds - protect_n:
-                    break  # 最近的轮次不压缩
+                    break
                 for m in rnd:
-                    role = m.get('role', '')
-                    if role == 'user':
-                        continue  # 永不截断 user
                     c = m.get('content') or ''
-                    if role == 'tool' and len(c) > 200:
-                        m['content'] = self._summarize_tool_content(c, 200)
-                    elif role == 'assistant' and len(c) > 400:
-                        m['content'] = c[:400] + '...[已截断]'
+                    if m.get('role') == 'tool' and len(c) > 300:
+                        m['content'] = self._summarize_tool_content(c, 300)
+                    # ★ assistant 和 user 完全保留 ★
 
-            # 如果总消息仍然太多，移除最早的轮次
-            keep_rounds = max(4, int(n_rounds * 0.6))
+            keep_rounds = max(5, int(n_rounds * 0.7))
             if n_rounds > keep_rounds:
                 rounds = rounds[-keep_rounds:]
 
         elif trim_level == 2:
-            # 中度：保留最近 5 轮，工具结果用短摘要
+            # 中度：保留最近 5 轮，tool 结果用短摘要
             rounds = rounds[-5:] if len(rounds) > 5 else rounds
             for r_idx, rnd in enumerate(rounds):
                 if r_idx >= len(rounds) - 2:
-                    break  # 最近 2 轮不压缩
+                    break  # 最近 2 轮的 tool 结果不压缩
                 for m in rnd:
-                    role = m.get('role', '')
-                    if role == 'user':
-                        continue
                     c = m.get('content') or ''
-                    if role == 'tool' and len(c) > 120:
-                        m['content'] = self._summarize_tool_content(c, 120)
-                    elif role == 'assistant' and len(c) > 250:
-                        m['content'] = c[:250] + '...[已截断]'
+                    if m.get('role') == 'tool' and len(c) > 150:
+                        m['content'] = self._summarize_tool_content(c, 150)
+                    # ★ assistant 和 user 完全保留 ★
 
         else:
-            # 重度：保留最近 3 轮，激进压缩
+            # 重度：保留最近 3 轮，激进压缩 tool 结果
             rounds = rounds[-3:] if len(rounds) > 3 else rounds
             for rnd in rounds[:-1]:  # 最后一轮不压缩
                 for m in rnd:
-                    role = m.get('role', '')
-                    if role == 'user':
-                        continue
                     c = m.get('content') or ''
-                    if len(c) > 100:
+                    if m.get('role') == 'tool' and len(c) > 100:
                         m['content'] = self._summarize_tool_content(c, 100)
+                    # ★ assistant 和 user 完全保留 ★
 
         # 重组
         body = [m for rnd in rounds for m in rnd]
         result = ([sys_msg] if sys_msg else []) + body
 
-        # 恢复提示——只列操作型工具的摘要（跳过查询型）
+        # 恢复提示
         history_summary = ""
         if tool_calls_history:
             op_history = [h for h in tool_calls_history
@@ -1974,7 +1964,19 @@ class AIClient:
                 yield {"type": "error", "error": f"连接错误: {str(e)}"}
                 return
             except Exception as e:
-                yield {"type": "error", "error": f"请求失败: {str(e)}"}
+                err_str = str(e)
+                # InvalidChunkLength / ChunkedEncodingError 等连接中断可重试
+                is_transient = any(k in err_str for k in (
+                    'InvalidChunkLength', 'ChunkedEncodingError',
+                    'Connection broken', 'IncompleteRead',
+                    'ConnectionReset', 'RemoteDisconnected',
+                ))
+                if is_transient and attempt < self._max_retries - 1:
+                    wait = self._retry_delay * (attempt + 1)
+                    print(f"[AI Client] 连接中断 ({err_str[:80]}), {wait}s 后重试 ({attempt+1}/{self._max_retries})")
+                    time.sleep(wait)
+                    continue
+                yield {"type": "error", "error": f"请求失败: {err_str}"}
                 return
 
     # ============================================================
@@ -2067,7 +2069,7 @@ class AIClient:
                           messages: List[Dict[str, Any]],
                           model: str = 'gpt-4o-mini',
                           provider: str = 'openai',
-                          max_iterations: int = 15,
+                          max_iterations: int = 999,
                           temperature: float = 0.3,
                           max_tokens: Optional[int] = None,
                           enable_thinking: bool = True,
@@ -2085,12 +2087,14 @@ class AIClient:
             on_tool_result: 工具结果回调 (name, args, result) -> None
         
         Returns:
-            {"ok": bool, "content": str, "tool_calls_history": list, "iterations": int}
+            {"ok": bool, "content": str, "final_content": str,
+             "new_messages": list, "tool_calls_history": list, "iterations": int}
         """
         if not self._tool_executor:
             return {'ok': False, 'error': '未设置工具执行器', 'content': '', 'tool_calls_history': [], 'iterations': 0}
         
         working_messages = list(messages)
+        initial_msg_count = len(working_messages)  # 跟踪初始消息数量，用于提取新消息链
         tool_calls_history = []
         full_content = ""
         iteration = 0
@@ -2120,6 +2124,8 @@ class AIClient:
                     'ok': False,
                     'error': '用户停止了请求',
                     'content': full_content,
+                    'final_content': '',
+                    'new_messages': working_messages[initial_msg_count:],
                     'tool_calls_history': tool_calls_history,
                     'iterations': iteration,
                     'stopped': True,
@@ -2139,22 +2145,19 @@ class AIClient:
             # 发送前清洗消息（修复 tool_call_id 缺失等问题）
             working_messages = self._sanitize_working_messages(working_messages)
             
-            # ⚠️ 主动防御：每轮迭代前检查 working_messages 大小
-            # agent loop 多轮后工具结果会不断累积，如果不提前压缩会导致 API 报错
-            if iteration > 1 and len(working_messages) > 20:
-                # 保护最近 6 条消息不压缩（通常是当前轮次的完整交互）
-                protect_start = max(1, len(working_messages) - 6)
+            # ⚠️ Cursor 风格：不主动压缩 assistant 消息
+            # 只对超长的 tool 结果做温和压缩（它们在 _progressive_trim 中也会被处理）
+            # assistant 消息永不截断——保留完整上下文是 Cursor 的核心设计
+            if iteration > 1 and len(working_messages) > 30:
+                protect_start = max(1, len(working_messages) - 10)
                 for i, m in enumerate(working_messages):
-                    if i == 0 or i >= protect_start:  # 跳过 system + 最近消息
+                    if i == 0 or i >= protect_start:
                         continue
                     role = m.get('role', '')
-                    if role == 'user':  # 永不截断 user 消息
-                        continue
                     c = m.get('content') or ''
-                    if role == 'tool' and len(c) > 400:
-                        m['content'] = self._summarize_tool_content(c, 400)
-                    elif role == 'assistant' and len(c) > 600:
-                        m['content'] = c[:600] + '...[已截断]'
+                    # 只压缩 tool 结果（超过 2000 字符的），assistant 和 user 永不压缩
+                    if role == 'tool' and len(c) > 2000:
+                        m['content'] = self._summarize_tool_content(c, 1500)
             
             # 诊断：打印第二次及之后请求的消息结构
             if iteration > 1:
@@ -2191,6 +2194,8 @@ class AIClient:
                         'ok': False,
                         'error': '用户停止了请求',
                         'content': full_content + round_content,
+                        'final_content': round_content,
+                        'new_messages': working_messages[initial_msg_count:],
                         'tool_calls_history': tool_calls_history,
                         'iterations': iteration,
                         'stopped': True,
@@ -2204,6 +2209,8 @@ class AIClient:
                         'ok': False,
                         'error': '用户停止了请求',
                         'content': full_content + round_content,
+                        'final_content': round_content,
+                        'new_messages': working_messages[initial_msg_count:],
                         'tool_calls_history': tool_calls_history,
                         'iterations': iteration,
                         'stopped': True,
@@ -2248,9 +2255,13 @@ class AIClient:
                         'context window', 'input too long',
                     )) or ('HTTP 413' in error_msg)
                     
-                    # 2. 临时服务器错误（502/503/529 等，不一定与上下文大小有关）
+                    # 2. 临时服务器错误 / 连接中断（502/503/529 / InvalidChunkLength 等）
                     is_server_transient = any(k in error_msg for k in (
-                        'HTTP 502', 'HTTP 503', 'HTTP 529', 'no available'
+                        'HTTP 502', 'HTTP 503', 'HTTP 529', 'no available',
+                        'InvalidChunkLength', 'ChunkedEncodingError',
+                        'Connection broken', 'IncompleteRead',
+                        'ConnectionReset', 'RemoteDisconnected',
+                        '连接错误', '连接中断',
                     ))
                     
                     # 3. 压缩/格式问题
@@ -2347,6 +2358,8 @@ class AIClient:
                     'ok': False,
                     'error': abort_error,
                     'content': full_content,
+                    'final_content': '',
+                    'new_messages': working_messages[initial_msg_count:],
                     'tool_calls_history': tool_calls_history,
                     'iterations': iteration,
                     'usage': total_usage
@@ -2364,6 +2377,8 @@ class AIClient:
                 return {
                     'ok': True,
                     'content': full_content,
+                    'final_content': round_content,  # 最后一轮的回复（不含中间轮次）
+                    'new_messages': working_messages[initial_msg_count:],  # 原生工具交互链
                     'tool_calls_history': tool_calls_history,
                     'iterations': iteration,
                     'usage': total_usage
@@ -2476,6 +2491,8 @@ class AIClient:
                 return {
                     'ok': True,
                     'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
+                    'final_content': f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
+                    'new_messages': working_messages[initial_msg_count:],
                     'tool_calls_history': tool_calls_history,
                     'iterations': iteration,
                     'usage': total_usage
@@ -2546,6 +2563,8 @@ class AIClient:
         return {
             'ok': True,
             'content': full_content if full_content.strip() else "(工具调用完成，但未生成回复)",
+            'final_content': '',  # max iterations 时无明确的最终回复
+            'new_messages': working_messages[initial_msg_count:],
             'tool_calls_history': tool_calls_history,
             'iterations': iteration,
             'usage': total_usage
@@ -2753,7 +2772,7 @@ class AIClient:
                               messages: List[Dict[str, Any]],
                               model: str = 'qwen2.5:14b',
                               provider: str = 'ollama',
-                              max_iterations: int = 15,
+                              max_iterations: int = 999,
                               temperature: float = 0.3,
                               max_tokens: Optional[int] = None,
                               enable_thinking: bool = True,

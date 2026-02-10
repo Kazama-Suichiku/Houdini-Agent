@@ -1538,8 +1538,23 @@ class HoudiniMCP:
         except Exception:
             pass
         
-        # 返回简洁但完整的信息：节点路径（AI需要这个来继续操作）
-        return True, f"✓{new_node.path()}"
+        # 返回节点路径 + diff 信息（让 AI 了解变化）
+        node_path = new_node.path()
+        diff_parts = [f"✓{node_path}"]
+        try:
+            parent = new_node.parent()
+            if parent:
+                siblings = len(parent.children())
+                diff_parts.append(f"(父网络: {parent.path()}, 子节点数: {siblings})")
+            # 输入连接信息
+            inputs = new_node.inputs()
+            if inputs:
+                connected = [n.path() for n in inputs if n is not None]
+                if connected:
+                    diff_parts.append(f"输入: {', '.join(connected)}")
+        except Exception:
+            pass
+        return True, ' '.join(diff_parts)
 
     def create_network(self, plan: Dict[str, Any]) -> Tuple[bool, str]:
         """批量创建节点网络"""
@@ -1870,9 +1885,36 @@ class HoudiniMCP:
             
             full_path = node.path()
             name = node.name()
+            parent = node.parent()
+            parent_path = parent.path() if parent else ""
+            
+            # 收集连接信息（删除前）
+            input_nodes = [n.path() for n in node.inputs() if n is not None] if node.inputs() else []
+            output_conns = []
+            try:
+                for conn in node.outputConnections():
+                    out_node = conn.outputNode()
+                    if out_node:
+                        output_conns.append(out_node.path())
+            except Exception:
+                pass
+            
             node.destroy()
-            # 返回完整路径（而非仅名称），_undo_snapshot 附带快照数据
-            return True, f"已删除节点: {full_path}", snapshot
+            
+            # 返回完整路径 + diff 信息
+            diff_parts = [f"已删除节点: {full_path}"]
+            if parent_path:
+                try:
+                    remaining = len(hou.node(parent_path).children()) if hou.node(parent_path) else 0
+                    diff_parts.append(f"(父网络: {parent_path}, 剩余子节点: {remaining})")
+                except Exception:
+                    diff_parts.append(f"(父网络: {parent_path})")
+            if input_nodes:
+                diff_parts.append(f"原输入: {', '.join(input_nodes)}")
+            if output_conns:
+                diff_parts.append(f"原输出到: {', '.join(output_conns[:3])}")
+            
+            return True, ' '.join(diff_parts), snapshot
         except Exception as exc:
             return False, f"删除失败: {exc}", None
 
@@ -2182,8 +2224,13 @@ class HoudiniMCP:
         node_path = args.get("node_path", "")
         param_name = args.get("param_name", "")
         value = args.get("value")
-        if not node_path or not param_name:
-            return {"success": False, "error": "缺少必要参数"}
+        missing = []
+        if not node_path:
+            missing.append("node_path(节点路径)")
+        if not param_name:
+            missing.append("param_name(参数名)")
+        if missing:
+            return {"success": False, "error": f"缺少必要参数: {', '.join(missing)}"}
         ok, msg = self.set_parameter(node_path, param_name, value)
         return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
 
@@ -2211,8 +2258,13 @@ class HoudiniMCP:
     def _tool_connect_nodes(self, args: Dict[str, Any]) -> Dict[str, Any]:
         from_path = args.get("from_path", "")
         to_path = args.get("to_path", "")
-        if not from_path or not to_path:
-            return {"success": False, "error": "缺少必要参数"}
+        missing = []
+        if not from_path:
+            missing.append("from_path(上游节点路径)")
+        if not to_path:
+            missing.append("to_path(下游节点路径)")
+        if missing:
+            return {"success": False, "error": f"缺少必要参数: {', '.join(missing)}"}
         ok, msg = self.connect_nodes(from_path, to_path, args.get("input_index", 0))
         return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
 
@@ -2300,8 +2352,13 @@ class HoudiniMCP:
     def _tool_batch_set_parameters(self, args: Dict[str, Any]) -> Dict[str, Any]:
         node_paths = args.get("node_paths", [])
         param_name = args.get("param_name", "")
-        if not node_paths or not param_name:
-            return {"success": False, "error": "缺少必要参数"}
+        missing = []
+        if not node_paths:
+            missing.append("node_paths(节点路径列表)")
+        if not param_name:
+            missing.append("param_name(参数名)")
+        if missing:
+            return {"success": False, "error": f"缺少必要参数: {', '.join(missing)}"}
         ok, msg = self.batch_set_parameters(node_paths, param_name, args.get("value"))
         return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
 
@@ -2601,8 +2658,39 @@ class HoudiniMCP:
         return {"success": ok, "result": info if ok else "", "error": "" if ok else info}
 
     # ========================================
-    # 工具分派表 & 安全检查
+    # 工具分派表 & 用法提示 & 安全检查
     # ========================================
+
+    # 工具用法提示：参数缺失或调用出错时附带正确调用方式
+    _TOOL_USAGE: Dict[str, str] = {
+        "get_network_structure": 'get_network_structure(network_path="/obj/geo1", page=1)',
+        "get_node_details": 'get_node_details(node_path="/obj/geo1/box1")',
+        "get_node_parameters": 'get_node_parameters(node_path="/obj/geo1/box1", page=1)',
+        "set_node_parameter": 'set_node_parameter(node_path="/obj/geo1/box1", param_name="sizex", value=2.0)',
+        "create_node": 'create_node(parent_path="/obj/geo1", node_type="box", node_name="box1")',
+        "create_nodes_batch": 'create_nodes_batch(parent_path="/obj/geo1", nodes=[{"type":"box","name":"box1"},...])',
+        "create_wrangle_node": 'create_wrangle_node(parent_path="/obj/geo1", code="@P.y += 1;", name="my_wrangle")',
+        "connect_nodes": 'connect_nodes(from_path="/obj/geo1/box1", to_path="/obj/geo1/merge1", input_index=0)',
+        "delete_node": 'delete_node(node_path="/obj/geo1/box1")',
+        "search_node_types": 'search_node_types(keyword="scatter", category="sop")',
+        "semantic_search_nodes": 'semantic_search_nodes(query="随机散布点", category="sop")',
+        "list_children": 'list_children(path="/obj/geo1", page=1)',
+        "read_selection": 'read_selection()',
+        "set_display_flag": 'set_display_flag(node_path="/obj/geo1/box1")',
+        "copy_node": 'copy_node(source_path="/obj/geo1/box1", dest_parent="/obj/geo1", new_name="box1_copy")',
+        "batch_set_parameters": 'batch_set_parameters(node_path="/obj/geo1/box1", parameters={"sizex":2,"sizey":3})',
+        "find_nodes_by_param": 'find_nodes_by_param(network_path="/obj/geo1", param_name="file", param_value="*.bgeo")',
+        "save_hip": 'save_hip(file_path="C:/path/to/file.hip")',
+        "undo_redo": 'undo_redo(action="undo")',
+        "execute_python": 'execute_python(code="import hou; print(hou.node(\\"/obj\\").children())")',
+        "execute_shell": 'execute_shell(command="pip list", cwd="C:/project", timeout=30)',
+        "check_errors": 'check_errors(node_path="/obj/geo1/box1")',
+        "search_local_doc": 'search_local_doc(keyword="scatter")',
+        "get_houdini_node_doc": 'get_houdini_node_doc(node_type="scatter", page=1)',
+        "get_node_inputs": 'get_node_inputs(node_type="copytopoints", category="sop")',
+        "run_skill": 'run_skill(skill_name="analyze_geometry_attribs", params={"node_path":"/obj/geo1/box1"})',
+        "list_skills": 'list_skills()',
+    }
 
     # 工具名称 -> 处理方法名的映射表
     _TOOL_DISPATCH: Dict[str, str] = {
@@ -2656,6 +2744,13 @@ class HoudiniMCP:
                 return f"⛔ 安全拦截: {msg}\n如确需执行，请在 Houdini Python Shell 中手动运行。"
         return None
 
+    def _append_usage_hint(self, tool_name: str, error_msg: str) -> str:
+        """在错误消息末尾附加工具的正确调用方式"""
+        usage = self._TOOL_USAGE.get(tool_name)
+        if usage:
+            return f"{error_msg}\n\n正确调用方式: {usage}"
+        return error_msg
+
     def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具调用 - AI Agent 的统一工具入口（基于分派表）
         
@@ -2677,11 +2772,16 @@ class HoudiniMCP:
             return {"success": False, "error": f"工具处理器未实现: {handler_name}"}
         
         try:
-            return handler(arguments)
+            result = handler(arguments)
+            # 工具返回失败时，自动附加用法提示
+            if not result.get("success") and result.get("error"):
+                result["error"] = self._append_usage_hint(tool_name, result["error"])
+            return result
         except Exception as e:
             import traceback
             print(f"[MCP Client] 工具执行异常: {traceback.format_exc()}")
-            return {"success": False, "error": f"工具执行异常: {str(e)}"}
+            err = f"工具 {tool_name} 执行异常: {str(e)}"
+            return {"success": False, "error": self._append_usage_hint(tool_name, err)}
 
     def _tool_unknown(self, tool_name: str) -> Dict[str, Any]:
         """处理未知工具名称，提供建议"""
@@ -3106,7 +3206,7 @@ class HoudiniMCP:
             print(f"[MCP Client] ⚠️ 加载 node_inputs.json 失败: {e}")
         return cls._COMMON_NODE_INPUTS
 
-def get_node_input_info(self, node_type: str, category: str = "sop") -> Tuple[bool, str]:
+    def get_node_input_info(self, node_type: str, category: str = "sop") -> Tuple[bool, str]:
         """获取节点的输入端口信息（使用缓存，重要：帮助 AI 理解输入顺序）
         
         Args:

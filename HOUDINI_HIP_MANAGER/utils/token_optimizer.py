@@ -51,11 +51,19 @@ class TokenOptimizer:
         return int(tokens) + 1  # +1 确保不为 0
     
     def calculate_message_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """计算消息列表的总 token 数"""
+        """计算消息列表的总 token 数（含 tool_calls）"""
         total = 0
         for msg in messages:
-            content = msg.get('content', '')
+            content = msg.get('content', '') or ''
             total += self.estimate_tokens(content)
+            # tool_calls 中的函数名和参数也占 token
+            tool_calls = msg.get('tool_calls')
+            if tool_calls:
+                for tc in tool_calls:
+                    fn = tc.get('function', {})
+                    total += self.estimate_tokens(fn.get('name', ''))
+                    total += self.estimate_tokens(fn.get('arguments', ''))
+                    total += 8  # tool_call 结构开销（id, type, function wrapper）
             # 消息格式开销（role, 格式字符等）
             total += 4
         return total
