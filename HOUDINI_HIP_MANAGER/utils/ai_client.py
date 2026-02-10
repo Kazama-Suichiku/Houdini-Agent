@@ -459,13 +459,17 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_network_structure",
-            "description": "获取当前网络编辑器中的节点网络结构，包括所有节点名称、类型和连接关系。轻量级操作，不包含详细参数。",
+            "description": "获取当前网络编辑器中的节点网络结构，包括所有节点名称、类型和连接关系。轻量级操作，不包含详细参数。结果支持分页，大型网络可翻页查看。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "network_path": {
                         "type": "string",
                         "description": "网络路径如 '/obj/geo1'，留空使用当前网络"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "页码（从1开始），结果较多时翻页查看后续内容"
                     }
                 },
                 "required": []
@@ -476,7 +480,7 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_node_details",
-            "description": "获取指定节点的详细信息，包括所有参数及当前值。",
+            "description": "获取节点概况：类型、状态标志(display/render/bypass)、错误信息、输入输出连接、以及用户修改过的非默认参数值。用于了解节点整体状况和连接关系，不含完整参数列表。如需查看所有可用参数请用 get_node_parameters。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -493,13 +497,17 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_node_parameters",
-            "description": "获取节点的所有可用参数列表（名称、类型、默认值、当前值）。在设置参数之前必须先调用此工具确认参数名。",
+            "description": "获取节点的完整参数列表：每个参数的内部名称、类型(Float/Int/Menu等)、标签、默认值、当前值、菜单选项。设置参数前必须先调用此工具确认正确的参数名和类型，不要猜测。不含连接和错误信息，如需查看请用 get_node_details。参数较多时支持分页。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "node_path": {
                         "type": "string",
                         "description": "节点完整路径如 '/obj/geo1/box1'"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "页码（从1开始），参数较多时翻页查看后续参数"
                     }
                 },
                 "required": ["node_path"]
@@ -647,13 +655,14 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_children",
-            "description": "列出网络下的所有子节点，类似文件系统的 ls 命令。显示节点名称、类型和状态。",
+            "description": "列出网络下的所有子节点，类似文件系统的 ls 命令。显示节点名称、类型和状态。节点较多时支持分页。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "network_path": {"type": "string", "description": "网络路径，如 '/obj/geo1'。留空使用当前网络"},
                     "recursive": {"type": "boolean", "description": "是否递归列出子网络，默认 false"},
-                    "show_flags": {"type": "boolean", "description": "是否显示节点标志（显示/渲染/旁路），默认 true"}
+                    "show_flags": {"type": "boolean", "description": "是否显示节点标志（显示/渲染/旁路），默认 true"},
+                    "page": {"type": "integer", "description": "页码（从1开始），节点较多时翻页查看"}
                 },
                 "required": []
             }
@@ -853,7 +862,7 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_houdini_node_doc",
-            "description": "获取节点的帮助文档（自动降级：本地帮助服务器 -> SideFX在线文档 -> 节点类型信息）。用于查看节点的详细说明、参数含义和用法。优先使用 get_node_inputs 获取输入端口信息，本工具用于需要更详细文档时。",
+            "description": "获取节点帮助文档（支持分页）。自动降级：本地帮助服务器->SideFX在线文档->节点类型信息。文档较长时会分页显示，返回结果中会提示总页数和下一页调用方式。优先使用 get_node_inputs 获取输入端口信息，本工具用于需要更详细文档时。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -865,6 +874,10 @@ HOUDINI_TOOLS = [
                         "type": "string",
                         "enum": ["sop", "obj", "dop", "vop", "cop", "rop"],
                         "description": "节点类别，默认 'sop'"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "页码（从1开始）。首次查询不传或传1，如果返回结果提示有更多页，传入对应页码查看后续内容"
                     }
                 },
                 "required": ["node_type"]
@@ -875,13 +888,17 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "execute_python",
-            "description": "在 Houdini Python Shell 中执行代码。可以执行任意 Python 代码，访问 hou 模块操作场景。执行结果（包括 print 输出和错误信息）会完整返回。",
+            "description": "在 Houdini Python Shell 中执行代码。可以执行任意 Python 代码，访问 hou 模块操作场景。执行结果（包括 print 输出和错误信息）会完整返回。输出较长时支持分页，用相同 code 和不同 page 翻页查看。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "code": {
                         "type": "string",
                         "description": "要执行的 Python 代码"
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "页码（从1开始），输出较长时翻页查看后续内容。翻页时必须传入与首次相同的 code"
                     }
                 },
                 "required": ["code"]
@@ -1125,7 +1142,7 @@ class AIClient:
             fn = tc.get('function', {})
             if not fn.get('name'):
                 fn['name'] = 'unknown'
-            if 'arguments' not in fn:
+            if not fn.get('arguments', '').strip():
                 fn['arguments'] = '{}'
             tc['function'] = fn
         return tool_calls
@@ -1239,10 +1256,17 @@ class AIClient:
             sanitized.append(msg)
         return sanitized
 
+    # 已自带分页的工具，不再二次截断
+    _SELF_PAGED_TOOLS = frozenset({
+        'get_houdini_node_doc', 'get_network_structure', 'get_node_parameters',
+        'list_children', 'execute_python',
+    })
+
     def _compress_tool_result(self, tool_name: str, result: dict) -> str:
         """统一工具结果压缩逻辑（供两种 agent loop 共用）
 
         策略：
+        - 已自带分页的工具 → 直接返回（如 get_houdini_node_doc）
         - 查询工具 → 按行分页（默认 50 行）
         - 操作工具 → 提取路径，保留关键信息
         - 其他工具 → 适度截断
@@ -1250,6 +1274,9 @@ class AIClient:
         """
         if result.get('success'):
             content = result.get('result', '')
+            # 已自带分页逻辑的工具，直接返回不再截断
+            if tool_name in self._SELF_PAGED_TOOLS:
+                return content
             if tool_name in self._QUERY_TOOLS:
                 return self._paginate_result(content, max_lines=50)
             elif tool_name in self._OP_TOOLS:
@@ -1938,6 +1965,24 @@ class AIClient:
                         # 只压缩非最近3条的 assistant 消息
                         m['content'] = c[:800] + '...[已截断]'
             
+            # 诊断：打印第二次及之后请求的消息结构
+            if iteration > 1:
+                print(f"[AI Client] === DEBUG iteration={iteration} messages ({len(working_messages)}) ===")
+                for i, m in enumerate(working_messages):
+                    role = m.get('role', '?')
+                    tc = m.get('tool_calls')
+                    tc_id = m.get('tool_call_id', '')
+                    content = m.get('content')
+                    content_repr = repr(content)[:120] if content else repr(content)
+                    extras = {k: v for k, v in m.items() if k not in ('role', 'content', 'tool_calls', 'tool_call_id')}
+                    if tc:
+                        print(f"  [{i}] role={role}, content={content_repr}, tool_calls={json.dumps(tc, ensure_ascii=False)[:300]}, extras={extras}")
+                    elif tc_id:
+                        print(f"  [{i}] role={role}, tool_call_id={tc_id}, content={content_repr}, extras={extras}")
+                    else:
+                        print(f"  [{i}] role={role}, content={content_repr}, extras={extras}")
+                print(f"[AI Client] === END DEBUG ===")
+            
             # 流式请求
             for chunk in self.chat_stream(
                 messages=working_messages,
@@ -2136,8 +2181,9 @@ class AIClient:
             # 添加助手消息（确保 tool_call ID 完整）
             self._ensure_tool_call_ids(round_tool_calls)
             assistant_msg = {'role': 'assistant', 'tool_calls': round_tool_calls}
-            # 始终包含 content 字段（许多 API 要求存在，即使为空）
-            assistant_msg['content'] = round_content or ''
+            # content 为空时必须传 None（null）而非空字符串
+            # Claude/Anthropic 兼容代理拒绝 content="" + tool_calls 共存
+            assistant_msg['content'] = round_content or None
             # reasoning_content 仅 DeepSeek / 原生 GLM 需要（Duojie 等 OpenAI 兼容代理不支持）
             if self.is_reasoning_model(model) and provider in ('deepseek', 'glm'):
                 assistant_msg['reasoning_content'] = round_thinking or ''
@@ -2380,7 +2426,8 @@ class AIClient:
 
 安全操作规则（必须遵守）:
 -操作节点前先用get_network_structure确认节点存在
--设置参数前先用get_node_details确认节点和参数存在
+-了解节点状况(连接/错误/状态)用get_node_details
+-设置参数前必须先用get_node_parameters查询正确的参数名和类型,不要猜测参数名
 -execute_python中必须检查None:node=hou.node(path);if node:...
 -创建节点后用返回的路径操作,不要猜测路径
 -连接节点前确认两个节点都已存在

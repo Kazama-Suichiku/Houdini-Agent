@@ -798,7 +798,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
     undoRequested = QtCore.Signal()       # 请求撤销此操作
     
     _BTN_STYLE = f"""
-        QPushButton {{
+        QPushButton {{{{
             color: {{color}};
             font-size: 11px;
             font-family: {CursorTheme.FONT_BODY};
@@ -806,14 +806,14 @@ class NodeOperationLabel(QtWidgets.QWidget):
             border: 1px solid {{border}};
             border-radius: 3px;
             background: transparent;
-        }}
-        QPushButton:hover {{
+        }}}}
+        QPushButton:hover {{{{
             background: {{hover}};
-        }}
-        QPushButton:disabled {{
+        }}}}
+        QPushButton:disabled {{{{
             color: {CursorTheme.TEXT_MUTED};
             border-color: transparent;
-        }}
+        }}}}
     """
     
     def __init__(self, operation: str, count: int, node_paths: list = None, parent=None):

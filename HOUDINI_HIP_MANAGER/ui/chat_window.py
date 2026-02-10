@@ -273,7 +273,7 @@ class ChatWindow(QtWidgets.QDialog):
                 if not node_path:
                     self._append('Context', "删除失败：缺少 node_path。")
                 else:
-                    ok, msg = self.mcp.delete_node_by_path(str(node_path))
+                    ok, msg, _snapshot = self.mcp.delete_node_by_path(str(node_path))
                     self._append('Context', msg)
             elif act in ('delete_selection','delete_selected'):
                 ok, msg = self.mcp.delete_selected()

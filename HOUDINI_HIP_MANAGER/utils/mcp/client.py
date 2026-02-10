@@ -61,6 +61,51 @@ class HoudiniMCP:
     _common_node_inputs_cache: Dict[str, str] = {}  # 常见节点输入信息缓存
     _ats_cache: Dict[str, Dict[str, Any]] = {}  # ATS缓存: {node_type_key: ats_data}
 
+    # 通用工具结果分页缓存：key = "tool_name:unique_key" → 完整文本
+    _tool_page_cache: Dict[str, str] = {}
+    _TOOL_PAGE_LINES = 50  # 每页行数
+
+    @classmethod
+    def _paginate_tool_result(cls, text: str, cache_key: str, tool_hint: str,
+                              page: int = 1, page_lines: int = 0) -> str:
+        """通用工具结果分页
+        
+        Args:
+            text: 完整的文本结果
+            cache_key: 缓存键（如 "get_node_parameters:/obj/geo1/box1"）
+            tool_hint: 供 AI 翻页的工具调用提示（如 'get_node_parameters(node_path="/obj/geo1/box1", page=2)'）
+            page: 页码（从 1 开始）
+            page_lines: 每页行数，0 表示使用默认值
+        """
+        if not page_lines:
+            page_lines = cls._TOOL_PAGE_LINES
+
+        cls._tool_page_cache[cache_key] = text
+
+        lines = text.split('\n')
+        total_lines = len(lines)
+        total_pages = max(1, (total_lines + page_lines - 1) // page_lines)
+
+        page = max(1, min(page, total_pages))
+
+        start = (page - 1) * page_lines
+        end = min(start + page_lines, total_lines)
+        page_text = '\n'.join(lines[start:end])
+
+        if total_pages == 1:
+            return page_text
+
+        header = f"[第 {page}/{total_pages} 页, 共 {total_lines} 行]\n\n"
+
+        if page < total_pages:
+            # 将 page_hint 中的页码替换为下一页
+            next_page = page + 1
+            footer = f"\n\n[第 {page}/{total_pages} 页] 还有更多内容，调用 {tool_hint.replace(f'page={page}', f'page={next_page}')} 查看下一页"
+        else:
+            footer = f"\n\n[第 {page}/{total_pages} 页 - 最后一页]"
+
+        return header + page_text + footer
+
     # ========================================
     # 网络结构读取（轻量级，只返回拓扑信息）
     # ========================================
@@ -1678,21 +1723,120 @@ class HoudiniMCP:
     # 节点删除
     # ========================================
     
-    def delete_node_by_path(self, node_path: str) -> Tuple[bool, str]:
-        """按路径删除节点"""
+    @staticmethod
+    def _snapshot_node(node) -> Optional[Dict[str, Any]]:
+        """在删除前快照节点状态（用于撤销重建）
+        
+        Returns:
+            快照字典，包含重建节点所需的全部信息；失败返回 None
+        """
+        try:
+            node_type = node.type()
+            parent = node.parent()
+            if not node_type or not parent:
+                return None
+            
+            # 基本信息
+            snapshot: Dict[str, Any] = {
+                "parent_path": parent.path(),
+                "node_type": node_type.name(),
+                "node_name": node.name(),
+                "position": [node.position()[0], node.position()[1]],
+            }
+            
+            # 非默认参数值
+            params = {}
+            try:
+                for parm in node.parms():
+                    try:
+                        # 跳过锁定/不可写参数
+                        if parm.isLocked():
+                            continue
+                        # 只保存与默认值不同的参数
+                        default = parm.parmTemplate().defaultValue()
+                        current = parm.eval()
+                        # 表达式优先保存
+                        try:
+                            expr = parm.expression()
+                            if expr:
+                                params[parm.name()] = {"expr": expr, "lang": str(parm.expressionLanguage())}
+                                continue
+                        except Exception:
+                            pass
+                        # 比较 float 时容忍精度误差
+                        if isinstance(current, float) and isinstance(default, (float, int)):
+                            if abs(current - float(default)) > 1e-9:
+                                params[parm.name()] = current
+                        elif current != default:
+                            params[parm.name()] = current
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            snapshot["params"] = params
+            
+            # 输入连接
+            input_connections = []
+            try:
+                for i, conn in enumerate(node.inputs()):
+                    if conn is not None:
+                        input_connections.append({
+                            "input_index": i,
+                            "source_path": conn.path(),
+                        })
+            except Exception:
+                pass
+            snapshot["input_connections"] = input_connections
+            
+            # 输出连接
+            output_connections = []
+            try:
+                for conn in node.outputConnections():
+                    output_connections.append({
+                        "output_index": conn.outputIndex(),
+                        "dest_path": conn.outputNode().path() if conn.outputNode() else "",
+                        "dest_input_index": conn.inputIndex(),
+                    })
+            except Exception:
+                pass
+            snapshot["output_connections"] = output_connections
+            
+            # 标志位
+            try:
+                snapshot["display_flag"] = node.isDisplayFlagSet() if hasattr(node, 'isDisplayFlagSet') else False
+                snapshot["render_flag"] = node.isRenderFlagSet() if hasattr(node, 'isRenderFlagSet') else False
+            except Exception:
+                snapshot["display_flag"] = False
+                snapshot["render_flag"] = False
+            
+            return snapshot
+        except Exception:
+            return None
+
+    def delete_node_by_path(self, node_path: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """按路径删除节点（删除前自动快照，支持撤销重建）
+        
+        Returns:
+            (success, message, undo_snapshot)
+        """
         if hou is None:
-            return False, "未检测到 Houdini API"
+            return False, "未检测到 Houdini API", None
         
         node = hou.node(node_path)
         if node is None:
-            return False, f"未找到节点: {node_path}"
+            return False, f"未找到节点: {node_path}", None
         
         try:
+            # 删除前快照（用于撤销）
+            snapshot = self._snapshot_node(node)
+            
+            full_path = node.path()
             name = node.name()
             node.destroy()
-            return True, f"已删除节点: {name}"
+            # 返回完整路径（而非仅名称），_undo_snapshot 附带快照数据
+            return True, f"已删除节点: {full_path}", snapshot
         except Exception as exc:
-            return False, f"删除失败: {exc}"
+            return False, f"删除失败: {exc}", None
 
     def delete_selected(self) -> Tuple[bool, str]:
         """删除选中的节点"""
@@ -1864,10 +2008,23 @@ class HoudiniMCP:
 
     def _tool_get_network_structure(self, args: Dict[str, Any]) -> Dict[str, Any]:
         network_path = args.get("network_path")
+        page = int(args.get("page", 1))
+
+        # 分页快速路径
+        cache_key = f"get_network_structure:{network_path or '_current'}"
+        if page > 1 and cache_key in self._tool_page_cache:
+            np_arg = f'network_path="{network_path}", ' if network_path else ''
+            hint = f'get_network_structure({np_arg}page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                self._tool_page_cache[cache_key], cache_key, hint, page)}
+
         ok, data = self.get_network_structure(network_path)
         if ok:
             _, text = self.get_network_structure_text(network_path)
-            return {"success": True, "result": text}
+            np_arg = f'network_path="{network_path}", ' if network_path else ''
+            hint = f'get_network_structure({np_arg}page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                text, cache_key, hint, page)}
         return {"success": False, "error": data.get("error", "未知错误")}
 
     def _tool_get_node_details(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -1878,12 +2035,21 @@ class HoudiniMCP:
         return {"success": ok, "result": text if ok else "", "error": "" if ok else text}
 
     def _tool_get_node_parameters(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """获取节点的所有可用参数（名称、类型、默认值、当前值）"""
+        """获取节点的所有可用参数（名称、类型、默认值、当前值），支持分页"""
         node_path = args.get("node_path", "")
         if not node_path:
             return {"success": False, "error": "缺少 node_path 参数"}
+        page = int(args.get("page", 1))
+
         if hou is None:
             return {"success": False, "error": "未检测到 Houdini API"}
+
+        # 分页快速路径：缓存中已有完整结果
+        cache_key = f"get_node_parameters:{node_path}"
+        if page > 1 and cache_key in self._tool_page_cache:
+            hint = f'get_node_parameters(node_path="{node_path}", page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                self._tool_page_cache[cache_key], cache_key, hint, page)}
 
         node = hou.node(node_path)
         if node is None:
@@ -1964,7 +2130,12 @@ class HoudiniMCP:
                     continue
 
             lines.insert(2, f"参数数量: {count}")
-            return {"success": True, "result": "\n".join(lines)}
+            full_text = "\n".join(lines)
+
+            # 分页返回
+            hint = f'get_node_parameters(node_path="{node_path}", page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                full_text, cache_key, hint, page)}
 
         except Exception as e:
             return {"success": False, "error": f"获取参数失败: {str(e)}"}
@@ -2011,8 +2182,11 @@ class HoudiniMCP:
         node_path = args.get("node_path", "")
         if not node_path:
             return {"success": False, "error": "缺少 node_path 参数"}
-        ok, msg = self.delete_node_by_path(node_path)
-        return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
+        ok, msg, snapshot = self.delete_node_by_path(node_path)
+        result = {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
+        if ok and snapshot:
+            result["_undo_snapshot"] = snapshot  # 供 UI 撤销使用，不会发给 AI
+        return result
 
     def _tool_search_node_types(self, args: Dict[str, Any]) -> Dict[str, Any]:
         keyword = args.get("keyword", "")
@@ -2029,10 +2203,26 @@ class HoudiniMCP:
         return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
 
     def _tool_list_children(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        ok, msg = self.list_children(
-            args.get("network_path"), args.get("recursive", False),
-            args.get("show_flags", True))
-        return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
+        network_path = args.get("network_path")
+        recursive = args.get("recursive", False)
+        page = int(args.get("page", 1))
+
+        # 分页快速路径
+        cache_key = f"list_children:{network_path or '_current'}:r={recursive}"
+        if page > 1 and cache_key in self._tool_page_cache:
+            np_arg = f'network_path="{network_path}", ' if network_path else ''
+            hint = f'list_children({np_arg}recursive={recursive}, page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                self._tool_page_cache[cache_key], cache_key, hint, page)}
+
+        ok, msg = self.list_children(network_path, recursive, args.get("show_flags", True))
+        if not ok:
+            return {"success": False, "error": msg}
+
+        np_arg = f'network_path="{network_path}", ' if network_path else ''
+        hint = f'list_children({np_arg}recursive={recursive}, page={page})'
+        return {"success": True, "result": self._paginate_tool_result(
+            msg, cache_key, hint, page)}
 
     def _tool_get_geometry_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
         node_path = args.get("node_path", "")
@@ -2101,6 +2291,18 @@ class HoudiniMCP:
         code = args.get("code", "")
         if not code:
             return {"success": False, "error": "缺少 code 参数"}
+        page = int(args.get("page", 1))
+
+        # 分页快速路径（只对成功的输出缓存）
+        # 用 code 的 hash 作为缓存键，避免 key 过长
+        import hashlib
+        code_hash = hashlib.md5(code.encode()).hexdigest()[:12]
+        cache_key = f"execute_python:{code_hash}"
+        if page > 1 and cache_key in self._tool_page_cache:
+            hint = f'execute_python(code="...同上...", page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                self._tool_page_cache[cache_key], cache_key, hint, page)}
+
         # 安全检查：检测危险操作
         security_msg = self._check_code_security(code)
         if security_msg:
@@ -2113,7 +2315,11 @@ class HoudiniMCP:
             if result.get("return_value") is not None:
                 output_parts.append(f"返回值: {result['return_value']}")
             output_parts.append(f"执行时间: {result['execution_time']:.3f}s")
-            return {"success": True, "result": "\n".join(output_parts)}
+            full_text = "\n".join(output_parts)
+
+            hint = f'execute_python(code="...同上...", page={page})'
+            return {"success": True, "result": self._paginate_tool_result(
+                full_text, cache_key, hint, page)}
         # 失败：包含部分输出（如果有）+ 完整错误 + 执行时间
         error_parts = []
         partial_output = result.get("output", "")
@@ -2151,7 +2357,8 @@ class HoudiniMCP:
         node_type = args.get("node_type", "")
         if not node_type:
             return {"success": False, "error": "缺少 node_type 参数"}
-        ok, doc_text = self._get_houdini_local_doc(node_type, args.get("category", "sop"))
+        page = int(args.get("page", 1))
+        ok, doc_text = self._get_houdini_local_doc(node_type, args.get("category", "sop"), page)
         return {"success": ok, "result": doc_text if ok else "", "error": "" if ok else doc_text}
 
     def _tool_get_node_inputs(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -2411,13 +2618,19 @@ class HoudiniMCP:
         "chop": "Chop", "shop": "Shop", "lop": "Lop", "top": "Top",
     }
 
-    def _get_houdini_local_doc(self, node_type: str, category: str = "sop") -> Tuple[bool, str]:
-        """获取节点文档（多重降级策略）
+    def _get_houdini_local_doc(self, node_type: str, category: str = "sop", page: int = 1) -> Tuple[bool, str]:
+        """获取节点文档（多重降级策略，支持分页）
 
         优先级：
-        1. Houdini 本地帮助服务器（http://127.0.0.1:{port}）
-        2. SideFX 在线文档（https://www.sidefx.com/docs/houdini/）
-        3. hou.NodeType.description() + 参数列表 作为最低限度的文档
+        1. 分页缓存（之前已获取的文档直接分页返回）
+        2. Houdini 本地帮助服务器（http://127.0.0.1:{port}）
+        3. SideFX 在线文档（https://www.sidefx.com/docs/houdini/）
+        4. hou.NodeType.description() + 参数列表 作为最低限度的文档
+
+        Args:
+            node_type: 节点类型名
+            category: 节点类别
+            page: 页码（从 1 开始），大于 1 时优先从缓存读取
 
         Returns:
             (success, doc_text)
@@ -2426,6 +2639,11 @@ class HoudiniMCP:
             return False, "未检测到 Houdini API"
 
         type_name_lower = node_type.lower().strip()
+
+        # ---------- 分页快速路径：缓存中已有完整文档 ----------
+        cache_key = f"{category}/{node_type}".lower()
+        if page > 1 and cache_key in self._doc_page_cache:
+            return True, self._paginate_doc(self._doc_page_cache[cache_key], node_type, category, page)
 
         # ---------- 查找节点类型对象 ----------
         node_type_obj = None
@@ -2465,12 +2683,12 @@ class HoudiniMCP:
             print(f"[MCP] 查找节点类型失败: {e}")
 
         # ---------- 策略 1: 本地帮助服务器 ----------
-        local_result = self._fetch_local_help(node_type, category, node_type_obj)
+        local_result = self._fetch_local_help(node_type, category, node_type_obj, page)
         if local_result is not None:
             return True, local_result
 
         # ---------- 策略 2: SideFX 在线文档 ----------
-        online_result = self._fetch_online_help(node_type, category)
+        online_result = self._fetch_online_help(node_type, category, page)
         if online_result is not None:
             return True, online_result
 
@@ -2507,17 +2725,52 @@ class HoudiniMCP:
         text = '\n'.join(lines)
         return text
 
-    def _truncate_doc(self, text: str, node_type: str, max_lines: int = 100, max_chars: int = 3000) -> str:
-        """截断文档到合理长度"""
-        lines = text.split('\n')
-        if len(lines) > max_lines:
-            text = '\n'.join(lines[:max_lines]) + f"\n\n[文档已截断，共{len(lines)}行，仅显示前{max_lines}行]"
-        if len(text) > max_chars:
-            text = text[:max_chars] + "...\n[已截断]"
-        return f"[{node_type} 节点文档]\n\n{text}"
+    # 文档分页缓存：key = "category/node_type" → 完整纯文本
+    _doc_page_cache: Dict[str, str] = {}
+    _DOC_PAGE_SIZE = 2500  # 每页字符数
 
-    def _fetch_local_help(self, node_type: str, category: str, node_type_obj) -> Optional[str]:
+    def _paginate_doc(self, text: str, node_type: str, category: str, page: int = 1) -> str:
+        """将文档按页返回，支持分页查看完整内容
+        
+        Args:
+            text: 完整的纯文本文档
+            node_type: 节点类型名
+            category: 节点类别
+            page: 页码（从 1 开始）
+        """
+        cache_key = f"{category}/{node_type}".lower()
+        self._doc_page_cache[cache_key] = text
+
+        total_chars = len(text)
+        page_size = self._DOC_PAGE_SIZE
+        total_pages = max(1, (total_chars + page_size - 1) // page_size)
+
+        # 限制页码范围
+        page = max(1, min(page, total_pages))
+
+        start = (page - 1) * page_size
+        end = min(start + page_size, total_chars)
+        page_text = text[start:end]
+
+        header = f"[{node_type} 节点文档] (第 {page}/{total_pages} 页, 共 {total_chars} 字符)\n\n"
+
+        if total_pages == 1:
+            return header + page_text
+        
+        if page < total_pages:
+            footer = f"\n\n[第 {page}/{total_pages} 页] 还有更多内容，调用 get_houdini_node_doc(node_type=\"{node_type}\", category=\"{category}\", page={page + 1}) 查看下一页"
+        else:
+            footer = f"\n\n[第 {page}/{total_pages} 页 - 最后一页]"
+        
+        return header + page_text + footer
+
+    def _fetch_local_help(self, node_type: str, category: str, node_type_obj, page: int = 1) -> Optional[str]:
         """从 Houdini 本地帮助服务器获取文档"""
+        # 先检查分页缓存（避免重复请求）
+        cache_key = f"{category}/{node_type}".lower()
+        if cache_key in self._doc_page_cache and page > 1:
+            return self._paginate_doc(self._doc_page_cache[cache_key], node_type, category, page)
+
         if not requests:
             return None
         settings = read_settings()
@@ -2540,15 +2793,20 @@ class HoudiniMCP:
             if response.status_code == 200:
                 text = self._html_to_text(response.text)
                 if text and len(text) > 50:
-                    return self._truncate_doc(text, node_type)
+                    return self._paginate_doc(text, node_type, category, page)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             pass  # 本地服务器不可用，降级到在线
         except Exception as e:
             print(f"[MCP] 本地帮助获取失败: {e}")
         return None
 
-    def _fetch_online_help(self, node_type: str, category: str) -> Optional[str]:
+    def _fetch_online_help(self, node_type: str, category: str, page: int = 1) -> Optional[str]:
         """从 SideFX 在线文档获取"""
+        # 先检查分页缓存
+        cache_key = f"{category}/{node_type}".lower()
+        if cache_key in self._doc_page_cache and page > 1:
+            return self._paginate_doc(self._doc_page_cache[cache_key], node_type, category, page)
+
         if not requests:
             return None
         base_url = "https://www.sidefx.com/docs/houdini/"
@@ -2558,7 +2816,7 @@ class HoudiniMCP:
             if response.status_code == 200:
                 text = self._html_to_text(response.text)
                 if text and len(text) > 50:
-                    return self._truncate_doc(text, node_type)
+                    return self._paginate_doc(text, node_type, category, page)
         except Exception:
             pass
         return None

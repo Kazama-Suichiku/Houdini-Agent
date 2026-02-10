@@ -72,6 +72,13 @@ class AITab(QtWidgets.QWidget):
         self._is_running = False
         self._thinking_timer: Optional[QtCore.QTimer] = None
         
+        # Agent 运行锚点：记录发起请求的 session，保证回调写入正确的会话
+        self._agent_session_id: Optional[str] = None
+        self._agent_response: Optional[AIResponse] = None
+        self._agent_scroll_area = None  # 运行中 session 的 scroll_area
+        self._agent_history: Optional[List[Dict[str, Any]]] = None
+        self._agent_token_stats: Optional[Dict] = None
+        
         # 上下文管理
         self._max_context_messages = 20
         self._context_summary = ""
@@ -638,11 +645,9 @@ Todo 管理规则（严格遵守）:
     
     def _new_session(self):
         """新建对话会话"""
-        if self._is_running:
-            return
-        
-        # 保存当前会话状态
-        self._save_current_session_state()
+        # 保存当前会话状态（如果当前 session 正在被 agent 写入则跳过，避免覆盖）
+        if self._agent_session_id != self._session_id:
+            self._save_current_session_state()
         
         # 自动保存旧会话缓存
         if self._auto_save_cache and self._conversation_history:
@@ -699,23 +704,14 @@ Todo 管理规则（严格遵守）:
         self._update_context_stats()
     
     def _switch_session(self, tab_index: int):
-        """切换到指定标签页的会话"""
+        """切换到指定标签页的会话（运行中也允许切换）"""
         new_session_id = self.session_tabs.tabData(tab_index)
         if not new_session_id or new_session_id == self._session_id:
             return
         
-        if self._is_running:
-            # 运行中禁止切换，恢复到当前标签
-            self.session_tabs.blockSignals(True)
-            for i in range(self.session_tabs.count()):
-                if self.session_tabs.tabData(i) == self._session_id:
-                    self.session_tabs.setCurrentIndex(i)
-                    break
-            self.session_tabs.blockSignals(False)
-            return
-        
-        # 保存当前会话
-        self._save_current_session_state()
+        # 保存当前会话（如果当前不是 agent 正在写入的 session，正常保存）
+        if self._agent_session_id != self._session_id:
+            self._save_current_session_state()
         
         # 加载目标会话
         self._load_session_state(new_session_id)
@@ -724,11 +720,15 @@ Todo 管理规则（严格遵守）:
         sdata = self._sessions[new_session_id]
         self.session_stack.setCurrentWidget(sdata['scroll_area'])
         
+        # 更新按钮状态（取决于目标 session 是否就是正在运行的 session）
+        self._update_run_buttons()
         self._update_context_stats()
     
     def _close_session_tab(self, tab_index: int):
         """关闭指定标签页"""
-        if self._is_running:
+        sid = self.session_tabs.tabData(tab_index)
+        # 禁止关闭正在运行的 session
+        if sid and self._agent_session_id == sid:
             return
         
         session_id = self.session_tabs.tabData(tab_index)
@@ -1295,6 +1295,13 @@ Todo 管理规则（严格遵守）:
         except RuntimeError:
             pass  # 控件可能已销毁
     
+    def _scroll_agent_to_bottom(self, force: bool = False):
+        """滚动 agent 所在的 session（如果正在显示则滚动，否则跳过）"""
+        # 只有当前显示的 session 就是 agent session 时才滚动
+        if self._agent_session_id and self._agent_session_id != self._session_id:
+            return  # agent 在后台 session 跑，不要干扰用户正在看的 session
+        self._scroll_to_bottom(force=force)
+    
     def _show_toast(self, text: str, duration_ms: int = 3000):
         """在聊天区域底部显示临时提示，自动消失"""
         toast = StatusLine(text)
@@ -1310,28 +1317,73 @@ Todo 管理规则（严格遵守）:
 
     def _set_running(self, running: bool):
         self._is_running = running
-        self.btn_send.setVisible(not running)
-        self.btn_stop.setVisible(running)
         
         if running:
+            # 锚定 agent 输出目标到当前 session
+            self._agent_session_id = self._session_id
+            self._agent_response = self._current_response
+            self._agent_scroll_area = self.scroll_area
+            self._agent_history = self._conversation_history
+            self._agent_token_stats = self._token_stats
+            
             # 重置缓冲区
             self._thinking_buffer = ""
             self._content_buffer = ""
-            self._current_output_tokens = 0  # 重置输出 token 计数
-            self._in_think_block = False     # 重置 <think> 解析状态
+            self._current_output_tokens = 0
+            self._in_think_block = False
             self._tag_parse_buf = ""
-            self._fake_warned = False        # 重置伪造工具调用警告标志
+            self._fake_warned = False
             
-            # 注意：不要清除 _current_response，它在 _add_ai_response 中设置
             self.client.reset_stop()
             # 启动思考计时器
             self._thinking_timer = QtCore.QTimer(self)
             self._thinking_timer.timeout.connect(lambda: self._updateThinkingTime.emit())
             self._thinking_timer.start(1000)
         else:
+            # 将完成后的状态写回 session 字典
+            if self._agent_session_id and self._agent_session_id in self._sessions:
+                s = self._sessions[self._agent_session_id]
+                s['current_response'] = self._agent_response
+                if self._agent_history is not None:
+                    s['conversation_history'] = self._agent_history
+                if self._agent_token_stats is not None:
+                    s['token_stats'] = self._agent_token_stats
+            
+            self._agent_session_id = None
+            self._agent_response = None
+            self._agent_scroll_area = None
+            self._agent_history = None
+            self._agent_token_stats = None
+            
             if self._thinking_timer:
                 self._thinking_timer.stop()
                 self._thinking_timer = None
+        
+        # 按当前显示的 session 更新按钮状态
+        self._update_run_buttons()
+    
+    _TAB_RUNNING_PREFIX = "\u25cf "  # ● 前缀表示正在运行
+    
+    def _update_run_buttons(self):
+        """根据当前显示的 session 是否正在运行，更新 send/stop 按钮和 tab 指示器"""
+        current_is_running = (self._agent_session_id is not None
+                              and self._agent_session_id == self._session_id)
+        any_running = self._agent_session_id is not None
+        # 当前 session 在跑 → 显示 stop；否则显示 send（但若其他 session 在跑则 disable）
+        self.btn_stop.setVisible(current_is_running)
+        self.btn_send.setVisible(not current_is_running)
+        self.btn_send.setEnabled(not any_running)
+        
+        # 更新所有 tab 的运行指示器
+        for i in range(self.session_tabs.count()):
+            sid = self.session_tabs.tabData(i)
+            label = self.session_tabs.tabText(i)
+            is_agent_tab = (sid == self._agent_session_id and self._agent_session_id is not None)
+            has_prefix = label.startswith(self._TAB_RUNNING_PREFIX)
+            if is_agent_tab and not has_prefix:
+                self.session_tabs.setTabText(i, self._TAB_RUNNING_PREFIX + label)
+            elif not is_agent_tab and has_prefix:
+                self.session_tabs.setTabText(i, label[len(self._TAB_RUNNING_PREFIX):])
 
     # ===== 信号处理 =====
     
@@ -1342,13 +1394,14 @@ Todo 管理规则（严格遵守）:
         _emit_normal_content 中经过了 <think> 标签过滤和伪造检测。
         这里只负责将文本交给 UI 控件显示，不做额外过滤。
         """
-        if not text or not self._current_response:
+        resp = self._agent_response or self._current_response
+        if not text or not resp:
             return
         # 过滤纯空白（只含换行/空格的 chunk）
         if not text.strip():
             return
-        self._current_response.append_content(text)
-        self._scroll_to_bottom(force=False)
+        resp.append_content(text)
+        self._scroll_agent_to_bottom(force=False)
 
     def _on_content_with_limit(self, text: str):
         """处理内容追加，解析 <think> 标签，分离思考和正式内容"""
@@ -1438,9 +1491,10 @@ Todo 管理规则（严格遵守）:
     @QtCore.Slot()
     def _finalize_thinking_main_thread(self):
         """[主线程] 实际执行 finalize 思考区块并停止计时器"""
-        if self._current_response and self._current_response._has_thinking:
-            if not self._current_response.thinking_section._finalized:
-                self._current_response.thinking_section.finalize()
+        resp = self._agent_response or self._current_response
+        if resp and resp._has_thinking:
+            if not resp.thinking_section._finalized:
+                resp.thinking_section.finalize()
         if self._thinking_timer:
             self._thinking_timer.stop()
             self._thinking_timer = None
@@ -1448,8 +1502,9 @@ Todo 管理规则（严格遵守）:
     @QtCore.Slot()
     def _resume_thinking_main_thread(self):
         """[主线程] 实际执行恢复思考区块并重启计时器"""
-        if self._current_response and self._current_response._has_thinking:
-            ts = self._current_response.thinking_section
+        resp = self._agent_response or self._current_response
+        if resp and resp._has_thinking:
+            ts = resp.thinking_section
             if ts._finalized:
                 ts.resume()
         # 重启计时器（如果已停止）
@@ -1536,24 +1591,31 @@ Todo 管理规则（严格遵守）:
     @QtCore.Slot(str)
     def _on_add_thinking(self, text: str):
         """在主线程更新思考内容（槽函数）"""
-        if self._current_response:
-            self._current_response.add_thinking(text)
-        self._scroll_to_bottom(force=False)
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.add_thinking(text)
+        self._scroll_agent_to_bottom(force=False)
 
     def _on_add_status(self, text: str):
-        if self._current_response:
-            self._current_response.add_status(text)
-            # 不强制滚动
-            self._scroll_to_bottom(force=False)
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.add_status(text)
+            self._scroll_agent_to_bottom(force=False)
 
     def _on_update_thinking(self):
         try:
-            if self._current_response:
-                self._current_response.update_thinking_time()
+            resp = self._agent_response or self._current_response
+            if resp:
+                resp.update_thinking_time()
         except RuntimeError:
             pass  # 控件可能已销毁
 
     def _on_agent_done(self, result: dict):
+        # 使用 agent 锚定的引用（可能已切走 session）
+        resp = self._agent_response or self._current_response
+        history = self._agent_history if self._agent_history is not None else self._conversation_history
+        stats = self._agent_token_stats or self._token_stats
+        
         # 刷新标签解析缓冲区残余内容
         if self._tag_parse_buf:
             if self._in_think_block:
@@ -1568,14 +1630,10 @@ Todo 管理规则（严格遵守）:
             self._on_append_content(self._output_buffer)
             self._output_buffer = ""
         
-        if self._current_response:
-            self._current_response.finalize()
-        
-        self._set_running(False)
+        if resp:
+            resp.finalize()
         
         # 记录工具调用历史到对话历史（重要：保存节点操作上下文）
-        # ⚠️ 注意：不再保存为 role="tool"，因为 API 要求 tool 消息必须有 tool_call_id
-        # 改为保存为 role="assistant" 的上下文摘要格式，避免 API 400 错误
         tool_calls_history = result.get('tool_calls_history', [])
         if tool_calls_history:
             tool_summary_parts = []
@@ -1583,33 +1641,26 @@ Todo 管理规则（严格遵守）:
                 tool_name = tool_call.get('tool_name', '')
                 tool_result = tool_call.get('result', {})
                 
-                # 智能压缩工具结果：保留关键信息（节点路径）
                 if tool_result.get('success'):
                     result_text = str(tool_result.get('result', ''))
-                    # 对于创建节点等操作，保留完整路径
                     if tool_name in ('create_node', 'create_nodes_batch', 'connect_nodes', 'set_node_parameter'):
-                        # 提取路径信息（保留完整路径）
                         paths = re.findall(r'[/\w]+(?:/[\w]+)+', result_text)
                         if paths:
-                            # 保留所有路径，但限制总长度
-                            result_text = ' '.join(paths[:3])  # 最多3个路径
+                            result_text = ' '.join(paths[:3])
                             if len(result_text) > 100:
                                 result_text = result_text[:100] + '...'
                         elif len(result_text) > 80:
-                            # 如果没有路径，压缩到80字符
                             result_text = result_text[:80]
                     elif len(result_text) > 80:
-                        # 其他工具结果压缩
                         keywords = re.findall(r'[/\w]+|[\d.]+|创建|成功|完成', result_text)
                         result_text = ' '.join(keywords[:5]) if keywords else result_text[:80]
                     tool_summary_parts.append(f"[ok] {tool_name}: {result_text}")
                 else:
-                    error = str(tool_result.get('error', ''))[:80]  # 错误信息也保留更多
-                    tool_summary_parts.append(f"[err] {tool_name}: {error}")
+                    error_t = str(tool_result.get('error', ''))[:80]
+                    tool_summary_parts.append(f"[err] {tool_name}: {error_t}")
             
-            # 将工具调用结果合并为一条 assistant 上下文消息
             if tool_summary_parts:
-                self._conversation_history.append({
+                history.append({
                     'role': 'assistant',
                     'content': f"[工具执行结果]\n" + "\n".join(tool_summary_parts)
                 })
@@ -1618,29 +1669,27 @@ Todo 管理规则（严格遵守）:
         content = result.get('content', '')
         if content:
             clean = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
-            # 检测并清除 AI 伪造的工具调用结果
             clean = self._strip_fake_tool_results(clean)
             if clean:
-                self._conversation_history.append({'role': 'assistant', 'content': clean})
+                history.append({'role': 'assistant', 'content': clean})
         
         # 管理上下文
         self._manage_context()
         
-        # 更新 Token 统计（累积）
+        # 更新 Token 统计（累积到 agent 所属 session 的 stats）
         usage = result.get('usage', {})
         if usage:
-            # 累积统计
-            self._token_stats['input_tokens'] += usage.get('prompt_tokens', 0)
-            self._token_stats['output_tokens'] += usage.get('completion_tokens', 0)
-            self._token_stats['cache_read'] += usage.get('cache_hit_tokens', 0)
-            self._token_stats['cache_write'] += usage.get('cache_miss_tokens', 0)
-            self._token_stats['total_tokens'] += usage.get('total_tokens', 0)
-            self._token_stats['requests'] += 1
+            stats['input_tokens'] += usage.get('prompt_tokens', 0)
+            stats['output_tokens'] += usage.get('completion_tokens', 0)
+            stats['cache_read'] += usage.get('cache_hit_tokens', 0)
+            stats['cache_write'] += usage.get('cache_miss_tokens', 0)
+            stats['total_tokens'] += usage.get('total_tokens', 0)
+            stats['requests'] += 1
             
-            # 更新 UI 显示
-            self._update_token_stats_display()
+            # 如果当前显示的就是 agent session，更新 UI
+            if not self._agent_session_id or self._agent_session_id == self._session_id:
+                self._update_token_stats_display()
             
-            # 显示本轮 cache 统计
             cache_hit = usage.get('cache_hit_tokens', 0)
             cache_miss = usage.get('cache_miss_tokens', 0)
             cache_rate = usage.get('cache_hit_rate', 0)
@@ -1649,9 +1698,21 @@ Todo 管理规则（严格遵守）:
                 rate_percent = cache_rate * 100
                 self._addStatus.emit(f"Cache: {cache_hit}/{cache_hit+cache_miss} ({rate_percent:.0f}%)")
         
-        # 自动保存缓存（包含工具调用历史）
-        if self._auto_save_cache and len(self._conversation_history) > 0:
-            self._save_cache()
+        # 自动保存缓存（必须在 _set_running(False) 之前，因为此时 agent 引用还有效）
+        agent_sid = self._agent_session_id
+        if self._auto_save_cache and len(history) > 0 and agent_sid:
+            # 临时将 history 同步到 sessions 字典，再保存
+            if agent_sid in self._sessions:
+                self._sessions[agent_sid]['conversation_history'] = history
+                self._sessions[agent_sid]['token_stats'] = stats
+            # 如果当前显示的恰好就是 agent session，直接保存
+            if agent_sid == self._session_id:
+                self._save_cache()
+            else:
+                # 不在当前 session 上，写入 session 字典即可（下次切换回来时再保存）
+                pass
+        
+        self._set_running(False)
         
         # 更新上下文统计
         self._update_context_stats()
@@ -1662,9 +1723,10 @@ Todo 管理规则（严格遵守）:
             self._on_append_content(self._output_buffer)
             self._output_buffer = ""
         
-        if self._current_response:
-            self._current_response.finalize()
-            self._current_response.add_status(f"Error: {error}")
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.finalize()
+            resp.add_status(f"Error: {error}")
         
         self._set_running(False)
 
@@ -1674,9 +1736,10 @@ Todo 管理规则（严格遵守）:
             self._on_append_content(self._output_buffer)
             self._output_buffer = ""
         
-        if self._current_response:
-            self._current_response.finalize()
-            self._current_response.add_status("Stopped")
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.finalize()
+            resp.add_status("Stopped")
         
         self._set_running(False)
 
@@ -2078,7 +2141,8 @@ Todo 管理规则（严格遵守）:
     
     def _on_send(self):
         text = self.input_edit.toPlainText().strip()
-        if not text or self._is_running:
+        # 任意 session 有 agent 在跑就阻止发送（AIClient 是共享的，不支持并行）
+        if not text or self._agent_session_id is not None:
             return
 
         provider = self._current_provider()
@@ -2105,6 +2169,8 @@ Todo 管理规则（严格遵守）:
         
         # 创建 AI 回复块（必须在 _set_running 之后，否则会被清除）
         self._add_ai_response()
+        # 同步 agent 锚点到刚创建的 response widget
+        self._agent_response = self._current_response
         
         # ⚠️ 在主线程中获取所有 Qt 控件的值（后台线程不能直接访问）
         agent_params = {
@@ -2432,7 +2498,7 @@ Todo 管理规则（严格遵守）:
                 pass
         
         # 添加到执行流程（ToolCallItem 自身支持展开/收缩，不再需要额外折叠框）
-        if self._current_response:
+        if self._agent_response or self._current_response:
             prefix = "[err]" if not success else "[ok]"
             QtCore.QMetaObject.invokeMethod(
                 self, "_add_tool_result_ui",
@@ -2444,13 +2510,15 @@ Todo 管理规则（严格遵守）:
     @QtCore.Slot(str, str)
     def _add_tool_result_ui(self, name: str, result: str):
         """在 UI 线程中添加工具结果"""
-        if self._current_response:
-            self._current_response.add_tool_result(name, result)
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.add_tool_result(name, result)
 
     @QtCore.Slot(str, str)
     def _add_collapsible_result(self, name: str, result: str):
-        if self._current_response:
-            self._current_response.add_collapsible(f"Result: {name}", result)
+        resp = self._agent_response or self._current_response
+        if resp:
+            resp.add_collapsible(f"Result: {name}", result)
 
     @staticmethod
     def _extract_node_paths(text: str) -> list:
@@ -2468,45 +2536,46 @@ Todo 管理规则（严格遵守）:
     @QtCore.Slot(str, str)
     def _on_add_node_operation(self, name: str, result_json: str):
         """处理节点操作高亮显示"""
-        if not self._current_response:
+        resp = self._agent_response or self._current_response
+        if not resp:
             return
         
         try:
             result = json.loads(result_json)
-        except:
+        except Exception:
             result = {}
         
         label = None
         result_text = str(result.get('result', ''))
+        undo_snapshot = result.get('_undo_snapshot')  # 仅 delete_node 时会有
         
-        # 解析结果
+        # ---- 收集路径 & 操作类型 ----
+        op_type = 'create'
+        paths: list = []
+        
         if name == 'create_node':
-            paths = self._extract_node_paths(result_text)
-            if paths:
-                label = NodeOperationLabel('create', 1, paths)
-            elif result_text:
-                label = NodeOperationLabel('create', 1, [result_text])
+            paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
+            label = NodeOperationLabel('create', 1, paths) if paths else None
         
         elif name in ('create_nodes_batch', 'create_wrangle_node'):
-            paths = self._extract_node_paths(result_text)
-            if paths:
-                label = NodeOperationLabel('create', len(paths), paths)
-            elif result_text:
-                label = NodeOperationLabel('create', 1, [result_text])
+            paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
+            label = NodeOperationLabel('create', len(paths) or 1, paths) if paths else None
         
         elif name == 'delete_node':
-            paths = self._extract_node_paths(result_text)
-            if paths:
-                label = NodeOperationLabel('delete', len(paths), paths)
-            elif result_text:
-                label = NodeOperationLabel('delete', 1, [result_text])
+            op_type = 'delete'
+            paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
+            label = NodeOperationLabel('delete', len(paths) or 1, paths) if paths else None
         
         if label:
             label.nodeClicked.connect(self._navigate_to_node)
-            label.undoRequested.connect(self._undo_node_operation)
-            self._current_response.details_layout.addWidget(label)
+            # 用 lambda 捕获当前操作的上下文，使撤销精确到这一条操作
+            label.undoRequested.connect(
+                lambda _op=op_type, _paths=list(paths), _snap=undo_snapshot:
+                    self._undo_node_operation(_op, _paths, _snap)
+            )
+            resp.details_layout.addWidget(label)
         
-        self._scroll_to_bottom()
+        self._scroll_agent_to_bottom()
     
     def _navigate_to_node(self, node_path: str):
         """点击节点标签时，跳转到该节点并选中"""
@@ -2540,22 +2609,118 @@ Todo 管理规则（严格遵守）:
         except Exception as e:
             self._show_toast(f"跳转失败: {e}")
     
-    def _undo_node_operation(self):
-        """撤销单次节点操作（执行一次 Houdini undo）"""
+    def _undo_node_operation(self, op_type: str = 'create',
+                              node_paths: list = None,
+                              undo_snapshot: dict = None):
+        """精确撤销单次节点操作
+        
+        - create 操作 → 删除该节点（by path）
+        - delete 操作 → 从快照重建该节点
+        """
         try:
             import hou
-            hou.undos.performUndo()
-            self._show_toast("已撤销")
-            self._refresh_node_context()
         except ImportError:
             self._show_toast("Houdini 环境不可用")
+            return
+        
+        try:
+            if op_type == 'create':
+                # ---- 撤销创建 = 删除节点 ----
+                if not node_paths:
+                    self._show_toast("缺少节点路径，无法撤销")
+                    return
+                deleted = 0
+                for p in node_paths:
+                    node = hou.node(p)
+                    if node is not None:
+                        node.destroy()
+                        deleted += 1
+                if deleted:
+                    self._show_toast(f"已撤销创建（删除 {deleted} 个节点）")
+                else:
+                    self._show_toast("节点已不存在，无需撤销")
+            
+            elif op_type == 'delete' and undo_snapshot:
+                # ---- 撤销删除 = 从快照重建 ----
+                parent_path = undo_snapshot.get("parent_path", "")
+                node_type = undo_snapshot.get("node_type", "")
+                node_name = undo_snapshot.get("node_name", "")
+                
+                parent = hou.node(parent_path)
+                if parent is None:
+                    self._show_toast(f"父节点不存在: {parent_path}")
+                    return
+                
+                # 创建节点
+                new_node = parent.createNode(node_type, node_name)
+                
+                # 恢复位置
+                pos = undo_snapshot.get("position")
+                if pos and len(pos) == 2:
+                    new_node.setPosition(hou.Vector2(pos[0], pos[1]))
+                
+                # 恢复参数
+                params = undo_snapshot.get("params", {})
+                for parm_name, val in params.items():
+                    try:
+                        parm = new_node.parm(parm_name)
+                        if parm is None:
+                            continue
+                        if isinstance(val, dict) and "expr" in val:
+                            lang_str = val.get("lang", "Hscript")
+                            lang = (hou.exprLanguage.Python
+                                    if "python" in lang_str.lower()
+                                    else hou.exprLanguage.Hscript)
+                            parm.setExpression(val["expr"], lang)
+                        else:
+                            parm.set(val)
+                    except Exception:
+                        continue
+                
+                # 恢复输入连接
+                for conn in undo_snapshot.get("input_connections", []):
+                    try:
+                        src = hou.node(conn["source_path"])
+                        if src:
+                            new_node.setInput(conn["input_index"], src)
+                    except Exception:
+                        continue
+                
+                # 恢复输出连接
+                for conn in undo_snapshot.get("output_connections", []):
+                    try:
+                        dest = hou.node(conn["dest_path"])
+                        if dest:
+                            dest.setInput(conn["dest_input_index"], new_node, conn.get("output_index", 0))
+                    except Exception:
+                        continue
+                
+                # 恢复标志
+                try:
+                    if undo_snapshot.get("display_flag") and hasattr(new_node, 'setDisplayFlag'):
+                        new_node.setDisplayFlag(True)
+                    if undo_snapshot.get("render_flag") and hasattr(new_node, 'setRenderFlag'):
+                        new_node.setRenderFlag(True)
+                except Exception:
+                    pass
+                
+                self._show_toast(f"已恢复节点: {new_node.path()}")
+            
+            else:
+                # 回退：使用 Houdini 原生 undo
+                hou.undos.performUndo()
+                self._show_toast("已撤销")
+            
+            self._refresh_node_context()
+        
         except Exception as e:
             self._show_toast(f"撤销失败: {e}")
 
     @QtCore.Slot(str, str)
     def _on_add_python_shell(self, code: str, result_json: str):
         """处理 execute_python 的专用 UI 展示"""
-        if not self._current_response:
+        resp = self._agent_response or self._current_response
+        if not resp:
             return
         
         try:
@@ -2590,11 +2755,11 @@ Todo 管理规则（严格遵守）:
             error=error,
             exec_time=exec_time,
             success=success,
-            parent=self._current_response
+            parent=resp
         )
         # 放入 Python Shell 折叠区块（而非 details_layout）
-        self._current_response.add_shell_widget(widget)
-        self._scroll_to_bottom()
+        resp.add_shell_widget(widget)
+        self._scroll_agent_to_bottom()
     
     def _on_stop(self):
         self.client.request_stop()
