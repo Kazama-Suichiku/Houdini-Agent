@@ -953,7 +953,7 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "execute_shell",
-            "description": "在系统 Shell 中执行命令（非 Houdini Python Shell）。可运行 pip、git、dir/ls、ffmpeg 等系统命令。工作目录默认为项目根目录。命令有 30 秒超时限制。危险命令（如 rm -rf、format、del /s）会被拦截。",
+            "description": "在系统 Shell 中执行命令（非 Houdini Python Shell）。可运行 pip、git、dir/ls、ffmpeg、ssh、scp 等系统命令。工作目录默认为项目根目录。命令有超时限制（默认30秒，最大120秒）。危险命令（如 rm -rf、format、del /s）会被拦截。注意：1)必须生成可直接运行的完整命令，不用占位符；2)需交互的命令必须传非交互式参数；3)优先用精确命令减少输出量(如 find -maxdepth 2)；4)路径有空格需引号包裹；5)命令失败时分析stderr后修正重试，不要盲目重复。",
             "parameters": {
                 "type": "object",
                 "properties": {

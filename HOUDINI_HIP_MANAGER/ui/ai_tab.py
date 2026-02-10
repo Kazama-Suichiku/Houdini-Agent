@@ -257,10 +257,21 @@ copytopoints 第0输入=模板几何体，第1输入=目标点。需要一个小
 节点输入: 0=主输入, 1=第二输入 | from_path=上游, to_path=下游
 
 系统 Shell 工具（execute_shell）:
--用于执行系统命令（pip、git、dir、ffmpeg、hython 等），不限于 Houdini Python 环境
--适用场景: 安装 Python 包、查看文件系统、运行外部工具链、检查环境变量
+-用于执行系统命令（pip、git、dir、ffmpeg、hython、scp、ssh 等），不限于 Houdini Python 环境
+-适用场景: 安装 Python 包、查看文件系统、运行外部工具链、检查环境变量、远程文件传输（scp/sftp）
 -execute_python 用于 Houdini 场景内操作（hou 模块），execute_shell 用于系统级操作
 -命令有超时限制（默认 30 秒，最大 120 秒），危险命令会被拦截
+-Shell 命令规范（必须遵守）:
+  1.必须生成能立即运行的完整命令，不要用占位符（如 <your_path>）
+  2.对于需要用户交互/确认的命令，必须传入非交互式参数（如 pip install --yes, apt -y, echo y |）
+  3.优先使用单条命令完成任务；需要多步操作时用 && 连接（Linux）或分号;分隔（PowerShell）
+  4.命令输出可能很长，优先使用精确命令减少输出量（如 find -maxdepth 2, dir /b, ls -la 特定路径）
+  5.远程操作（ssh/scp/sftp）前提：需要已配置好密钥免密登录，不能依赖交互式密码输入
+  6.大文件传输或长时间命令，设置合适的 timeout 参数（最大 120 秒）
+  7.路径中有空格时必须用引号包裹；Windows 路径用反斜杠或引号包裹的正斜杠
+  8.不要盲目猜测文件路径，先用 dir/ls/find 确认路径存在再操作
+  9.安装包时指定版本号（pip install package==version），避免不兼容问题
+  10.如果命令失败，先分析 stderr 输出的错误原因，针对性修复后重试，不要盲目重复执行
 
 Skill 系统（几何分析必须优先使用）:
 -Skill 是预定义的高级分析脚本，比手写代码更可靠、更高效
