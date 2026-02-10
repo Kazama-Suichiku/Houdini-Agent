@@ -982,7 +982,7 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "check_errors",
-            "description": "检查节点或网络中的错误和警告。这是修复问题的重要工具，在创建节点后应该调用来验证是否有错误。",
+            "description": "检查Houdini节点的cooking错误和警告（仅用于节点cooking问题）。注意：如果工具调用返回了错误信息（如缺少参数），无需调用此工具，直接根据返回的错误信息修正参数即可。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2482,12 +2482,26 @@ class AIClient:
                 }
             
             # 多轮思考引导：在最后一条工具结果后附加提示
-            if enable_thinking and working_messages and working_messages[-1].get('role') == 'tool':
-                working_messages[-1]['content'] += (
-                    '\n\n[请先在<think>标签内分析以上执行结果和当前进度，'
-                    '检查 Todo 列表中哪些步骤已完成（用 update_todo 标记为 done），'
-                    '确认下一步计划后再继续执行。]'
-                )
+            # 检测本轮是否有工具调用失败
+            _round_failed = False
+            for _ri, (_tid, _tn, _ta, _tc) in enumerate(parsed_calls):
+                if not results_ordered[_ri].get('success'):
+                    _round_failed = True
+                    break
+
+            if working_messages and working_messages[-1].get('role') == 'tool':
+                if _round_failed:
+                    working_messages[-1]['content'] += (
+                        '\n\n[注意：上述工具调用返回了错误，这是工具调用层面的参数或执行错误，'
+                        '不是Houdini节点cooking错误，无需调用check_errors。'
+                        '请直接根据错误信息修正参数后重新调用该工具。]'
+                    )
+                if enable_thinking:
+                    working_messages[-1]['content'] += (
+                        '\n\n[请先在<think>标签内分析以上执行结果和当前进度，'
+                        '检查 Todo 列表中哪些步骤已完成（用 update_todo 标记为 done），'
+                        '确认下一步计划后再继续执行。]'
+                    )
             
             # 保存当前轮次的内容
             full_content += round_content
@@ -3054,8 +3068,12 @@ class AIClient:
                 }
             
             # 极简格式：工具结果，继续或总结
-            # 检查是否有工具执行失败
-            has_failed_tools = any('错误:' in r for r in tool_results)
+            # 收集失败的工具详情（明确指出哪个工具、什么错误）
+            failed_tool_details = []
+            for r in tool_results:
+                if ':错误:' in r:
+                    failed_tool_details.append(r)
+            has_failed_tools = len(failed_tool_details) > 0
             # 检查是否有未完成的todo（通过检查工具调用历史）
             has_pending_todos = False
             for tc in tool_calls_history:
@@ -3069,7 +3087,12 @@ class AIClient:
             
             todo_hint = '已完成的步骤请立即用 update_todo 标记为 done。'
             if has_failed_tools:
-                prompt = '|'.join(tool_results) + f'|有工具执行失败，{think_hint}{todo_hint}请检查错误信息并继续完成任务。不要因为失败就提前结束。'
+                # 明确列出失败的工具及错误原因，避免AI误解为需要调用check_errors
+                fail_summary = '; '.join(failed_tool_details)
+                prompt = ('|'.join(tool_results)
+                          + f'|⚠️ 以下工具调用返回了错误（这是工具调用层面的参数/执行错误，不是Houdini节点错误，'
+                          + f'无需调用check_errors，请直接根据错误原因修正参数后重试）: {fail_summary}'
+                          + f'|{think_hint}{todo_hint}请根据上述错误原因修正后继续完成任务。不要因为失败就提前结束。')
             elif has_pending_todos and iteration < max_iterations - 2:
                 prompt = '|'.join(tool_results) + f'|检测到还有未完成的任务，{think_hint}{todo_hint}请继续执行。'
             elif iteration >= max_iterations - 1:
