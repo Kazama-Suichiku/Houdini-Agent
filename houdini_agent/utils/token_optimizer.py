@@ -84,6 +84,7 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'deepseek-reasoner':    {'input': 0.55,  'input_cache': 0.14,  'output': 2.19, 'reasoning': 2.19},
     # ---- OpenAI ----
     'gpt-5.2':              {'input': 2.50,  'input_cache': 1.25,  'output': 10.00},
+    'gpt-5.3-codex':        {'input': 3.00,  'input_cache': 1.50,  'output': 12.00},
     'o3':                   {'input': 10.00, 'input_cache': 2.50,  'output': 40.00, 'reasoning': 40.00},
     'o3-mini':              {'input': 1.10,  'input_cache': 0.55,  'output': 4.40,  'reasoning': 4.40},
     'o4-mini':              {'input': 1.10,  'input_cache': 0.275, 'output': 4.40,  'reasoning': 4.40},
@@ -91,6 +92,8 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'claude-opus-4-5':      {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
     'claude-opus-4-5-kiro': {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
     'claude-opus-4-5-max':  {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
+    'claude-opus-4-6-normal': {'input': 15.00, 'input_cache': 1.50, 'output': 75.00, 'reasoning': 75.00},
+    'claude-opus-4-6-kiro': {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
     'claude-sonnet-4-5':    {'input': 3.00,  'input_cache': 0.30,  'output': 15.00, 'reasoning': 15.00},
     'claude-haiku-4-5':     {'input': 0.80,  'input_cache': 0.08,  'output': 4.00},
     # ---- Gemini ----

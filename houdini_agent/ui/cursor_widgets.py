@@ -2283,26 +2283,29 @@ class NodeContextBar(QtWidgets.QFrame):
 # ============================================================
 
 class ChatInput(QtWidgets.QPlainTextEdit):
-    """聊天输入框 — 自适应高度，支持自动换行和多行输入
+    """聊天输入框 — 自适应高度，支持自动换行、多行输入、图片粘贴/拖拽
     
     核心逻辑：统计文档中所有视觉行（含软换行），按行高计算目标高度，
     使输入框向上扩展而非隐藏已有行。
     """
     
     sendRequested = QtCore.Signal()
+    imageDropped = QtCore.Signal(QtGui.QImage)  # 粘贴或拖拽图片时触发
     
     _MIN_H = 44
     _MAX_H = 220
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行)")
+        self.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行, Ctrl+V 粘贴图片)")
         # 确保自动换行
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
         self.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)
         # 隐藏滚动条（高度不够时才出现）
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # 启用拖拽
+        self.setAcceptDrops(True)
         self.setStyleSheet(f"""
             QPlainTextEdit {{
                 background-color: {CursorTheme.BG_TERTIARY};
@@ -2371,6 +2374,60 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         """窗口宽度变化时重新计算高度（自动换行可能改变行数）"""
         super().resizeEvent(event)
         self._schedule_adjust()
+    
+    # ---- 图片粘贴支持 ----
+    
+    def insertFromMimeData(self, source):
+        """重写粘贴：支持从剪贴板粘贴图片"""
+        if source.hasImage():
+            image = source.imageData()
+            if image and not image.isNull():
+                self.imageDropped.emit(image)
+                return
+        # 粘贴文件路径中的图片
+        if source.hasUrls():
+            _IMG_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+            for url in source.urls():
+                if url.isLocalFile():
+                    import os
+                    ext = os.path.splitext(url.toLocalFile())[1].lower()
+                    if ext in _IMG_EXTS:
+                        img = QtGui.QImage(url.toLocalFile())
+                        if not img.isNull():
+                            self.imageDropped.emit(img)
+                            return
+        # 默认文本粘贴
+        super().insertFromMimeData(source)
+    
+    def dragEnterEvent(self, event):
+        """拖拽进入：接受图片文件"""
+        if event.mimeData().hasImage() or event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+    
+    def dropEvent(self, event):
+        """拖拽释放：处理图片文件"""
+        mime = event.mimeData()
+        if mime.hasImage():
+            image = mime.imageData()
+            if image and not image.isNull():
+                self.imageDropped.emit(image)
+                event.acceptProposedAction()
+                return
+        if mime.hasUrls():
+            _IMG_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+            for url in mime.urls():
+                if url.isLocalFile():
+                    import os
+                    ext = os.path.splitext(url.toLocalFile())[1].lower()
+                    if ext in _IMG_EXTS:
+                        img = QtGui.QImage(url.toLocalFile())
+                        if not img.isNull():
+                            self.imageDropped.emit(img)
+                            event.acceptProposedAction()
+                            return
+        super().dropEvent(event)
 
 
 # ============================================================

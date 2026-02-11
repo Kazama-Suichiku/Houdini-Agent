@@ -1631,13 +1631,13 @@ class AIClient:
         """判断模型是否为原生推理模型（API 返回 reasoning_content 字段）
         
         仅限明确通过 reasoning_content 字段返回推理的模型：
-        DeepSeek-R1/Reasoner, GLM-4.7, 以及 -think 后缀的模型
+        DeepSeek-R1/Reasoner, GLM-4.7
+        注：Duojie 模型通过 reasoningEffort 参数开启思考，不改模型名
         """
         m = model.lower()
         return (
             'reasoner' in m or 'r1' in m
             or m == 'glm-4.7'
-            or m.endswith('-think')  # Duojie/Factory think 变体
         )
     
     @staticmethod
@@ -1645,19 +1645,9 @@ class AIClient:
         """判断是否为 GLM-4.7 模型"""
         return model.lower() == 'glm-4.7'
     
-    # Duojie 模型 → think 变体映射
-    # 当 Think 开关 ON 时，自动替换模型名以启用原生 Extended Thinking
-    _DUOJIE_THINK_MAP = {
-        'claude-opus-4-5-kiro': 'claude-opus-4-5-kiro',      # kiro 本身已含思考
-        'claude-opus-4-5-max': 'claude-opus-4-5-max',         # 保持不变
-        'claude-sonnet-4-5': 'claude-sonnet-4-5',             # 无已知 think 变体
-        'claude-haiku-4-5': 'claude-haiku-4-5',               # 无已知 think 变体
-    }
-    
-    @classmethod
-    def _duojie_think_model(cls, model: str) -> str:
-        """当 Think 开启时，将 Duojie 模型名映射到 think 变体"""
-        return cls._DUOJIE_THINK_MAP.get(model, model)
+    # Duojie 思考模式说明：
+    # 模型名保持不变，通过 reasoningEffort 参数（low/medium/high）控制是否开启思考
+    # 无需对模型名添加 -think 后缀
     
     # ============================================================
     # Usage 解析
@@ -1714,7 +1704,7 @@ class AIClient:
         Yields:
             {"type": "content", "content": str}  # 内容片段
             {"type": "tool_call", "tool_call": dict}  # 工具调用
-            {"type": "thinking", "content": str}  # 思考内容（DeepSeek）
+            {"type": "thinking", "content": str}  # 思考内容（DeepSeek / GLM / Duojie reasoningEffort 模式）
             {"type": "done", "finish_reason": str}  # 完成
             {"type": "error", "error": str}  # 错误
         """
@@ -1749,16 +1739,14 @@ class AIClient:
             if tools:
                 payload['tool_stream'] = True
         
-        # Duojie 中转：当 Think 开启时，自动映射到 think 模型变体
+        # Duojie 中转：通过 reasoningEffort 参数控制思考模式，模型名不变
         if provider == 'duojie' and enable_thinking:
-            actual_model = self._duojie_think_model(model)
-            if actual_model != model:
-                payload['model'] = actual_model
-                print(f"[AI Client] Duojie Think: {model} -> {actual_model}")
+            payload['reasoningEffort'] = 'high'
+            print(f"[AI Client] Duojie Think ON: reasoningEffort=high")
         
         # DeepSeek / OpenAI prompt caching 自动启用（保持前缀稳定即可命中）
         
-        # Ollama 的工具调用支持（如果模型支持）
+        # 工具调用（所有支持 function calling 的 provider 通用）
         if tools:
             payload['tools'] = tools
             payload['tool_choice'] = tool_choice
@@ -2107,6 +2095,9 @@ class AIClient:
         # GLM-4.7 专属参数（仅原生 GLM 接口）
         if self.is_glm47(model) and provider == 'glm':
             payload['thinking'] = {'type': 'enabled'}
+        
+        # 注意：非流式 chat() 不包含 enable_thinking 参数，不做 think 模型映射
+        # 思考模式仅在流式 chat_stream() / agent_loop_stream() 中通过 enable_thinking 控制
         
         # DeepSeek / OpenAI prompt caching 自动启用
         
@@ -2548,7 +2539,8 @@ class AIClient:
             # content 为空时必须传 None（null）而非空字符串
             # Claude/Anthropic 兼容代理拒绝 content="" + tool_calls 共存
             assistant_msg['content'] = round_content or None
-            # reasoning_content 仅 DeepSeek / 原生 GLM 需要（Duojie 等 OpenAI 兼容代理不支持）
+            # reasoning_content 仅在回传消息时对 DeepSeek / 原生 GLM 有效
+            # Duojie 开启 reasoningEffort 时也会返回 reasoning_content，但无需在后续请求中回传
             if self.is_reasoning_model(model) and provider in ('deepseek', 'glm'):
                 assistant_msg['reasoning_content'] = round_thinking or ''
             working_messages.append(assistant_msg)
@@ -3241,7 +3233,7 @@ class AIClient:
             
             # 添加助手消息（使用清理后的内容，但不要重复添加到full_content）
             json_assistant_msg = {'role': 'assistant', 'content': cleaned_content}
-            # reasoning_content 仅 DeepSeek / 原生 GLM 需要
+            # reasoning_content 仅在回传时对 DeepSeek / 原生 GLM 有效（Duojie 无需回传）
             if self.is_reasoning_model(model) and provider in ('deepseek', 'glm'):
                 json_assistant_msg['reasoning_content'] = ''
             working_messages.append(json_assistant_msg)

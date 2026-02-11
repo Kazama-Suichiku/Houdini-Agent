@@ -262,6 +262,18 @@ copytopoints 第0输入=模板几何体，第1输入=目标点。需要一个小
 -通过阅读 wrangle 节点的 VEX 代码可以理解该节点的具体逻辑（如属性计算、条件过滤等），这是理解现有网络实现的关键
 -如果需要修改现有 wrangle 节点的代码，先用 get_node_parameters 读取完整的 snippet 参数，再用 set_node_parameter 设置新代码
 
+Wrangle 节点 Run Over 模式（极其重要，每次创建 wrangle 必须考虑）:
+-创建 wrangle 节点时，**必须根据 VEX 代码的实际操作对象选择正确的 run_over 模式**，不能一律使用默认的 Points
+-run_over 决定了 VEX 代码的执行上下文：Points（逐点执行）、Primitives（逐面执行）、Vertices（逐顶点执行）、Detail（全局执行一次）
+-选择错误的 run_over 会导致 VEX 代码完全无法正常工作，或产生错误结果
+-判断规则:
+  如果代码操作 @P, @N, @pscale, @Cd 等点属性，或用 @ptnum, @numpt → 使用 Points
+  如果代码操作 @primnum, @numprim, prim() 函数，或按面片处理 → 使用 Primitives
+  如果代码只需执行一次来设置全局属性（如 @Frame, detail()），或用 addpoint/addprim 手动创建几何体 → 使用 Detail
+  如果代码操作顶点属性（如 UV）或用 @vtxnum → 使用 Vertices
+-常见错误: 用 addpoint()/addprim() 创建几何体时使用 Points 模式会导致每个输入点都执行一次创建，产生大量重复几何体。此类代码**必须**使用 Detail 模式
+-如果不确定应该使用哪种模式，优先根据 VEX 代码中访问的属性和函数来判断
+
 任务完成前的强制验证（必须执行，不能跳过）:
 1. 调用 verify_and_summarize 进行自动检测（孤立节点、错误节点、连接完整性、显示标志），传入你期望的节点列表和预期效果
 2. 如果 verify_and_summarize 报告问题，修复后再次调用，直到通过
@@ -410,13 +422,16 @@ Todo 管理规则（严格遵守）:
             'ollama': ['qwen2.5:14b', 'qwen2.5:7b', 'llama3:8b', 'mistral:7b'],
             'deepseek': ['deepseek-chat', 'deepseek-reasoner'],
             'glm': ['glm-4.7'],
-            'openai': ['gpt-5.2'],
+            'openai': ['gpt-5.2', 'gpt-5.3-codex'],
             'duojie': [
                 'claude-sonnet-4-5',
                 'claude-opus-4-5-kiro',
                 'claude-opus-4-5-max',
+                'claude-opus-4-6-normal',
+                'claude-opus-4-6-kiro',
                 'claude-haiku-4-5',
                 'gemini-3-pro-image-preview',
+                'gpt-5.3-codex',
             ],
         }
         self._model_context_limits = {
@@ -424,12 +439,42 @@ Todo 管理规则（严格遵守）:
             'deepseek-chat': 64000, 'deepseek-reasoner': 64000,
             'glm-4.7': 200000,
             'gpt-5.2': 128000,
+            'gpt-5.3-codex': 200000,
             # Duojie 模型
             'claude-sonnet-4-5': 200000,
             'claude-opus-4-5-kiro': 200000,
             'claude-opus-4-5-max': 200000,
+            'claude-opus-4-6-normal': 200000,
+            'claude-opus-4-6-kiro': 200000,
             'claude-haiku-4-5': 200000,
             'gemini-3-pro-image-preview': 128000,
+        }
+        # 模型特性配置
+        # supports_prompt_caching: 是否支持提示缓存（保持消息前缀稳定可自动命中）
+        # supports_vision: 是否支持图片识别（可在消息中发送图片）
+        self._model_features = {
+            # Ollama
+            'qwen2.5:14b':               {'supports_prompt_caching': True, 'supports_vision': False},
+            'qwen2.5:7b':                {'supports_prompt_caching': True, 'supports_vision': False},
+            'llama3:8b':                  {'supports_prompt_caching': True, 'supports_vision': False},
+            'mistral:7b':                 {'supports_prompt_caching': True, 'supports_vision': False},
+            # DeepSeek
+            'deepseek-chat':              {'supports_prompt_caching': True, 'supports_vision': False},
+            'deepseek-reasoner':          {'supports_prompt_caching': True, 'supports_vision': False},
+            # GLM
+            'glm-4.7':                    {'supports_prompt_caching': True, 'supports_vision': False},
+            # OpenAI
+            'gpt-5.2':                    {'supports_prompt_caching': True, 'supports_vision': True},
+            'gpt-5.3-codex':              {'supports_prompt_caching': True, 'supports_vision': True},
+            # Duojie - Claude
+            'claude-sonnet-4-5':          {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-opus-4-5-kiro':       {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-opus-4-5-max':        {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-opus-4-6-normal':     {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-opus-4-6-kiro':       {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-haiku-4-5':           {'supports_prompt_caching': True, 'supports_vision': True},
+            # Duojie - Gemini
+            'gemini-3-pro-image-preview': {'supports_prompt_caching': True, 'supports_vision': True},
         }
         self._refresh_models('ollama')
         self.model_combo.setStyleSheet(self._combo_style())
@@ -854,13 +899,30 @@ Todo 管理规则（严格遵守）:
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(4)
         
+        # 图片附件预览区（输入框上方，默认隐藏）
+        self._pending_images = []  # List[Tuple[str, str, QPixmap]]  (base64_data, media_type, thumbnail)
+        self.image_preview_container = QtWidgets.QWidget()
+        self.image_preview_container.setVisible(False)
+        self.image_preview_layout = QtWidgets.QHBoxLayout(self.image_preview_container)
+        self.image_preview_layout.setContentsMargins(4, 2, 4, 2)
+        self.image_preview_layout.setSpacing(4)
+        self.image_preview_layout.addStretch()
+        layout.addWidget(self.image_preview_container)
+        
         # 输入框（自适应高度）
         self.input_edit = ChatInput()
+        self.input_edit.imageDropped.connect(self._on_image_dropped)
         layout.addWidget(self.input_edit)
         
         # 按钮行
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.setSpacing(6)
+        
+        # 图片附件按钮
+        self.btn_attach_image = QtWidgets.QPushButton("Img")
+        self.btn_attach_image.setStyleSheet(self._small_btn_style())
+        self.btn_attach_image.setToolTip("添加图片附件（支持 PNG/JPG/GIF/WebP，也可直接粘贴/拖拽图片到输入框）")
+        btn_layout.addWidget(self.btn_attach_image)
         
         # 快捷操作
         self.btn_network = QtWidgets.QPushButton("Read Network")
@@ -973,6 +1035,7 @@ Todo 管理规则（严格遵守）:
         self.btn_network.clicked.connect(self._on_read_network)
         self.btn_selection.clicked.connect(self._on_read_selection)
         self.btn_export_train.clicked.connect(self._on_export_training_data)
+        self.btn_attach_image.clicked.connect(self._on_attach_image)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.model_combo.currentIndexChanged.connect(self._update_context_stats)
         # 切换提供商或模型或 Think 时自动保存偏好
@@ -1265,9 +1328,22 @@ Todo 管理规则（严格遵守）:
         self._load_model_preference()  # 切换提供商时也尝试加载上次使用的模型
         self._update_key_status()
 
-    def _add_user_message(self, text: str):
-        """添加用户消息"""
+    def _add_user_message(self, text: str, images: list = None):
+        """添加用户消息（可含图片缩略图）"""
         msg = UserMessage(text, self.chat_container)
+        # 如果有图片，在消息下方添加缩略图
+        if images:
+            img_row = QtWidgets.QHBoxLayout()
+            img_row.setSpacing(4)
+            img_row.setContentsMargins(12, 0, 12, 4)
+            for _b64, _mt, thumb in images:
+                lbl = QtWidgets.QLabel()
+                lbl.setPixmap(thumb.scaled(48, 48, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+                lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px; padding: 1px;")
+                lbl.setToolTip("已附带图片")
+                img_row.addWidget(lbl)
+            img_row.addStretch()
+            msg.layout().addLayout(img_row)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, msg)
         self._scroll_to_bottom()
 
@@ -2472,16 +2548,27 @@ Todo 管理规则（严格遵守）:
             self._on_set_key()
             return
 
-        # 显示用户消息
-        self._add_user_message(text)
+        # 收集待发送的图片（在 clear 之前）
+        has_images = bool(self._pending_images) and self._current_model_supports_vision()
+        pending_imgs = [img for img in self._pending_images if img is not None] if has_images else []
+
+        # 显示用户消息（含图片缩略图）
+        self._add_user_message(text, images=pending_imgs)
         self.input_edit.clear()
+        self._clear_pending_images()
         
         # 自动重命名标签（首条消息时）
         self._auto_rename_tab(text)
         
         # 检测 URL 并添加提示
         processed_text = self._process_urls_in_text(text)
-        self._conversation_history.append({'role': 'user', 'content': processed_text})
+        
+        # 构建消息内容（文字或多模态）
+        if pending_imgs:
+            msg_content = self._build_multimodal_content(processed_text, pending_imgs)
+            self._conversation_history.append({'role': 'user', 'content': msg_content})
+        else:
+            self._conversation_history.append({'role': 'user', 'content': processed_text})
         
         # 更新上下文统计
         self._update_context_stats()
@@ -2607,7 +2694,14 @@ Todo 管理规则（严格遵守）:
             if self._conversation_history:
                 for msg in reversed(self._conversation_history):
                     if msg.get('role') == 'user':
-                        user_last_msg = msg.get('content', '')
+                        raw_content = msg.get('content', '')
+                        # 多模态内容（list）中提取文字部分
+                        if isinstance(raw_content, list):
+                            user_last_msg = ' '.join(
+                                p.get('text', '') for p in raw_content if p.get('type') == 'text'
+                            )
+                        else:
+                            user_last_msg = raw_content
                         break
             if user_last_msg:
                 rag_context = self._auto_rag_retrieve(user_last_msg)
@@ -3300,6 +3394,181 @@ Todo 管理规则（严格遵守）:
         else:
             self._add_ai_response().set_content(f"Error: {text}")
 
+    # ============================================================
+    # 图片输入支持
+    # ============================================================
+    
+    def _current_model_supports_vision(self) -> bool:
+        """检查当前选中的模型是否支持图片输入"""
+        model = self.model_combo.currentText()
+        features = self._model_features.get(model, {})
+        return features.get('supports_vision', False)
+    
+    def _on_attach_image(self):
+        """打开文件对话框选择图片"""
+        if not self._current_model_supports_vision():
+            model = self.model_combo.currentText()
+            QtWidgets.QMessageBox.information(
+                self, "不支持图片",
+                f"当前模型 {model} 不支持图片输入。\n请切换到支持视觉的模型（如 Claude、GPT-5.2 等）。"
+            )
+            return
+        
+        file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "选择图片", "",
+            "Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp);;All Files (*)"
+        )
+        for fp in file_paths:
+            self._add_image_from_path(fp)
+    
+    def _add_image_from_path(self, file_path: str):
+        """从文件路径加载图片并添加到待发送列表"""
+        import base64
+        try:
+            with open(file_path, 'rb') as f:
+                img_data = f.read()
+            # 检测 MIME 类型
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp'}
+            media_type = mime_map.get(ext, 'image/png')
+            b64 = base64.b64encode(img_data).decode('utf-8')
+            self._add_pending_image(b64, media_type)
+        except Exception as e:
+            print(f"[AI Tab] 加载图片失败: {e}")
+    
+    def _on_image_dropped(self, image: 'QtGui.QImage'):
+        """ChatInput 拖拽或粘贴图片的回调"""
+        if not self._current_model_supports_vision():
+            return
+        import base64
+        from PySide6.QtCore import QBuffer, QIODevice
+        buf = QBuffer()
+        buf.open(QIODevice.WriteOnly)
+        image.save(buf, "PNG")
+        b64 = base64.b64encode(buf.data().data()).decode('utf-8')
+        buf.close()
+        self._add_pending_image(b64, 'image/png')
+    
+    def _add_pending_image(self, b64_data: str, media_type: str):
+        """添加图片到待发送列表并在预览区显示缩略图"""
+        # 创建缩略图
+        img_bytes = __import__('base64').b64decode(b64_data)
+        pixmap = QtGui.QPixmap()
+        pixmap.loadFromData(img_bytes)
+        thumb = pixmap.scaled(60, 60, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        
+        # 存储
+        idx = len(self._pending_images)
+        self._pending_images.append((b64_data, media_type, thumb))
+        
+        # 创建预览 widget
+        img_widget = QtWidgets.QWidget()
+        img_layout = QtWidgets.QVBoxLayout(img_widget)
+        img_layout.setContentsMargins(2, 2, 2, 2)
+        img_layout.setSpacing(1)
+        
+        lbl = QtWidgets.QLabel()
+        lbl.setPixmap(thumb)
+        lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
+        img_layout.addWidget(lbl)
+        
+        # 删除按钮
+        rm_btn = QtWidgets.QPushButton("x")
+        rm_btn.setFixedSize(16, 16)
+        rm_btn.setStyleSheet(f"""
+            QPushButton {{ background: {CursorTheme.ACCENT_RED}; color: white; 
+                          border: none; border-radius: 8px; font-size: 10px; }}
+            QPushButton:hover {{ background: #ff6b6b; }}
+        """)
+        rm_btn.clicked.connect(lambda checked=False, i=idx: self._remove_pending_image(i))
+        img_layout.addWidget(rm_btn, alignment=QtCore.Qt.AlignCenter)
+        
+        # 插入到 stretch 之前
+        count = self.image_preview_layout.count()
+        self.image_preview_layout.insertWidget(count - 1, img_widget)
+        self.image_preview_container.setVisible(True)
+    
+    def _remove_pending_image(self, index: int):
+        """移除待发送图片"""
+        if 0 <= index < len(self._pending_images):
+            self._pending_images[index] = None  # 标记为已删除
+            self._rebuild_image_preview()  # 过滤 None 后重建整个预览区
+    
+    def _rebuild_image_preview(self):
+        """重新构建图片预览区"""
+        # 清除所有 widget（保留 stretch）
+        while self.image_preview_layout.count() > 1:
+            item = self.image_preview_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # 重新过滤并添加
+        new_images = [(b64, mt, th) for entry in self._pending_images 
+                      if entry is not None for b64, mt, th in [entry]]
+        self._pending_images = list(new_images)
+        
+        if not self._pending_images:
+            self.image_preview_container.setVisible(False)
+            return
+        
+        for i, (b64, mt, thumb) in enumerate(self._pending_images):
+            img_widget = QtWidgets.QWidget()
+            img_layout = QtWidgets.QVBoxLayout(img_widget)
+            img_layout.setContentsMargins(2, 2, 2, 2)
+            img_layout.setSpacing(1)
+            
+            lbl = QtWidgets.QLabel()
+            lbl.setPixmap(thumb)
+            lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
+            img_layout.addWidget(lbl)
+            
+            rm_btn = QtWidgets.QPushButton("x")
+            rm_btn.setFixedSize(16, 16)
+            rm_btn.setStyleSheet(f"""
+                QPushButton {{ background: {CursorTheme.ACCENT_RED}; color: white; 
+                              border: none; border-radius: 8px; font-size: 10px; }}
+                QPushButton:hover {{ background: #ff6b6b; }}
+            """)
+            rm_btn.clicked.connect(lambda checked=False, idx=i: self._remove_pending_image(idx))
+            img_layout.addWidget(rm_btn, alignment=QtCore.Qt.AlignCenter)
+            
+            count = self.image_preview_layout.count()
+            self.image_preview_layout.insertWidget(count - 1, img_widget)
+    
+    def _clear_pending_images(self):
+        """清空所有待发送图片"""
+        self._pending_images.clear()
+        while self.image_preview_layout.count() > 1:
+            item = self.image_preview_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.image_preview_container.setVisible(False)
+    
+    def _build_multimodal_content(self, text: str, images: list) -> list:
+        """构建包含文字和图片的多模态消息内容（OpenAI Vision API 格式）
+        
+        Args:
+            text: 用户文字消息
+            images: List of (base64_data, media_type, thumbnail) tuples
+            
+        Returns:
+            list: content 数组，包含 text 和 image_url 项
+        """
+        content_parts = []
+        # 先添加文字
+        if text:
+            content_parts.append({"type": "text", "text": text})
+        # 添加图片
+        for b64_data, media_type, _thumb in images:
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{media_type};base64,{b64_data}"
+                }
+            })
+        return content_parts
+    
     def _on_read_selection(self):
         ok, text = self.mcp.describe_selection()
         if ok:
