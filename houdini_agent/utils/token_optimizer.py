@@ -220,11 +220,22 @@ class TokenOptimizer:
         return count_tokens(text, self.model)
     
     def calculate_message_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """计算消息列表的总 token 数（含 tool_calls）"""
+        """计算消息列表的总 token 数（含 tool_calls、多模态内容）"""
         total = 0
         for msg in messages:
             content = msg.get('content', '') or ''
-            total += self.estimate_tokens(content)
+            if isinstance(content, list):
+                # 多模态消息：提取文字部分计算 token，图片按固定开销估算
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get('type') == 'text':
+                            total += self.estimate_tokens(part.get('text', ''))
+                        elif part.get('type') == 'image_url':
+                            total += 765  # 图片固定约 765 token（低分辨率模式）
+                    elif isinstance(part, str):
+                        total += self.estimate_tokens(part)
+            else:
+                total += self.estimate_tokens(content)
             # tool_calls 中的函数名和参数也占 token
             tool_calls = msg.get('tool_calls')
             if tool_calls:

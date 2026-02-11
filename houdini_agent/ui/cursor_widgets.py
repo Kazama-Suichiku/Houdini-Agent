@@ -488,6 +488,108 @@ class ExecutionSection(CollapsibleSection):
 
 
 # ============================================================
+# 图片预览弹窗（点击缩略图放大查看）
+# ============================================================
+
+class ImagePreviewDialog(QtWidgets.QDialog):
+    """模态图片预览弹窗 — 点击缩略图后弹出，显示原尺寸/自适应窗口的大图"""
+
+    def __init__(self, pixmap: QtGui.QPixmap, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("图片预览")
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowMaximizeButtonHint)
+        self._pixmap = pixmap
+
+        # 根据图片尺寸决定初始窗口大小（不超过屏幕 80%）
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            max_w, max_h = int(avail.width() * 0.8), int(avail.height() * 0.8)
+        else:
+            max_w, max_h = 1200, 800
+        init_w = min(pixmap.width() + 40, max_w)
+        init_h = min(pixmap.height() + 40, max_h)
+        self.resize(init_w, init_h)
+
+        # 深色背景
+        self.setStyleSheet(f"background: {CursorTheme.BG_PRIMARY};")
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # 可滚动区域
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setAlignment(QtCore.Qt.AlignCenter)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+
+        self._img_label = QtWidgets.QLabel()
+        self._img_label.setAlignment(QtCore.Qt.AlignCenter)
+        self._img_label.setStyleSheet("background: transparent;")
+        scroll.setWidget(self._img_label)
+        layout.addWidget(scroll)
+
+        # 底栏：尺寸信息 + 关闭按钮
+        bar = QtWidgets.QHBoxLayout()
+        bar.setContentsMargins(12, 4, 12, 8)
+        info = QtWidgets.QLabel(f"{pixmap.width()} × {pixmap.height()} px")
+        info.setStyleSheet(f"color: {CursorTheme.TEXT_SECONDARY}; font-size: 12px;")
+        bar.addWidget(info)
+        bar.addStretch()
+        close_btn = QtWidgets.QPushButton("关闭")
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ background: {CursorTheme.BG_TERTIARY}; color: {CursorTheme.TEXT_PRIMARY};
+                          border: 1px solid {CursorTheme.BORDER}; border-radius: 4px;
+                          padding: 4px 16px; font-size: 13px; }}
+            QPushButton:hover {{ background: {CursorTheme.BG_HOVER}; }}
+        """)
+        close_btn.clicked.connect(self.close)
+        bar.addWidget(close_btn)
+        layout.addLayout(bar)
+
+        self._update_preview()
+
+    def _update_preview(self):
+        """根据窗口大小缩放图片（保持比例）"""
+        viewport_w = self.width() - 20
+        viewport_h = self.height() - 50
+        if self._pixmap.width() > viewport_w or self._pixmap.height() > viewport_h:
+            scaled = self._pixmap.scaled(
+                viewport_w, viewport_h,
+                QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        else:
+            scaled = self._pixmap
+        self._img_label.setPixmap(scaled)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_preview()
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            self.close()
+        super().keyPressEvent(event)
+
+
+class ClickableImageLabel(QtWidgets.QLabel):
+    """可点击的图片缩略图 — 点击后弹出 ImagePreviewDialog 放大查看"""
+
+    def __init__(self, thumb_pixmap: QtGui.QPixmap, full_pixmap: QtGui.QPixmap, parent=None):
+        super().__init__(parent)
+        self._full_pixmap = full_pixmap
+        self.setPixmap(thumb_pixmap)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("点击放大查看")
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            dlg = ImagePreviewDialog(self._full_pixmap, self.window())
+            dlg.exec()
+        else:
+            super().mousePressEvent(event)
+
+
+# ============================================================
 # 用户消息
 # ============================================================
 

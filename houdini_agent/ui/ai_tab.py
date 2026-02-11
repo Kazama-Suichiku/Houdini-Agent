@@ -35,7 +35,8 @@ from .cursor_widgets import (
     NodeOperationLabel,
     NodeContextBar,
     PythonShellWidget,
-    SystemShellWidget
+    SystemShellWidget,
+    ClickableImageLabel
 )
 import re
 
@@ -194,11 +195,17 @@ class AITab(QtWidgets.QWidget):
 """
         if with_thinking:
             base_prompt += """
-输出格式（严格遵守，每次回复必须执行）:
-无论是否需要调用工具，你的每次回复都**必须**以 <think>...</think> 标签开头。
-在标签内写出你的分析、推理过程和行动计划。
+输出格式（最高优先级规则，违反即失败）:
+你的**每一次**回复（无论第几轮、无论是否调用工具）都**必须**以 <think>...</think> 标签开头，没有任何例外。
+即使是简短的确认或状态更新，也必须先写 <think> 标签再写正文。
+跳过 <think> 标签等同于格式违规，是不可接受的。
+
+<think> 标签内写出：
+1. 对当前情况/上一步执行结果的分析
+2. 下一步的推理和行动计划
+3. 如果要调用工具，说明为什么调用以及参数选择依据
+
 标签外的内容是展示给用户的正式回复——简洁、直接、以操作为主。
-如果你要调用工具，先在 <think> 标签内说明为什么要调用这些工具以及执行步骤。
 
 示例（纯文字回复）:
 <think>
@@ -210,6 +217,11 @@ copytopoints 第0输入=模板几何体，第1输入=目标点。需要一个小
 示例（调用工具前）:
 <think>
 用户需要创建地形。步骤：1. 创建 grid 作为基础 2. 添加 noise wrangle 3. 验证网络结构。
+</think>
+
+示例（工具执行后的后续回复，仍然必须有 think 标签）:
+<think>
+上一步创建了 grid 节点，返回路径 /obj/geo1/grid1。接下来添加 noise wrangle。
 </think>
 """
         else:
@@ -1329,18 +1341,20 @@ Todo 管理规则（严格遵守）:
         self._update_key_status()
 
     def _add_user_message(self, text: str, images: list = None):
-        """添加用户消息（可含图片缩略图）"""
+        """添加用户消息（可含图片缩略图，点击可放大）"""
         msg = UserMessage(text, self.chat_container)
-        # 如果有图片，在消息下方添加缩略图
+        # 如果有图片，在消息下方添加可点击的缩略图
         if images:
             img_row = QtWidgets.QHBoxLayout()
             img_row.setSpacing(4)
             img_row.setContentsMargins(12, 0, 12, 4)
-            for _b64, _mt, thumb in images:
-                lbl = QtWidgets.QLabel()
-                lbl.setPixmap(thumb.scaled(48, 48, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+            for b64_data, _mt, thumb in images:
+                # 从 base64 还原完整 pixmap 用于放大预览
+                full_pixmap = QtGui.QPixmap()
+                full_pixmap.loadFromData(__import__('base64').b64decode(b64_data))
+                thumb_scaled = thumb.scaled(48, 48, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                lbl = ClickableImageLabel(thumb_scaled, full_pixmap)
                 lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px; padding: 1px;")
-                lbl.setToolTip("已附带图片")
                 img_row.addWidget(lbl)
             img_row.addStretch()
             msg.layout().addLayout(img_row)
@@ -3010,17 +3024,55 @@ Todo 管理规则（严格遵守）:
             resp.add_collapsible(f"Result: {name}", result)
 
     @staticmethod
-    def _extract_node_paths(text: str) -> list:
-        """从工具返回的结果文本中提取节点路径
+    def _extract_node_paths(text: str, tool_name: str = '') -> list:
+        """从工具返回的结果文本中提取 **实际操作** 的节点路径
         
-        结果格式可能是:
-        - "✓/obj/geo1/scatter1"  (create_node)
-        - "已创建 3 个节点: /obj/geo1/a, /obj/geo1/b, /obj/geo1/c"  (create_network)
-        - "已删除节点: /obj/geo1/scatter1"  (delete_node)
+        只提取真正被创建/删除的节点路径，忽略上下文信息
+        （父网络、输入/输出连接等附属路径）。
+        
+        各工具的返回格式:
+        - create_node:      "✓/obj/geo1/scatter1 (父网络: /obj/geo1, ...)"
+        - create_nodes_batch:"已创建 3 个节点: /obj/geo1/a, /obj/geo1/b, /obj/geo1/c"
+        - create_wrangle_node:"已创建 Wrangle 节点: /obj/geo1/attribwrangle1"
+        - delete_node:      "已删除节点: /obj/geo1/scatter1 (父网络: ...)"
         """
         import re
-        paths = re.findall(r'(/(?:obj|out|ch|shop|stage|mat|tasks)[/\w]*)', text)
-        return paths
+        _PATH_RE = r'(/(?:obj|out|ch|shop|stage|mat|tasks)[/\w]*)'
+        
+        if tool_name == 'create_node':
+            # 格式: "✓/obj/geo1/scatter1 (父网络: /obj/geo1, ...)"
+            # 只取 ✓ 后面的第一个路径
+            m = re.match(r'[✓\s]*' + _PATH_RE, text)
+            return [m.group(1)] if m else []
+        
+        if tool_name == 'delete_node':
+            # 格式: "已删除节点: /obj/geo1/scatter1 (父网络: ...)"
+            # 只取 "已删除节点:" 后面的第一个路径
+            m = re.search(r'已删除节点:\s*' + _PATH_RE, text)
+            if m:
+                return [m.group(1)]
+            # fallback: 取文本中第一个路径
+            m = re.search(_PATH_RE, text)
+            return [m.group(1)] if m else []
+        
+        if tool_name == 'create_nodes_batch':
+            # 格式: "已创建 3 个节点: /obj/geo1/a, /obj/geo1/b, /obj/geo1/c\n注意: ..."
+            # 只解析 "个节点:" 后同一行内的逗号分隔路径
+            m = re.search(r'个节点:\s*(.*)', text)
+            if m:
+                first_line = m.group(1).split('\n')[0]
+                return re.findall(_PATH_RE, first_line)
+            # fallback: 提取所有路径（批量创建格式未匹配时）
+            return re.findall(_PATH_RE, text)
+        
+        if tool_name == 'create_wrangle_node':
+            # 格式: "已创建 Wrangle 节点: /obj/geo1/attribwrangle1"
+            m = re.search(r'节点:\s*' + _PATH_RE, text)
+            return [m.group(1)] if m else []
+        
+        # 未知工具 → 保守策略：只取第一个路径
+        m = re.search(_PATH_RE, text)
+        return [m.group(1)] if m else []
     
     @QtCore.Slot(str, str)
     def _on_add_node_operation(self, name: str, result_json: str):
@@ -3044,17 +3096,17 @@ Todo 管理规则（严格遵守）:
             paths: list = []
             
             if name == 'create_node':
-                paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
+                paths = self._extract_node_paths(result_text, 'create_node') or ([result_text] if result_text else [])
                 label = NodeOperationLabel('create', 1, paths) if paths else None
             
             elif name in ('create_nodes_batch', 'create_wrangle_node'):
-                paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
+                paths = self._extract_node_paths(result_text, name) or ([result_text] if result_text else [])
                 label = NodeOperationLabel('create', len(paths) or 1, paths) if paths else None
             
             elif name == 'delete_node':
                 op_type = 'delete'
-                paths = self._extract_node_paths(result_text) or ([result_text] if result_text else [])
-                label = NodeOperationLabel('delete', len(paths) or 1, paths) if paths else None
+                paths = self._extract_node_paths(result_text, 'delete_node') or ([result_text] if result_text else [])
+                label = NodeOperationLabel('delete', 1, paths) if paths else None
             
             if label:
                 label.nodeClicked.connect(self._navigate_to_node)
@@ -3451,12 +3503,12 @@ Todo 管理规则（严格遵守）:
         self._add_pending_image(b64, 'image/png')
     
     def _add_pending_image(self, b64_data: str, media_type: str):
-        """添加图片到待发送列表并在预览区显示缩略图"""
-        # 创建缩略图
+        """添加图片到待发送列表并在预览区显示缩略图（点击可放大）"""
+        # 创建缩略图和完整 pixmap
         img_bytes = __import__('base64').b64decode(b64_data)
-        pixmap = QtGui.QPixmap()
-        pixmap.loadFromData(img_bytes)
-        thumb = pixmap.scaled(60, 60, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        full_pixmap = QtGui.QPixmap()
+        full_pixmap.loadFromData(img_bytes)
+        thumb = full_pixmap.scaled(60, 60, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         
         # 存储
         idx = len(self._pending_images)
@@ -3468,8 +3520,7 @@ Todo 管理规则（严格遵守）:
         img_layout.setContentsMargins(2, 2, 2, 2)
         img_layout.setSpacing(1)
         
-        lbl = QtWidgets.QLabel()
-        lbl.setPixmap(thumb)
+        lbl = ClickableImageLabel(thumb, full_pixmap)
         lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
         img_layout.addWidget(lbl)
         
@@ -3518,8 +3569,10 @@ Todo 管理规则（严格遵守）:
             img_layout.setContentsMargins(2, 2, 2, 2)
             img_layout.setSpacing(1)
             
-            lbl = QtWidgets.QLabel()
-            lbl.setPixmap(thumb)
+            # 从 base64 还原完整 pixmap 用于放大预览
+            full_pixmap = QtGui.QPixmap()
+            full_pixmap.loadFromData(__import__('base64').b64decode(b64))
+            lbl = ClickableImageLabel(thumb, full_pixmap)
             lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
             img_layout.addWidget(lbl)
             
@@ -4548,7 +4601,15 @@ Todo 管理规则（严格遵守）:
         while i < len(messages):
             msg = messages[i]
             role = msg.get('role', '')
-            content = msg.get('content', '') or ''
+            raw_content = msg.get('content', '') or ''
+            # 多模态消息的 content 可能是 list（含 text/image 部分），统一提取文本
+            if isinstance(raw_content, list):
+                content = '\n'.join(
+                    part.get('text', '') for part in raw_content
+                    if isinstance(part, dict) and part.get('type') == 'text'
+                )
+            else:
+                content = raw_content
 
             # ─── 用户消息 ───
             if role == 'user':

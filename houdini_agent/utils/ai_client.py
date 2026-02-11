@@ -563,7 +563,11 @@ HOUDINI_TOOLS = [
                 "properties": {
                     "node_path": {"type": "string", "description": "节点路径"},
                     "param_name": {"type": "string", "description": "参数名（必须是 get_node_parameters 返回的有效参数名）"},
-                    "value": {"type": ["string", "number", "boolean", "array"], "description": "参数值"}
+                    "value": {
+                        "type": ["string", "number", "boolean", "array"],
+                        "items": {"type": ["string", "number", "boolean"]},
+                        "description": "参数值（单值或数组，如向量 [1, 0, 0]）"
+                    }
                 },
                 "required": ["node_path", "param_name", "value"]
             }
@@ -768,7 +772,11 @@ HOUDINI_TOOLS = [
                         "description": "节点路径列表"
                     },
                     "param_name": {"type": "string", "description": "参数名"},
-                    "value": {"type": ["string", "number", "boolean", "array"], "description": "新值"}
+                    "value": {
+                        "type": ["string", "number", "boolean", "array"],
+                        "items": {"type": ["string", "number", "boolean"]},
+                        "description": "新值（单值或数组，如向量 [1, 0, 0]）"
+                    }
                 },
                 "required": ["node_paths", "param_name", "value"]
             }
@@ -1632,7 +1640,7 @@ class AIClient:
         
         仅限明确通过 reasoning_content 字段返回推理的模型：
         DeepSeek-R1/Reasoner, GLM-4.7
-        注：Duojie 模型通过 reasoningEffort 参数开启思考，不改模型名
+        注：Duojie 模型思考模式通过系统提示词 <think> 标签实现，不依赖 API 参数
         """
         m = model.lower()
         return (
@@ -1646,33 +1654,95 @@ class AIClient:
         return model.lower() == 'glm-4.7'
     
     # Duojie 思考模式说明：
-    # 模型名保持不变，通过 reasoningEffort 参数（low/medium/high）控制是否开启思考
-    # 无需对模型名添加 -think 后缀
+    # 经测试 thinking/reasoningEffort API 参数对 Duojie 均无效（reasoning_tokens 始终 0）
+    # 思考通过系统提示词中的 <think> 标签指令实现，模型名保持不变
     
     # ============================================================
     # Usage 解析
     # ============================================================
     
+    _usage_keys_logged = False  # 类变量：只打印一次原始 usage 完整结构
+
     @staticmethod
     def _parse_usage(usage: dict) -> dict:
-        """解析 API 返回的 usage 数据为统一格式（含 reasoning tokens）"""
+        """解析 API 返回的 usage 数据为统一格式（含 reasoning tokens 和缓存指标）
+        
+        缓存字段兼容多种 API 返回格式：
+        - DeepSeek/OpenAI: prompt_cache_hit_tokens / prompt_cache_miss_tokens
+        - Anthropic 原生: cache_read_input_tokens / cache_creation_input_tokens
+        - Factory/Duojie 代理: claude_cache_creation_*_tokens, input_tokens_details 内嵌
+        """
         if not usage:
             return {}
-        prompt_tokens = usage.get('prompt_tokens', 0)
-        cache_hit = usage.get('prompt_cache_hit_tokens', 0)
-        cache_miss = usage.get('prompt_cache_miss_tokens', 0)
-        completion = usage.get('completion_tokens', 0)
+        
+        # 诊断：首次收到 usage 时打印完整结构（含嵌套 details）
+        if not AIClient._usage_keys_logged:
+            AIClient._usage_keys_logged = True
+            print(f"[AI Client] Raw usage keys (首次): {sorted(usage.keys())}")
+            for k in ('input_tokens_details', 'prompt_tokens_details', 'completion_tokens_details'):
+                v = usage.get(k)
+                if v:
+                    print(f"[AI Client]   {k}: {v}")
+        
+        prompt_tokens = usage.get('prompt_tokens', 0) or usage.get('input_tokens', 0)
+        
+        # ── 缓存读取（hit）：从多级来源查找 ──
+        # 优先从 details 子字段中提取（Factory/Anthropic 风格）
+        input_details = usage.get('input_tokens_details') or usage.get('prompt_tokens_details') or {}
+        if isinstance(input_details, dict):
+            cache_hit = (
+                input_details.get('cached_tokens')           # OpenAI 新格式
+                or input_details.get('cache_read_input_tokens')  # Anthropic
+                or input_details.get('cache_read_tokens')
+                or 0
+            )
+        else:
+            cache_hit = 0
+        # 顶级字段后备
+        if not cache_hit:
+            cache_hit = (
+                usage.get('prompt_cache_hit_tokens')
+                or usage.get('cache_read_input_tokens')
+                or usage.get('cache_read_tokens')
+                or usage.get('cache_hit_tokens')
+                or 0
+            )
+        
+        # ── 缓存写入（miss/creation） ──
+        # Factory 特有: claude_cache_creation_1_h_tokens / claude_cache_creation_5_m_tokens
+        cache_write_1h = usage.get('claude_cache_creation_1_h_tokens', 0) or 0
+        cache_write_5m = usage.get('claude_cache_creation_5_m_tokens', 0) or 0
+        factory_cache_write = cache_write_1h + cache_write_5m
+        
+        if isinstance(input_details, dict):
+            cache_miss_from_details = (
+                input_details.get('cache_creation_input_tokens')
+                or input_details.get('cache_creation_tokens')
+                or 0
+            )
+        else:
+            cache_miss_from_details = 0
+        
+        cache_miss = (
+            cache_miss_from_details
+            or usage.get('prompt_cache_miss_tokens')
+            or usage.get('cache_creation_input_tokens')
+            or usage.get('cache_write_tokens')
+            or usage.get('cache_miss_tokens')
+            or factory_cache_write
+            or 0
+        )
+        
+        completion = usage.get('completion_tokens', 0) or usage.get('output_tokens', 0)
         total = usage.get('total_tokens', 0) or (prompt_tokens + completion)
         
-        # 提取 reasoning / thinking tokens（Cursor 风格）
-        # OpenAI: completion_tokens_details.reasoning_tokens
-        # DeepSeek: completion_tokens_details.reasoning_tokens
+        # ── 提取 reasoning / thinking tokens ──
+        # OpenAI/DeepSeek: completion_tokens_details.reasoning_tokens
         # Anthropic: 可能在 output_tokens_details.thinking 中
         reasoning_tokens = 0
-        details = usage.get('completion_tokens_details') or {}
-        if isinstance(details, dict):
-            reasoning_tokens = details.get('reasoning_tokens', 0) or 0
-        # 某些 API 直接返回 reasoning_tokens 顶级字段
+        comp_details = usage.get('completion_tokens_details') or {}
+        if isinstance(comp_details, dict):
+            reasoning_tokens = comp_details.get('reasoning_tokens', 0) or 0
         if not reasoning_tokens:
             reasoning_tokens = usage.get('reasoning_tokens', 0) or 0
         
@@ -1704,7 +1774,7 @@ class AIClient:
         Yields:
             {"type": "content", "content": str}  # 内容片段
             {"type": "tool_call", "tool_call": dict}  # 工具调用
-            {"type": "thinking", "content": str}  # 思考内容（DeepSeek / GLM / Duojie reasoningEffort 模式）
+            {"type": "thinking", "content": str}  # 思考内容（DeepSeek / GLM 原生 reasoning_content）
             {"type": "done", "finish_reason": str}  # 完成
             {"type": "error", "error": str}  # 错误
         """
@@ -1739,10 +1809,9 @@ class AIClient:
             if tools:
                 payload['tool_stream'] = True
         
-        # Duojie 中转：通过 reasoningEffort 参数控制思考模式，模型名不变
-        if provider == 'duojie' and enable_thinking:
-            payload['reasoningEffort'] = 'high'
-            print(f"[AI Client] Duojie Think ON: reasoningEffort=high")
+        # Duojie 中转：思考模式通过系统提示词中的 <think> 标签实现
+        # 经测试 thinking/reasoningEffort 参数对 Duojie API 无效（reasoning_tokens 始终为 0）
+        # 且 thinking 参数偶尔导致 403，因此不发送任何额外参数
         
         # DeepSeek / OpenAI prompt caching 自动启用（保持前缀稳定即可命中）
         
@@ -1799,6 +1868,7 @@ class AIClient:
                     tool_calls_buffer = {}  # 缓存工具调用片段
                     pending_usage = {}  # 收集 usage 数据
                     last_finish_reason = None
+                    _got_reasoning = False  # 诊断：本轮是否收到 reasoning_content
                     
                     # ── 使用 iter_content + 增量解码器 + 手动分行 ──
                     # 比 iter_lines() 更健壮：
@@ -1811,7 +1881,7 @@ class AIClient:
                     
                     def _process_sse_line(line):
                         """处理单行 SSE data，返回要 yield 的 dict 列表"""
-                        nonlocal tool_calls_buffer, pending_usage, last_finish_reason
+                        nonlocal tool_calls_buffer, pending_usage, last_finish_reason, _got_reasoning
                         results = []
                         
                         if not line.startswith('data: '):
@@ -1820,7 +1890,8 @@ class AIClient:
                         data_str = line[6:]
                         
                         if data_str.strip() == '[DONE]':
-                            print(f"[AI Client] Received [DONE], usage={pending_usage}")
+                            _reason_tokens = pending_usage.get('reasoning_tokens', 0)
+                            print(f"[AI Client] Received [DONE], reasoning={'YES' if _got_reasoning else 'NO'}(tokens={_reason_tokens}), usage={pending_usage}")
                             results.append({"type": "done", "finish_reason": last_finish_reason or "stop", "usage": pending_usage})
                             return results
                         
@@ -1845,6 +1916,9 @@ class AIClient:
                         
                         # 思考内容
                         if 'reasoning_content' in delta and delta['reasoning_content']:
+                            if not _got_reasoning:
+                                _got_reasoning = True
+                                print(f"[AI Client] 🧠 收到 reasoning_content（首个 chunk，len={len(delta['reasoning_content'])}）")
                             results.append({"type": "thinking", "content": delta['reasoning_content']})
                         
                         # 普通内容
@@ -1852,7 +1926,7 @@ class AIClient:
                             results.append({"type": "content", "content": delta['content']})
                         
                         # 工具调用
-                        if 'tool_calls' in delta:
+                        if delta.get('tool_calls'):
                             for tc in delta['tool_calls']:
                                 idx = tc.get('index', 0)
                                 tc_id = tc.get('id', '')
@@ -2245,23 +2319,12 @@ class AIClient:
             # - 只有在 context_length_exceeded 错误时才由 _progressive_trim 处理
             # 不做任何同轮内压缩——这是 Cursor 的核心设计
             
-            # 诊断：打印第二次及之后请求的消息结构
+            # 诊断：仅打印消息数量摘要（完整内容通过"导出训练数据"功能获取）
             if iteration > 1:
-                print(f"[AI Client] === DEBUG iteration={iteration} messages ({len(working_messages)}) ===")
-                for i, m in enumerate(working_messages):
-                    role = m.get('role', '?')
-                    tc = m.get('tool_calls')
-                    tc_id = m.get('tool_call_id', '')
-                    content = m.get('content')
-                    content_repr = repr(content)[:120] if content else repr(content)
-                    extras = {k: v for k, v in m.items() if k not in ('role', 'content', 'tool_calls', 'tool_call_id')}
-                    if tc:
-                        print(f"  [{i}] role={role}, content={content_repr}, tool_calls={json.dumps(tc, ensure_ascii=False)[:300]}, extras={extras}")
-                    elif tc_id:
-                        print(f"  [{i}] role={role}, tool_call_id={tc_id}, content={content_repr}, extras={extras}")
-                    else:
-                        print(f"  [{i}] role={role}, content={content_repr}, extras={extras}")
-                print(f"[AI Client] === END DEBUG ===")
+                from collections import Counter
+                role_counts = Counter(m.get('role', '?') for m in working_messages)
+                summary = ', '.join(f"{r}={c}" for r, c in role_counts.items())
+                print(f"[AI Client] iteration={iteration}, messages={len(working_messages)} ({summary})")
             
             # 流式请求
             for chunk in self.chat_stream(
@@ -2540,7 +2603,7 @@ class AIClient:
             # Claude/Anthropic 兼容代理拒绝 content="" + tool_calls 共存
             assistant_msg['content'] = round_content or None
             # reasoning_content 仅在回传消息时对 DeepSeek / 原生 GLM 有效
-            # Duojie 开启 reasoningEffort 时也会返回 reasoning_content，但无需在后续请求中回传
+            # Duojie 的 reasoning_content 无需在后续请求中回传
             if self.is_reasoning_model(model) and provider in ('deepseek', 'glm'):
                 assistant_msg['reasoning_content'] = round_thinking or ''
             working_messages.append(assistant_msg)
@@ -2720,9 +2783,10 @@ class AIClient:
                     )
                 if enable_thinking:
                     working_messages[-1]['content'] += (
-                        '\n\n[请先在<think>标签内分析以上执行结果和当前进度，'
+                        '\n\n[重要：你的下一条回复必须以 <think> 标签开头。'
+                        '在标签内分析以上执行结果和当前进度，'
                         '检查 Todo 列表中哪些步骤已完成（用 update_todo 标记为 done），'
-                        '确认下一步计划后再继续执行。]'
+                        '确认下一步计划后再继续执行。不要跳过 <think> 标签。]'
                     )
             
             # 保存当前轮次的内容
