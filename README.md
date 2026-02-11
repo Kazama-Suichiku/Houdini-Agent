@@ -38,7 +38,7 @@ User request → AI plans → call tools → inspect results → call more tools
 - **Multimodal messages** — attach images (PNG/JPG/GIF/WebP) to your messages for vision-capable models
 - **Paste & drag-drop** — `Ctrl+V` paste from clipboard, drag image files into the chat input
 - **File picker** — click the "Img" button to select images from disk
-- **Image preview** — thumbnails displayed above the input box before sending, with remove buttons
+- **Image preview** — thumbnails displayed above the input box before sending, with remove buttons; **click any thumbnail to enlarge** in a full-size preview dialog
 - **Model-aware** — automatically checks if the current model supports vision; non-vision models show a clear warning
 - Supported: OpenAI GPT-5.2/5.3, Claude (all variants), Gemini
 
@@ -279,8 +279,10 @@ Click the "Set API Key…" button and check "Save to local config".
 ### Token Counting & Cost Estimation
 
 - **tiktoken integration** — accurate token counting when available, with improved fallback estimation
+- **Multimodal token estimation** — images are estimated at ~765 tokens each (low-res mode) for accurate budget tracking
 - **Per-model pricing** — estimated costs based on each provider's published pricing (input/output/cache rates)
 - **Reasoning token tracking** — separate count for reasoning/thinking tokens (DeepSeek-R1, GLM-4.7, etc.)
+- **Multi-provider cache parsing** — unified handling of cache hit/miss metrics across DeepSeek, OpenAI, Anthropic, and Factory/Duojie relay formats
 - **Token Analytics Panel** — detailed breakdown per request: input, output, reasoning, cache, latency, and cost
 
 ### Smart Error Recovery
@@ -366,7 +368,8 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
-- **v6.2** — **Vision/Image input**: multimodal messages with paste/drag-drop/file-picker, image preview with thumbnails, model-aware vision check. **Wrangle run_over guidance** in system prompt (prevents wrong VEX execution context). **Duojie reasoningEffort** mode (replaces model-name mapping with `reasoningEffort` parameter). **New models**: `gpt-5.3-codex`, `claude-opus-4-6-normal`, `claude-opus-4-6-kiro`. **Proxy tool_call fix**: robust splitting of concatenated `{...}{...}` arguments from relay services. **Legacy module cleanup** on startup.
+- **v6.3** — **Image preview dialog**: click thumbnails to enlarge in a full-size modal viewer. **Stricter `<think>` tag enforcement**: system prompt now treats missing tags as format violations; follow-up replies after tool execution also require tags. **Robust usage parsing**: unified cache hit/miss/write metrics across DeepSeek, OpenAI, Anthropic, and Factory/Duojie relay formats (with one-time diagnostic dump). **Precise node path extraction**: `_extract_node_paths` now uses tool-specific regex rules to avoid picking up parent/context paths. **Multimodal token counting**: images estimated at ~765 tokens for accurate budget tracking. **Duojie think mode**: abandoned `reasoningEffort` parameter (ineffective), relies on `<think>` tag prompting only. Tool schema: added `items` type hint for array parameter values.
+- **v6.2** — **Vision/Image input**: multimodal messages with paste/drag-drop/file-picker, image preview with thumbnails, model-aware vision check. **Wrangle run_over guidance** in system prompt (prevents wrong VEX execution context). **New models**: `gpt-5.3-codex`, `claude-opus-4-6-normal`, `claude-opus-4-6-kiro`. **Proxy tool_call fix**: robust splitting of concatenated `{...}{...}` arguments from relay services. **Legacy module cleanup** on startup.
 - **v6.1** — Clickable node paths, token cost tracking (tiktoken + per-model pricing), Token Analytics Panel, smart parameter error hints, streamlined `verify_and_summarize` (built-in network check), duplicate call dedup, doc-check error suggestions, connection retry with backoff, updated model defaults (GLM-4.7, GPT-5.2, Gemini-3-Pro)
 - **v6.0** — **Houdini Agent**: Native tool chain, round-based context trimming, merged `get_node_details` into `get_node_parameters`, Skills system (8 analysis scripts), `execute_shell` tool, local doc RAG, Duojie/Ollama providers, multi-session tabs, thread-safe tool dispatch, connection retry logic
 - **v5.0** — Dark UI overhaul: dark theme, collapsible blocks, stop button, auto context compression, code highlighting
