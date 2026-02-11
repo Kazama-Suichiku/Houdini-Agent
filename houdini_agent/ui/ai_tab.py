@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Houdini AI 助手 - Cursor 风格极简 UI
-支持执行计划、多轮工具调用、流式传输
-
-提供商：DeepSeek / 智谱GLM(GLM-4.7) / OpenAI
+Houdini Agent - AI Tab
+Agent loop, multi-turn tool calling, streaming UI
 """
 
 import json
@@ -1011,7 +1009,7 @@ Todo 管理规则（严格遵守）:
         # 缓存工具定义 token 数（只算一次，因为工具定义不变）
         if not hasattr(self, '_tools_token_cache'):
             import json as _json
-            from HOUDINI_HIP_MANAGER.utils.ai_client import HOUDINI_TOOLS
+            from houdini_agent.utils.ai_client import HOUDINI_TOOLS
             tools_json = _json.dumps(HOUDINI_TOOLS, ensure_ascii=False)
             self._tools_token_cache = self.token_optimizer.estimate_tokens(tools_json)
         
@@ -1194,7 +1192,7 @@ Todo 管理规则（严格遵守）:
     
     def _show_token_stats_dialog(self):
         """显示详细 Token 统计对话框（对齐 Cursor：使用 TokenAnalyticsPanel）"""
-        from HOUDINI_HIP_MANAGER.ui.cursor_widgets import TokenAnalyticsPanel
+        from houdini_agent.ui.cursor_widgets import TokenAnalyticsPanel
         records = getattr(self, '_call_records', []) or []
         dialog = TokenAnalyticsPanel(records, self._token_stats, parent=self)
         dialog.exec_()
@@ -1768,7 +1766,7 @@ Todo 管理规则（严格遵守）:
             stats['requests'] += 1
             
             # 计算本次费用并累积
-            from HOUDINI_HIP_MANAGER.utils.token_optimizer import calculate_cost
+            from houdini_agent.utils.token_optimizer import calculate_cost
             model_name = self.model_combo.currentText()
             this_cost = calculate_cost(
                 model=model_name,

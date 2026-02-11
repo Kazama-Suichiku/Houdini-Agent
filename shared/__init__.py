@@ -1,1 +1,1 @@
-"""DCC Asset Manager - Shared Module"""
+"""Houdini Agent - Shared Utilities"""

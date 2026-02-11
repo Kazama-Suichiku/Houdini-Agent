@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-AI 调用客户端（Houdini 工具专用）
-支持 OpenAI / DeepSeek / 智谱GLM（GLM-4.7）
-支持 Function Calling、流式传输、联网搜索
-
-安全提示：不要将密钥提交到版本库。
+Houdini Agent - AI Client
+OpenAI-compatible API client with Function Calling, streaming, and web search.
 """
 
 import os
@@ -2355,7 +2352,7 @@ class AIClient:
                     _rec_chit = usage.get('cache_hit_tokens', 0)
                     _rec_cmiss = usage.get('cache_miss_tokens', 0)
                     try:
-                        from HOUDINI_HIP_MANAGER.utils.token_optimizer import calculate_cost as _calc_cost
+                        from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
                         _rec_cost = _calc_cost(model, _rec_inp, _rec_out, _rec_chit, _rec_cmiss, _rec_reason)
                     except Exception:
                         _rec_cost = 0.0
@@ -3050,7 +3047,7 @@ class AIClient:
                     _rec_chit = usage.get('cache_hit_tokens', 0)
                     _rec_cmiss = usage.get('cache_miss_tokens', 0)
                     try:
-                        from HOUDINI_HIP_MANAGER.utils.token_optimizer import calculate_cost as _calc_cost
+                        from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
                         _rec_cost = _calc_cost(model, _rec_inp, _rec_out, _rec_chit, _rec_cmiss, _rec_reason)
                     except Exception:
                         _rec_cost = 0.0

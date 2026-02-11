@@ -60,7 +60,7 @@ except (ImportError, ValueError, SystemError):
 if not HAS_SKILLS:
     try:
         import importlib
-        _skills_mod = importlib.import_module('HOUDINI_HIP_MANAGER.skills')
+        _skills_mod = importlib.import_module('houdini_agent.skills')
         _list_skills = _skills_mod.list_skills
         _run_skill = _skills_mod.run_skill
         HAS_SKILLS = True

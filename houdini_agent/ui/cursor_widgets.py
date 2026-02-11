@@ -3009,7 +3009,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         row_cost = rec.get('estimated_cost', 0.0)
         if not row_cost:
             try:
-                from HOUDINI_HIP_MANAGER.utils.token_optimizer import calculate_cost
+                from houdini_agent.utils.token_optimizer import calculate_cost
                 row_cost = calculate_cost(
                     model=rec.get('model', ''),
                     input_tokens=inp,

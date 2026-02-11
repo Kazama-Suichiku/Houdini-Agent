@@ -1,6 +1,5 @@
 """
-Shared Utilities for DCC Asset Manager
-跨 DCC 软件的共享工具函数
+Shared Utilities for Houdini Agent
 """
 
 import os

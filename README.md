@@ -143,22 +143,17 @@ Houdini-Agent/
 │   ├── vex.zip                     # VEX function docs index
 │   └── hom.zip                     # HOM class/method docs index
 ├── shared/                          # Shared utilities
-│   ├── common_utils.py             # Path & config helpers
-│   └── p4v_utils.py               # Perforce integration
+│   └── common_utils.py             # Path & config helpers
 ├── trainData/                       # Exported training data (JSONL)
-└── HOUDINI_HIP_MANAGER/            # Main module
-    ├── main.py                     # Module entry
+└── houdini_agent/                   # Main module
+    ├── main.py                     # Module entry & window management
     ├── shelf_tool.py               # Houdini shelf tool integration
     ├── QUICK_SHELF_CODE.py         # Quick shelf code snippet
     ├── core/
-    │   ├── hip_manager.py          # HIP file browser & manager
-    │   └── asset_checker.py        # Asset validation checker
+    │   └── main_window.py          # Main window (workspace save/restore)
     ├── ui/
-    │   ├── ai_tab.py              # AI Agent tab (main UI, agent loop, context management)
-    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics)
-    │   ├── chat_window.py         # Legacy chat window
-    │   ├── widgets.py             # Custom Qt widgets
-    │   └── dialogs.py            # Dialog boxes
+    │   ├── ai_tab.py              # AI Agent tab (agent loop, context management, streaming UI)
+    │   └── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics)
     ├── skills/                     # Pre-built analysis scripts
     │   ├── __init__.py            # Skill registry & loader
     │   ├── analyze_normals.py     # Normal quality detection
@@ -174,7 +169,6 @@ Houdini-Agent/
         ├── doc_rag.py             # Local doc index (nodes/VEX/HOM O(1) lookup)
         ├── token_optimizer.py     # Token budget & compression (tiktoken-powered)
         ├── ultra_optimizer.py     # System prompt & tool definition optimizer
-        ├── hip_utils.py           # HIP file utilities
         ├── training_data_exporter.py # Export conversations as training JSONL
         └── mcp/                   # Houdini MCP (Model Context Protocol) layer
             ├── client.py          # Tool executor (node ops, shell, skills dispatch)

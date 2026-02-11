@@ -143,22 +143,17 @@ Houdini-Agent/
 │   ├── vex.zip                     # VEX 函数文档索引
 │   └── hom.zip                     # HOM 类/方法文档索引
 ├── shared/                          # 共享工具
-│   ├── common_utils.py             # 路径与配置工具
-│   └── p4v_utils.py               # Perforce 集成
+│   └── common_utils.py             # 路径与配置工具
 ├── trainData/                       # 导出的训练数据（JSONL）
-└── HOUDINI_HIP_MANAGER/            # 主模块
-    ├── main.py                     # 模块入口
+└── houdini_agent/                   # 主模块
+    ├── main.py                     # 模块入口与窗口管理
     ├── shelf_tool.py               # Houdini 工具架集成
     ├── QUICK_SHELF_CODE.py         # 快速工具架代码片段
     ├── core/
-    │   ├── hip_manager.py          # HIP 文件浏览与管理
-    │   └── asset_checker.py        # 资产验证检查器
+    │   └── main_window.py          # 主窗口（工作区保存/恢复）
     ├── ui/
-    │   ├── ai_tab.py              # AI Agent 标签页（主 UI、Agent 循环、上下文管理）
-    │   ├── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板）
-    │   ├── chat_window.py         # 旧版对话窗口
-    │   ├── widgets.py             # 自定义 Qt 控件
-    │   └── dialogs.py            # 对话框
+    │   ├── ai_tab.py              # AI Agent 标签页（Agent 循环、上下文管理、流式 UI）
+    │   └── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板）
     ├── skills/                     # 预构建分析脚本
     │   ├── __init__.py            # Skill 注册表与加载器
     │   ├── analyze_normals.py     # 法线质量检测
@@ -174,7 +169,6 @@ Houdini-Agent/
         ├── doc_rag.py             # 本地文档索引（节点/VEX/HOM O(1) 查找）
         ├── token_optimizer.py     # Token 预算与压缩策略（tiktoken 精准计数）
         ├── ultra_optimizer.py     # 系统提示词与工具定义优化器
-        ├── hip_utils.py           # HIP 文件工具
         ├── training_data_exporter.py # 对话导出为训练数据 JSONL
         └── mcp/                   # Houdini MCP 层
             ├── client.py          # 工具执行器（节点操作、Shell、Skill 分发）
