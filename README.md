@@ -1,5 +1,7 @@
 # Houdini Agent
 
+**[English](README.md)** | **[中文](README_CN.md)**
+
 An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, and a minimal dark UI.
 
 Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, and query local documentation — all within an iterative agent loop.
