@@ -1160,18 +1160,36 @@ class AIResponse(QtWidgets.QWidget):
         
         summary_layout.addLayout(status_row)
         
-        # 内容（流式 + 最终渲染统一 14px）
-        # PlainText 防止流式内容中 <node_name> 被当 HTML 标签吞掉
-        self.content_label = QtWidgets.QLabel()
-        self.content_label.setTextFormat(QtCore.Qt.PlainText)
-        self.content_label.setWordWrap(True)
-        self.content_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        # 内容区域 —— 流式阶段使用 QPlainTextEdit（增量追加 O(1)），
+        # finalize 时按需替换为 RichContentWidget（Markdown 渲染）。
+        # QPlainTextEdit 的 insertPlainText 只做光标处插入，不会像 QLabel.setText
+        # 那样每次重算全文 word-wrap，解决长回复流式卡顿问题。
+        self.content_label = QtWidgets.QPlainTextEdit()
+        self.content_label.setReadOnly(True)
+        self.content_label.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.content_label.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.content_label.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.content_label.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        # 让 size hint 跟随内容自动增长（不设固定高度）
+        self.content_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+        )
         self.content_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_PRIMARY};
-            font-size: 14px;
-            font-family: {CursorTheme.FONT_BODY};
-            line-height: 1.6;
+            QPlainTextEdit {{
+                color: {CursorTheme.TEXT_PRIMARY};
+                background: transparent;
+                border: none;
+                padding: 0px;
+                font-size: 14px;
+                font-family: {CursorTheme.FONT_BODY};
+            }}
         """)
+        # 初始高度紧凑，流式输入时自动增长
+        self._content_line_h = QtGui.QFontMetrics(
+            self.content_label.document().defaultFont()
+        ).lineSpacing()
+        self.content_label.setFixedHeight(self._content_line_h + 8)
+        self.content_label.document().contentsChanged.connect(self._auto_resize_content)
         summary_layout.addWidget(self.content_label)
         
         layout.addWidget(self.summary_frame)
@@ -1238,22 +1256,40 @@ class AIResponse(QtWidgets.QWidget):
         clean_result = result.removeprefix("[ok] ").removeprefix("[err] ")
         self.execution_section.set_tool_result(tool_name, clean_result, success)
     
+    def _auto_resize_content(self):
+        """根据文档实际行数自动调整 QPlainTextEdit 高度"""
+        doc = self.content_label.document()
+        # documentSize().height() 返回文档布局后的像素高度
+        doc_height = int(doc.size().height())
+        # 加上上下 margin
+        new_h = doc_height + 8
+        min_h = self._content_line_h + 8
+        target = max(new_h, min_h)
+        if target != self.content_label.maximumHeight():
+            self.content_label.setFixedHeight(target)
+    
     def append_content(self, text: str):
-        """追加内容（流式场景高频调用，需要高效）"""
+        """追加内容（流式场景高频调用，需要高效）
+        
+        使用 QPlainTextEdit.insertPlainText 增量追加，O(1) 复杂度，
+        不触发全文 word-wrap 重算。
+        """
         if not text.strip():
             return
         # 清除 U+FFFD 替换符（encoding 异常残留）
         if '\ufffd' in text:
             text = text.replace('\ufffd', '')
         self._content += text
-        # 流式阶段：直接追加到 QLabel，不做全量 re.sub
-        # 只在最终 finalize 时做完整清理
-        self.content_label.setText(self._content)
+        # ★ 增量追加：移到文档末尾插入，不重排之前的文本
+        cursor = self.content_label.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.insertText(text)
+        self.content_label.setTextCursor(cursor)
     
     def set_content(self, text: str):
-        """设置内容"""
+        """设置内容（一次性，非流式场景）"""
         self._content = text
-        self.content_label.setText(self._clean_content(text))
+        self.content_label.setPlainText(self._clean_content(text))
     
     @staticmethod
     def _clean_content(text: str) -> str:
@@ -1349,12 +1385,16 @@ class AIResponse(QtWidgets.QWidget):
         
         if not content:
             if self._has_execution:
-                self.content_label.setText("执行完成，详见上方执行过程。")
+                self.content_label.setPlainText("执行完成，详见上方执行过程。")
             else:
-                self.content_label.setText("（无回复内容）")
+                self.content_label.setPlainText("（无回复内容）")
             self.content_label.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 13px;
+                QPlainTextEdit {{
+                    color: {CursorTheme.TEXT_MUTED};
+                    background: transparent;
+                    border: none;
+                    font-size: 13px;
+                }}
             """)
         else:
             # 始终显示完整回复内容（不折叠）
@@ -1366,7 +1406,7 @@ class AIResponse(QtWidgets.QWidget):
                 rich.nodePathClicked.connect(self.nodePathClicked.emit)
                 self.summary_frame.layout().addWidget(rich)
             else:
-                self.content_label.setText(content)
+                self.content_label.setPlainText(content)
     
     def _on_link_activated(self, url: str):
         """处理链接点击 — houdini:// 协议 → nodePathClicked 信号"""
@@ -3452,6 +3492,11 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         # @ 补全状态
         self._at_active = False
         self._at_start_pos = -1
+        self._completer_popup: 'NodeCompleterPopup | None' = None
+    
+    def set_completer_popup(self, popup: 'NodeCompleterPopup'):
+        """设置节点补全弹出框引用，用于键盘导航和自动关闭"""
+        self._completer_popup = popup
     
     def _schedule_adjust(self):
         """延迟调整高度，确保文档布局已更新"""
@@ -3489,6 +3534,11 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             # 通知父布局重新分配空间
             self.updateGeometry()
     
+    def _hide_completer(self):
+        """隐藏补全弹出框"""
+        if self._completer_popup and self._completer_popup.isVisible():
+            self._completer_popup.setVisible(False)
+
     def _check_at_trigger(self):
         """检测输入中的 @ 字符，触发节点路径补全"""
         cursor = self.textCursor()
@@ -3497,6 +3547,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         if not text or pos == 0:
             if self._at_active:
                 self._at_active = False
+                self._hide_completer()
             return
 
         # 查找光标前最近的 @
@@ -3505,6 +3556,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         if at_idx == -1:
             if self._at_active:
                 self._at_active = False
+                self._hide_completer()
             return
 
         # @ 后面的内容不能包含空格（否则认为已结束）
@@ -3512,6 +3564,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         if ' ' in prefix_after_at or '\n' in prefix_after_at:
             if self._at_active:
                 self._at_active = False
+                self._hide_completer()
             return
 
         self._at_active = True
@@ -3521,9 +3574,10 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.atTriggered.emit(prefix_after_at, crect)
 
     def cancel_at_completion(self):
-        """取消当前 @ 补全"""
+        """取消当前 @ 补全并隐藏弹出框"""
         self._at_active = False
         self._at_start_pos = -1
+        self._hide_completer()
 
     def insert_at_completion(self, path: str):
         """将补全结果插入文本，替换 @前缀"""
@@ -3539,18 +3593,88 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self._at_active = False
         self._at_start_pos = -1
 
+    def _is_completer_visible(self) -> bool:
+        """补全弹出框是否可见"""
+        return (self._completer_popup is not None
+                and self._completer_popup.isVisible()
+                and self._completer_popup.count() > 0)
+
     def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key_Escape and self._at_active:
+        key = event.key()
+        
+        # ── @ 补全活跃时的键盘处理 ──
+        if self._at_active and self._is_completer_visible():
+            popup = self._completer_popup
+            
+            if key == QtCore.Qt.Key_Escape:
+                # Escape: 取消补全 + 隐藏弹窗
+                self.cancel_at_completion()
+                return
+            
+            if key == QtCore.Qt.Key_Up:
+                # Up: 在列表中上移
+                row = popup.currentRow()
+                if row > 0:
+                    popup.setCurrentRow(row - 1)
+                return
+            
+            if key == QtCore.Qt.Key_Down:
+                # Down: 在列表中下移
+                row = popup.currentRow()
+                if row < popup.count() - 1:
+                    popup.setCurrentRow(row + 1)
+                return
+            
+            if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and not (event.modifiers() & QtCore.Qt.ShiftModifier):
+                # Enter: 选中当前项（而非发送消息）
+                current = popup.currentItem()
+                if current:
+                    self.insert_at_completion(current.text())
+                    self._hide_completer()
+                return
+            
+            if key == QtCore.Qt.Key_Tab:
+                # Tab: 也可以选中当前项
+                current = popup.currentItem()
+                if current:
+                    self.insert_at_completion(current.text())
+                    self._hide_completer()
+                return
+        
+        elif self._at_active and key == QtCore.Qt.Key_Escape:
+            # 补全活跃但弹窗不可见（如无匹配结果）：仍允许 Escape 取消
             self.cancel_at_completion()
             return
-        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+        
+        # ── 常规键盘处理 ──
+        if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
             if event.modifiers() & QtCore.Qt.ShiftModifier:
                 super().keyPressEvent(event)
             else:
                 self.sendRequested.emit()
                 return
+        
         super().keyPressEvent(event)
     
+    def mousePressEvent(self, event):
+        """点击文本区域时，如果补全弹窗可见则关闭"""
+        if self._is_completer_visible():
+            self.cancel_at_completion()
+        super().mousePressEvent(event)
+
+    def focusOutEvent(self, event):
+        """失焦时关闭补全弹窗"""
+        # 延迟关闭：如果焦点转移到弹窗本身（用户点击弹窗），不关闭
+        QtCore.QTimer.singleShot(100, self._check_focus_dismiss)
+        super().focusOutEvent(event)
+
+    def _check_focus_dismiss(self):
+        """检查是否需要因失焦而关闭弹窗"""
+        if not self.hasFocus() and self._is_completer_visible():
+            # 检查弹窗本身是否获得焦点（ToolTip 窗口一般不获焦，但以防万一）
+            if self._completer_popup and not self._completer_popup.hasFocus():
+                self.cancel_at_completion()
+
     def resizeEvent(self, event):
         """窗口宽度变化时重新计算高度（自动换行可能改变行数）"""
         super().resizeEvent(event)
@@ -4194,8 +4318,11 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         # 找最大 total 以绘制柱状图
         max_total = max((r.get('total_tokens', 0) for r in records), default=1)
 
-        for idx, rec in enumerate(records):
-            row = self._make_record_row(idx, rec, max_total)
+        # 最新的调用显示在最上面
+        for display_idx, (orig_idx, rec) in enumerate(
+            reversed(list(enumerate(records)))
+        ):
+            row = self._make_record_row(orig_idx, rec, max_total)
             table_layout.addWidget(row)
 
         table_layout.addStretch()

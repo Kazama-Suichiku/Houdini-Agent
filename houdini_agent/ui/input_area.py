@@ -124,6 +124,8 @@ class InputAreaMixin:
         # 节点路径补全弹出框（传入 parent 防止创建时短暂闪烁）
         self._node_completer = NodeCompleterPopup(parent=self.input_edit)
         self._node_completer.pathSelected.connect(self._on_node_path_selected)
+        # ★ 让输入框持有弹出框引用，支持键盘导航和自动关闭
+        self.input_edit.set_completer_popup(self._node_completer)
         
         # 按钮行
         btn_layout = QtWidgets.QHBoxLayout()

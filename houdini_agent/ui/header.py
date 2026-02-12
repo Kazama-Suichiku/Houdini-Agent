@@ -62,7 +62,7 @@ class HeaderMixin:
         }
         self._model_context_limits = {
             'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
-            'deepseek-chat': 64000, 'deepseek-reasoner': 64000,
+            'deepseek-chat': 128000, 'deepseek-reasoner': 128000,
             'glm-4.7': 200000,
             'gpt-5.2': 128000,
             'gpt-5.3-codex': 200000,

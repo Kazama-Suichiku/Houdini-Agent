@@ -1391,26 +1391,99 @@ class AIClient:
         return summary + '...[摘要]'
 
     # ----------------------------------------------------------
+    # 图片内容剥离
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _strip_image_content(messages: list, keep_recent_user: int = 0) -> int:
+        """就地剥离消息中的 image_url 内容，将多模态 content 转为纯文本
+
+        Args:
+            messages: 消息列表（就地修改）
+            keep_recent_user: 保留最近 N 条 user 消息的图片（0 = 全部剥离）
+
+        Returns:
+            剥离的图片数量
+        """
+        stripped = 0
+
+        # 找出最近 N 条 user 消息的索引（从后往前）
+        protected_indices: set = set()
+        if keep_recent_user > 0:
+            count = 0
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get('role') == 'user':
+                    protected_indices.add(i)
+                    count += 1
+                    if count >= keep_recent_user:
+                        break
+
+        for idx, msg in enumerate(messages):
+            content = msg.get('content')
+            if not isinstance(content, list):
+                continue
+            if idx in protected_indices:
+                continue
+
+            # 多模态 content: [{"type":"text","text":"..."},{"type":"image_url",...}]
+            text_parts = []
+            has_image = False
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get('type') == 'text':
+                        text_parts.append(part.get('text', ''))
+                    elif part.get('type') == 'image_url':
+                        has_image = True
+                        stripped += 1
+                elif isinstance(part, str):
+                    text_parts.append(part)
+
+            if has_image:
+                combined = '\n'.join(t for t in text_parts if t)
+                if combined:
+                    combined += '\n[图片已移除以节省上下文空间]'
+                else:
+                    combined = '[图片已移除]'
+                msg['content'] = combined
+
+        return stripped
+
+    # ----------------------------------------------------------
     # 渐进式裁剪
     # ----------------------------------------------------------
 
     def _progressive_trim(self, working_messages: list, tool_calls_history: list,
-                          trim_level: int = 1) -> list:
+                          trim_level: int = 1, supports_vision: bool = True) -> list:
         """渐进式裁剪上下文，根据 trim_level 逐步加大裁剪力度
 
         Cursor 风格核心原则:
-        - **永不截断 user 消息**
+        - **永不截断 user 消息的文本部分**
         - **永不截断 assistant 消息**（保留完整回复——这是 Cursor 的关键设计）
         - 只压缩 tool 结果（role='tool'）
+        - 剥离旧轮次中的图片（base64 图片是 body 膨胀的主因）
         - 按「轮次」裁剪，保留最近 N 轮完整对话
         - 最早的轮次优先删除
 
-        trim_level=1: 轻度 - 压缩旧轮 tool 结果，保留最近 70% 轮次
-        trim_level=2: 中度 - 保留最近 5 轮，较短的 tool 摘要
-        trim_level=3+: 重度 - 保留最近 3 轮，激进压缩 tool 结果
+        trim_level=1: 轻度 - 压缩旧轮 tool 结果，保留最近 70% 轮次，剥离旧轮图片
+        trim_level=2: 中度 - 保留最近 3 轮，较短的 tool 摘要，剥离所有旧图片
+        trim_level=3+: 重度 - 保留最近 2 轮，激进压缩 tool 结果，剥离全部图片
         """
         if not working_messages:
             return working_messages
+
+        # ── 第 0 步：剥离图片（base64 图片是 413 的主因）──
+        if not supports_vision or trim_level >= 3:
+            # 非视觉模型 或 重度裁剪：剥离所有图片
+            n_stripped = self._strip_image_content(working_messages, keep_recent_user=0)
+        elif trim_level == 2:
+            # 中度裁剪：只保留最近 1 条 user 消息的图片
+            n_stripped = self._strip_image_content(working_messages, keep_recent_user=1)
+        else:
+            # 轻度裁剪：保留最近 2 条 user 消息的图片
+            n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
+
+        if n_stripped > 0:
+            print(f"[AI Client] 裁剪: 剥离了 {n_stripped} 张图片")
 
         sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
         body = working_messages[1:] if sys_msg else working_messages[:]
@@ -1438,35 +1511,35 @@ class AIClient:
                     break
                 for m in rnd:
                     c = m.get('content') or ''
-                    if m.get('role') == 'tool' and len(c) > 300:
+                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 300:
                         m['content'] = self._summarize_tool_content(c, 300)
-                    # ★ assistant 和 user 完全保留 ★
+                    # ★ assistant 和 user 文本完全保留 ★
 
             keep_rounds = max(5, int(n_rounds * 0.7))
             if n_rounds > keep_rounds:
                 rounds = rounds[-keep_rounds:]
 
         elif trim_level == 2:
-            # 中度：保留最近 5 轮，tool 结果用短摘要
-            rounds = rounds[-5:] if len(rounds) > 5 else rounds
+            # 中度：保留最近 3 轮（而非 5 轮，避免 level 1 → level 2 无效裁剪）
+            rounds = rounds[-3:] if len(rounds) > 3 else rounds
             for r_idx, rnd in enumerate(rounds):
                 if r_idx >= len(rounds) - 2:
                     break  # 最近 2 轮的 tool 结果不压缩
                 for m in rnd:
                     c = m.get('content') or ''
-                    if m.get('role') == 'tool' and len(c) > 150:
+                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 150:
                         m['content'] = self._summarize_tool_content(c, 150)
-                    # ★ assistant 和 user 完全保留 ★
+                    # ★ assistant 和 user 文本完全保留 ★
 
         else:
-            # 重度：保留最近 3 轮，激进压缩 tool 结果
-            rounds = rounds[-3:] if len(rounds) > 3 else rounds
+            # 重度：保留最近 2 轮，激进压缩 tool 结果
+            rounds = rounds[-2:] if len(rounds) > 2 else rounds
             for rnd in rounds[:-1]:  # 最后一轮不压缩
                 for m in rnd:
                     c = m.get('content') or ''
-                    if m.get('role') == 'tool' and len(c) > 100:
+                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 100:
                         m['content'] = self._summarize_tool_content(c, 100)
-                    # ★ assistant 和 user 完全保留 ★
+                    # ★ assistant 和 user 文本完全保留 ★
 
         # 重组
         body = [m for rnd in rounds for m in rnd]
@@ -2336,6 +2409,7 @@ class AIClient:
                           temperature: float = 0.3,
                           max_tokens: Optional[int] = None,
                           enable_thinking: bool = True,
+                          supports_vision: bool = True,
                           tools_override: Optional[List[dict]] = None,
                           on_content: Optional[Callable[[str], None]] = None,
                           on_thinking: Optional[Callable[[str], None]] = None,
@@ -2345,6 +2419,7 @@ class AIClient:
         
         Args:
             enable_thinking: 是否启用思考模式（影响原生推理模型的 thinking 参数）
+            supports_vision: 模型是否支持图片输入（False 时自动剥离 image_url 内容）
             on_content: 内容回调 (content) -> None
             on_thinking: 思考回调 (content) -> None
             on_tool_call: 工具调用开始回调 (name, args) -> None
@@ -2358,6 +2433,13 @@ class AIClient:
             return {'ok': False, 'error': '未设置工具执行器', 'content': '', 'tool_calls_history': [], 'iterations': 0}
         
         working_messages = list(messages)
+        
+        # ── 预处理：非视觉模型剥离所有 image_url 内容 ──
+        if not supports_vision:
+            n_stripped = self._strip_image_content(working_messages, keep_recent_user=0)
+            if n_stripped > 0:
+                print(f"[AI Client] 非视觉模型 ({model})：已剥离 {n_stripped} 张图片")
+        
         initial_msg_count = len(working_messages)  # 跟踪初始消息数量，用于提取新消息链
         tool_calls_history = []
         call_records = []  # 每次 API 调用的详细记录（对齐 Cursor）
@@ -2554,7 +2636,8 @@ class AIClient:
                             old_len = len(working_messages)
                             working_messages = self._progressive_trim(
                                 working_messages, tool_calls_history,
-                                trim_level=server_error_retries  # 逐次加大裁剪力度
+                                trim_level=server_error_retries,  # 逐次加大裁剪力度
+                                supports_vision=supports_vision
                             )
                             cleanup_count = old_len - len(working_messages)
                             
@@ -2571,7 +2654,8 @@ class AIClient:
                                 old_len = len(working_messages)
                                 working_messages = self._progressive_trim(
                                     working_messages, tool_calls_history,
-                                    trim_level=server_error_retries - 1  # 比上下文超限更温和
+                                    trim_level=server_error_retries - 1,  # 比上下文超限更温和
+                                    supports_vision=supports_vision
                                 )
                                 cleanup_count = old_len - len(working_messages)
                             
@@ -3155,6 +3239,7 @@ class AIClient:
                               temperature: float = 0.3,
                               max_tokens: Optional[int] = None,
                               enable_thinking: bool = True,
+                              supports_vision: bool = True,
                               tools_override: Optional[List[dict]] = None,
                               on_content: Optional[Callable[[str], None]] = None,
                               on_thinking: Optional[Callable[[str], None]] = None,
@@ -3186,6 +3271,12 @@ class AIClient:
         
         if not system_found:
             working_messages.insert(0, {'role': 'system', 'content': json_system_prompt})
+        
+        # ── 预处理：非视觉模型剥离所有 image_url 内容 ──
+        if not supports_vision:
+            n_stripped = self._strip_image_content(working_messages, keep_recent_user=0)
+            if n_stripped > 0:
+                print(f"[AI Client] 非视觉模型 ({model})：已剥离 {n_stripped} 张图片")
         
         tool_calls_history = []
         call_records = []  # 每次 API 调用的详细记录（对齐 Cursor）
@@ -3304,7 +3395,8 @@ class AIClient:
                                 on_content(f"\n[上下文超限，智能裁剪后重试 ({server_error_retries}/{max_server_retries})...]\n")
                             working_messages = self._progressive_trim(
                                 working_messages, tool_calls_history,
-                                trim_level=server_error_retries
+                                trim_level=server_error_retries,
+                                supports_vision=supports_vision
                             )
                         else:
                             # 临时服务器错误：等待，第2次开始才裁剪
@@ -3315,7 +3407,8 @@ class AIClient:
                             if server_error_retries >= 2:
                                 working_messages = self._progressive_trim(
                                     working_messages, tool_calls_history,
-                                    trim_level=server_error_retries - 1
+                                    trim_level=server_error_retries - 1,
+                                    supports_vision=supports_vision
                                 )
                         break  # 退出 for，回到 while 重试
                     return {

@@ -334,6 +334,8 @@ Wrangle 节点 Run Over 模式（极其重要，每次创建 wrangle 必须考�
   如果代码操作顶点属性（如 UV）或用 @vtxnum → 使用 Vertices
 -常见错误: 用 addpoint()/addprim() 创建几何体时使用 Points 模式会导致每个输入点都执行一次创建，产生大量重复几何体。此类代码**必须**使用 Detail 模式
 -如果不确定应该使用哪种模式，优先根据 VEX 代码中访问的属性和函数来判断
+-Wrangle 节点的 class 参数值对应关系: 0=Detail (only once), 1=Primitives, 2=Points, 3=Vertices, 4=Numbers
+  使用 set_node_parameter 设置 class 参数时，传入对应的整数值（如 Detail 传 0，Points 传 2）
 
 任务完成前的强制验证（必须执行，不能跳过）:
 1. 调用 verify_and_summarize 进行自动检测（孤立节点、错误节点、连接完整性、显示标志），传入你期望的节点列表和预期效果
@@ -1024,14 +1026,14 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
 
         self._output_buffer += text
 
-        # ★ 缓冲刷新策略（优化：提高阈值减少跨线程信号发射）
+        # ★ 缓冲刷新策略（优化：增大批量减少跨线程信号发射 + UI 更新次数）
         should_flush = False
         current_time = time.time()
-        if len(self._output_buffer) >= 50:         # 50 字符批量刷新（原 15）
+        if len(self._output_buffer) >= 200:        # 200 字符批量刷新（原 50）
             should_flush = True
         elif '\n' in text:                          # 换行时立即刷新（保证段落及时显示）
             should_flush = True
-        elif current_time - self._last_flush_time > 0.15:  # 150ms 兜底（原 100ms）
+        elif current_time - self._last_flush_time > 0.25:  # 250ms 兜底（原 150ms）
             should_flush = True
 
         if should_flush and self._output_buffer:
@@ -2036,6 +2038,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
             'use_think': self.think_check.isChecked(),
             'context_limit': self._get_current_context_limit(),  # 也在主线程获取
             'scene_context': self._collect_scene_context(),  # ★ 主线程收集 Houdini 场景上下文
+            'supports_vision': self._current_model_supports_vision(),  # 模型是否支持图片
         }
         
         # 保存模型选择
@@ -2065,6 +2068,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
         use_think = agent_params.get('use_think', True)
         context_limit = agent_params['context_limit']
         scene_context = agent_params.get('scene_context', {})
+        supports_vision = agent_params.get('supports_vision', True)
         
         try:
             # ========================================
@@ -2113,8 +2117,16 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                 'python_shells', 'system_shells',
             })
             
+            # ★ Cursor 风格：只保留当前轮次（最后一条 user 消息）的图片
+            # 旧轮次的 image_url 剥离为纯文本，避免 base64 膨胀上下文
+            _last_user_idx = None
+            for _i in range(len(self._conversation_history) - 1, -1, -1):
+                if self._conversation_history[_i].get('role') == 'user':
+                    _last_user_idx = _i
+                    break
+            
             history_to_send = []
-            for msg in self._conversation_history:
+            for msg_idx, msg in enumerate(self._conversation_history):
                 role = msg.get('role', '')
                 
                 if role == 'tool':
@@ -2145,8 +2157,30 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                     history_to_send.append(clean)
                 
                 elif role == 'user':
-                    # 用户消息完整保留
-                    history_to_send.append(msg)
+                    # ★ Cursor 风格图片处理：
+                    # - 当前轮次（最后一条 user）+ 视觉模型 → 保留图片
+                    # - 旧轮次 或 非视觉模型 → 剥离 image_url，只保留文字
+                    content = msg.get('content')
+                    is_current_round = (msg_idx == _last_user_idx)
+                    
+                    if isinstance(content, list):
+                        if is_current_round and supports_vision:
+                            # 当前轮 + 视觉模型：完整保留图片
+                            history_to_send.append(msg)
+                        else:
+                            # 旧轮次 或 非视觉模型：剥离图片，只留文字
+                            text_parts = []
+                            for part in content:
+                                if isinstance(part, dict) and part.get('type') == 'text':
+                                    text_parts.append(part.get('text', ''))
+                            text_only = '\n'.join(t for t in text_parts if t)
+                            history_to_send.append({
+                                'role': 'user',
+                                'content': text_only or '[图片消息]'
+                            })
+                    else:
+                        # 纯文本消息：原样保留
+                        history_to_send.append(msg)
                 
                 elif role == 'system':
                     # 系统消息（如历史摘要）保留
@@ -2328,6 +2362,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                     max_iterations=999,  # 不限制迭代次数
                     max_tokens=None,  # 不限制输出长度
                     enable_thinking=use_think,
+                    supports_vision=supports_vision,
                     tools_override=tools,
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
@@ -2349,6 +2384,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                     max_iterations=15,  # Ask 模式限制迭代（主要是查询）
                     max_tokens=None,
                     enable_thinking=use_think,
+                    supports_vision=supports_vision,
                     tools_override=tools,  # ★ 只传入只读工具
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
