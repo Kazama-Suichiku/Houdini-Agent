@@ -10,7 +10,10 @@ Built on the **OpenAI Function Calling** protocol, the agent can read node netwo
 
 ### Agent Loop
 
-The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete.
+The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Two modes are available:
+
+- **Agent mode** — Full access to all 30+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
+- **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a whitelist guard.
 
 ```
 User request → AI plans → call tools → inspect results → call more tools → … → final reply
@@ -219,14 +222,14 @@ Or add this to a **Shelf Tool** for one-click access.
 
 **Option A: Environment Variables (recommended)**
 
-```powershell
-# DeepSeek
+   ```powershell
+   # DeepSeek
 [Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', 'sk-xxx', 'User')
-
+   
 # GLM (Zhipu AI)
 [Environment]::SetEnvironmentVariable('GLM_API_KEY', 'xxx.xxx', 'User')
-
-# OpenAI
+   
+   # OpenAI
 [Environment]::SetEnvironmentVariable('OPENAI_API_KEY', 'sk-xxx', 'User')
 
 # Duojie (relay)
@@ -366,8 +369,15 @@ Created attribwrangle1 with random Cd attribute on all points.
 - Non-Houdini tools (shell, web) should run in the background thread
 - If the UI freezes during shell commands, update to the latest version
 
+### Updating
+- Click the **Update** button in the toolbar to check for new versions
+- The plugin checks GitHub on startup (silently) and highlights the button if an update is available
+- Updates preserve your `config/`, `cache/`, and `trainData/` directories
+- After updating, the plugin restarts automatically
+
 ## Version History
 
+- **v6.5** — **Agent / Ask mode**: Radio-style toggle below the input area — Agent mode has full tool access; Ask mode restricts to read-only/query tools with a whitelist guard and system prompt constraint. **Undo All / Keep All**: Batch operations bar tracks all pending node/param changes; "Undo All" reverts in reverse order, "Keep All" confirms everything at once. **Deep thinking framework**: `<think>` tag now requires a structured 6-step process (Understand → Status → Options → Decision → Plan → Risk) with explicit thinking principles. **Auto-updater**: `VERSION` file for semver tracking; silent GitHub API check on startup; one-click download + apply + restart with a progress dialog; preserves `config/`, `cache/`, `trainData/` during update. **`tools_override`**: `agent_loop_stream` and `agent_loop_json_mode` accept custom tool lists for mode-specific filtering. ParamDiff defaults to expanded. Skip undo snapshot when parameter value is unchanged.
 - **v6.4** — **Parameter Diff UI**: `set_node_parameter` now shows inline red/green diff for scalar changes and collapsible unified diff for multi-line VEX code, with one-click undo to restore old values (supports scalars, tuples, and expressions). **User message collapse**: messages longer than 2 lines auto-fold with "expand / collapse" toggle. **Scene-aware RAG**: auto-retrieval query enriched with selected node types from Houdini scene; dynamic `max_chars` (400/800/1200) based on conversation length. **Persistent HTTP Session**: `requests.Session` with connection pooling eliminates TLS renegotiation per turn. **Pre-compiled regex**: XML tag cleanup patterns compiled once at class level. **Sanitize dirty flag**: skip O(n) message sanitization when no new tool messages are added. **Removed inter-tool delays** (`time.sleep` eliminated between Houdini tool executions).
 - **v6.3** — **Image preview dialog**: click thumbnails to enlarge in a full-size modal viewer. **Stricter `<think>` tag enforcement**: system prompt now treats missing tags as format violations; follow-up replies after tool execution also require tags. **Robust usage parsing**: unified cache hit/miss/write metrics across DeepSeek, OpenAI, Anthropic, and Factory/Duojie relay formats (with one-time diagnostic dump). **Precise node path extraction**: `_extract_node_paths` now uses tool-specific regex rules to avoid picking up parent/context paths. **Multimodal token counting**: images estimated at ~765 tokens for accurate budget tracking. **Duojie think mode**: abandoned `reasoningEffort` parameter (ineffective), relies on `<think>` tag prompting only. Tool schema: added `items` type hint for array parameter values.
 - **v6.2** — **Vision/Image input**: multimodal messages with paste/drag-drop/file-picker, image preview with thumbnails, model-aware vision check. **Wrangle run_over guidance** in system prompt (prevents wrong VEX execution context). **New models**: `gpt-5.3-codex`, `claude-opus-4-6-normal`, `claude-opus-4-6-kiro`. **Proxy tool_call fix**: robust splitting of concatenated `{...}{...}` arguments from relay services. **Legacy module cleanup** on startup.
