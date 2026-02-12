@@ -175,3 +175,155 @@ def layout_children(parent_path: str) -> Tuple[bool, str]:
         return True, f"已自动布局 {parent_path} 的子节点"
     except Exception as e:
         return False, f"布局失败: {e}"
+
+
+# ============================================================
+# NetworkBox 操作
+# ============================================================
+
+# NetworkBox 语义颜色预设
+_BOX_COLORS: Dict[str, Tuple[float, float, float]] = {
+    "input":      (0.2, 0.4, 0.8),   # 蓝色 - 数据输入
+    "processing": (0.3, 0.7, 0.3),   # 绿色 - 几何处理
+    "deform":     (0.8, 0.6, 0.2),   # 橙色 - 变形/动画
+    "output":     (0.7, 0.2, 0.3),   # 红色 - 输出/渲染
+    "simulation": (0.6, 0.3, 0.7),   # 紫色 - 物理模拟
+    "utility":    (0.5, 0.5, 0.5),   # 灰色 - 辅助工具
+}
+
+
+def create_network_box(
+    parent_path: str,
+    name: str = "",
+    comment: str = "",
+    color_preset: str = "",
+    node_paths: Optional[List[str]] = None
+) -> Tuple[bool, str, Optional[Any]]:
+    """创建 NetworkBox 并可选地将节点加入其中
+
+    Args:
+        parent_path: 父网络路径（如 /obj/geo1）
+        name: box 名称
+        comment: 注释（显示在标题栏，描述这组节点的功能）
+        color_preset: 颜色预设（input/processing/deform/output/simulation/utility）
+        node_paths: 要加入 box 的节点路径列表
+
+    Returns:
+        (success, message, network_box_or_None)
+    """
+    if hou is None:
+        return False, "Houdini 环境不可用", None
+
+    parent = hou.node(parent_path)
+    if not parent:
+        return False, f"父网络 '{parent_path}' 不存在", None
+
+    try:
+        box = parent.createNetworkBox(name or None)
+
+        if comment:
+            box.setComment(comment)
+
+        # 设置颜色
+        if color_preset and color_preset in _BOX_COLORS:
+            r, g, b = _BOX_COLORS[color_preset]
+            box.setColor(hou.Color((r, g, b)))
+
+        # 添加节点
+        added = []
+        if node_paths:
+            for np in node_paths:
+                node = hou.node(np)
+                if node:
+                    box.addNode(node)
+                    added.append(np)
+
+            if added:
+                box.fitAroundContents()
+
+        msg = f"已创建 NetworkBox: {box.name()}"
+        if comment:
+            msg += f" ({comment})"
+        if added:
+            msg += f"，包含 {len(added)} 个节点"
+
+        return True, msg, box
+    except Exception as e:
+        return False, f"创建 NetworkBox 失败: {e}", None
+
+
+def add_nodes_to_box(
+    parent_path: str,
+    box_name: str,
+    node_paths: List[str],
+    auto_fit: bool = True
+) -> Tuple[bool, str]:
+    """将节点添加到已有的 NetworkBox
+
+    Args:
+        parent_path: 父网络路径
+        box_name: 目标 NetworkBox 名称
+        node_paths: 要添加的节点路径列表
+        auto_fit: 是否自动调整 box 大小
+
+    Returns:
+        (success, message)
+    """
+    if hou is None:
+        return False, "Houdini 环境不可用"
+
+    parent = hou.node(parent_path)
+    if not parent:
+        return False, f"父网络 '{parent_path}' 不存在"
+
+    # 查找 NetworkBox
+    target_box = None
+    for box in parent.networkBoxes():
+        if box.name() == box_name:
+            target_box = box
+            break
+
+    if not target_box:
+        return False, f"未找到 NetworkBox: {box_name}"
+
+    added = []
+    for np in node_paths:
+        node = hou.node(np)
+        if node:
+            target_box.addNode(node)
+            added.append(np)
+
+    if auto_fit and added:
+        target_box.fitAroundContents()
+
+    return True, f"已将 {len(added)} 个节点添加到 {box_name}"
+
+
+def list_network_boxes(parent_path: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    """列出网络中所有 NetworkBox 及其内容
+
+    Args:
+        parent_path: 父网络路径
+
+    Returns:
+        (success, message, boxes_info_list)
+    """
+    if hou is None:
+        return False, "Houdini 环境不可用", []
+
+    parent = hou.node(parent_path)
+    if not parent:
+        return False, f"父网络 '{parent_path}' 不存在", []
+
+    boxes_info = []
+    for box in parent.networkBoxes():
+        nodes = box.nodes()
+        boxes_info.append({
+            "name": box.name(),
+            "comment": box.comment() or "",
+            "node_count": len(nodes),
+            "nodes": [n.path() for n in nodes],
+            "minimized": box.isMinimized(),
+        })
+
+    return True, f"找到 {len(boxes_info)} 个 NetworkBox", boxes_info

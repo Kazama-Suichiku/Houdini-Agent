@@ -265,22 +265,164 @@ class HoudiniMCP:
                 except Exception:
                     continue
             
+            # 收集 NetworkBox 信息
+            boxed_node_paths = set()
+            boxes_data = []
+            try:
+                for box in network.networkBoxes():
+                    box_nodes = box.nodes()
+                    box_node_paths = [n.path() for n in box_nodes]
+                    boxed_node_paths.update(box_node_paths)
+                    boxes_data.append({
+                        "name": box.name(),
+                        "comment": box.comment() or "",
+                        "node_count": len(box_nodes),
+                        "nodes": box_node_paths,
+                    })
+            except Exception:
+                pass  # networkBoxes() 可能在某些网络类型下不可用
+
             return True, {
                 "network_path": network.path(),
                 "network_type": network.type().name() if network.type() else "unknown",
                 "node_count": len(nodes_data),
                 "nodes": nodes_data,
-                "connections": connections_data
+                "connections": connections_data,
+                "network_boxes": boxes_data,
+                "boxed_node_paths": list(boxed_node_paths),
             }
         except Exception as e:
             return False, {"error": f"读取网络结构失败: {str(e)}"}
 
-    def get_network_structure_text(self, network_path: Optional[str] = None) -> Tuple[bool, str]:
-        """获取节点网络结构的文本描述（适合 AI 阅读）"""
+    def get_network_structure_text(self, network_path: Optional[str] = None,
+                                   box_name: Optional[str] = None) -> Tuple[bool, str]:
+        """获取节点网络结构的文本描述（适合 AI 阅读）
+        
+        三种模式：
+        1. 无 box_name 且网络有 NetworkBox → 概览模式（折叠 box，省 token）
+        2. 有 box_name → 钻入模式（只展示该 box 内节点）
+        3. 无 box_name 且网络无 NetworkBox → 传统全展开模式
+        """
         ok, data = self.get_network_structure(network_path)
         if not ok:
             return False, data.get("error", "未知错误")
         
+        boxes = data.get("network_boxes", [])
+        boxed_paths = set(data.get("boxed_node_paths", []))
+
+        # ── 钻入模式：只展示指定 box 内的节点 ──
+        if box_name:
+            target = next((b for b in boxes if b["name"] == box_name), None)
+            if not target:
+                available = ", ".join(b["name"] for b in boxes) if boxes else "(无)"
+                return False, f"未找到 NetworkBox: {box_name}。可用的 box: {available}"
+            
+            target_paths = set(target["nodes"])
+            box_nodes = [n for n in data["nodes"] if n["path"] in target_paths]
+            box_conns = [c for c in data["connections"]
+                         if c["from"] in target_paths and c["to"] in target_paths]
+            # box 与外部的跨组连接
+            cross_conns = [c for c in data["connections"]
+                           if (c["from"] in target_paths) != (c["to"] in target_paths)]
+            
+            lines = [
+                f"## NetworkBox 详情: {box_name}",
+                f"注释: {target['comment'] or '(无)'}",
+                f"节点数量: {target['node_count']}",
+                "", "### 节点列表:"
+            ]
+            wrangle_details = []
+            self._format_node_list(box_nodes, lines, wrangle_details)
+            
+            if box_conns:
+                lines.append("")
+                lines.append("### 内部连接:")
+                for conn in box_conns:
+                    from_name = conn['from'].split('/')[-1]
+                    to_name = conn['to'].split('/')[-1]
+                    lines.append(f"- {from_name} → {to_name}[{conn['input_index']}]")
+            
+            if cross_conns:
+                lines.append("")
+                lines.append("### 跨组连接（与其他 box / 未分组节点）:")
+                for conn in cross_conns:
+                    from_name = conn['from'].split('/')[-1]
+                    to_name = conn['to'].split('/')[-1]
+                    lines.append(f"- {from_name} → {to_name}[{conn['input_index']}]")
+            
+            if wrangle_details:
+                lines.append("")
+                lines.append("### 节点内嵌代码:")
+                for detail in wrangle_details:
+                    lines.append(detail)
+            
+            return True, "\n".join(lines)
+
+        # ── 概览模式：有 NetworkBox 时折叠显示（核心省 token 逻辑） ──
+        if boxes:
+            unboxed_nodes = [n for n in data["nodes"] if n["path"] not in boxed_paths]
+            
+            lines = [
+                f"## 网络结构: {data['network_path']}",
+                f"网络类型: {data['network_type']}",
+                f"节点总数: {data['node_count']}",
+                f"NetworkBox 分组: {len(boxes)} 个（包含 {len(boxed_paths)} 个节点）",
+                "",
+                "### NetworkBox 概览:"
+            ]
+            for b in boxes:
+                # 统计 box 内节点类型摘要（取前 3 种）
+                box_paths_set = set(b["nodes"])
+                type_counts: Dict[str, int] = {}
+                for n in data["nodes"]:
+                    if n["path"] in box_paths_set:
+                        short_type = n["type"].split("/")[-1] if "/" in n["type"] else n["type"]
+                        type_counts[short_type] = type_counts.get(short_type, 0) + 1
+                top_types = sorted(type_counts.items(), key=lambda x: -x[1])[:3]
+                types_str = ", ".join(f"{t}×{c}" for t, c in top_types)
+                if len(type_counts) > 3:
+                    types_str += f" 等{len(type_counts)}种"
+                
+                lines.append(f"📦 **{b['name']}**: {b['comment'] or '(无注释)'} — {b['node_count']} 个节点 [{types_str}]")
+            
+            lines.append(f"\n💡 使用 get_network_structure(box_name=\"box名称\") 查看某个分组的详细节点")
+            
+            if unboxed_nodes:
+                lines.append(f"\n### 未分组节点 ({len(unboxed_nodes)} 个):")
+                wrangle_details = []
+                self._format_node_list(unboxed_nodes, lines, wrangle_details)
+                if wrangle_details:
+                    lines.append("")
+                    lines.append("### 未分组节点内嵌代码:")
+                    for detail in wrangle_details:
+                        lines.append(detail)
+            
+            # 跨组连接：两端不在同一个 box 中的连接
+            cross_conns = []
+            # 构建 node_path → box_name 映射
+            path_to_box: Dict[str, str] = {}
+            for b in boxes:
+                for np in b["nodes"]:
+                    path_to_box[np] = b["name"]
+            for conn in data["connections"]:
+                src_box = path_to_box.get(conn["from"], "__unboxed__")
+                dst_box = path_to_box.get(conn["to"], "__unboxed__")
+                if src_box != dst_box:
+                    cross_conns.append(conn)
+            
+            if cross_conns:
+                lines.append("")
+                lines.append("### 跨组连接:")
+                for conn in cross_conns:
+                    from_name = conn['from'].split('/')[-1]
+                    to_name = conn['to'].split('/')[-1]
+                    src_box = path_to_box.get(conn["from"], "未分组")
+                    dst_box = path_to_box.get(conn["to"], "未分组")
+                    lines.append(f"- [{src_box}] {from_name} → {to_name} [{dst_box}] (input {conn['input_index']})")
+            
+            return True, "\n".join(lines)
+
+        # ── 传统模式：无 NetworkBox，全部展开（兼容旧行为） ──
         lines = [
             f"## 网络结构: {data['network_path']}",
             f"网络类型: {data['network_type']}",
@@ -290,16 +432,35 @@ class HoudiniMCP:
         ]
         
         wrangle_details = []
+        self._format_node_list(data['nodes'], lines, wrangle_details)
         
-        for node in data['nodes']:
+        if data['connections']:
+            lines.append("")
+            lines.append("### 连接关系:")
+            for conn in data['connections']:
+                from_name = conn['from'].split('/')[-1]
+                to_name = conn['to'].split('/')[-1]
+                lines.append(f"- {from_name} → {to_name}[{conn['input_index']}]")
+        
+        if wrangle_details:
+            lines.append("")
+            lines.append("### 节点内嵌代码:")
+            for detail in wrangle_details:
+                lines.append(detail)
+        
+        return True, "\n".join(lines)
+
+    @staticmethod
+    def _format_node_list(nodes: List[Dict], lines: List[str], wrangle_details: List[str]):
+        """格式化节点列表到 lines，收集代码详情到 wrangle_details"""
+        for node in nodes:
             status = []
-            if node['is_displayed']:
+            if node.get('is_displayed'):
                 status.append("显示")
-            if node['has_errors']:
+            if node.get('has_errors'):
                 status.append("错误")
             status_str = f" [{', '.join(status)}]" if status else ""
             
-            # 标记含代码的节点
             has_code = ""
             if node.get('vex_code'):
                 has_code = " [含VEX代码]"
@@ -308,10 +469,8 @@ class HoudiniMCP:
             
             lines.append(f"- `{node['name']}` ({node['type']}){status_str}{has_code}")
             
-            # 收集 wrangle/python 代码详情
             if node.get('vex_code'):
                 code = node['vex_code']
-                # 代码过长时截断显示（保留前30行）
                 code_lines = code.split('\n')
                 if len(code_lines) > 30:
                     code = '\n'.join(code_lines[:30]) + f'\n// ... 共 {len(code_lines)} 行，已截断'
@@ -326,23 +485,6 @@ class HoudiniMCP:
                 wrangle_details.append(
                     f"#### `{node['name']}` Python 代码:\n```python\n{code}\n```"
                 )
-        
-        if data['connections']:
-            lines.append("")
-            lines.append("### 连接关系:")
-            for conn in data['connections']:
-                from_name = conn['from'].split('/')[-1]
-                to_name = conn['to'].split('/')[-1]
-                lines.append(f"- {from_name} → {to_name}[{conn['input_index']}]")
-        
-        # 追加 wrangle/python 代码详情
-        if wrangle_details:
-            lines.append("")
-            lines.append("### 节点内嵌代码:")
-            for detail in wrangle_details:
-                lines.append(detail)
-        
-        return True, "\n".join(lines)
 
     # ========================================
     # ATS (Abstract Type System) 构建
@@ -2134,21 +2276,25 @@ class HoudiniMCP:
 
     def _tool_get_network_structure(self, args: Dict[str, Any]) -> Dict[str, Any]:
         network_path = args.get("network_path")
+        box_name = args.get("box_name")  # NetworkBox 钻入参数
         page = int(args.get("page", 1))
 
-        # 分页快速路径
-        cache_key = f"get_network_structure:{network_path or '_current'}"
+        # 分页快速路径（box_name 也参与缓存键）
+        cache_suffix = f":{box_name}" if box_name else ""
+        cache_key = f"get_network_structure:{network_path or '_current'}{cache_suffix}"
         if page > 1 and cache_key in self._tool_page_cache:
             np_arg = f'network_path="{network_path}", ' if network_path else ''
-            hint = f'get_network_structure({np_arg}page={page})'
+            bx_arg = f'box_name="{box_name}", ' if box_name else ''
+            hint = f'get_network_structure({np_arg}{bx_arg}page={page})'
             return {"success": True, "result": self._paginate_tool_result(
                 self._tool_page_cache[cache_key], cache_key, hint, page)}
 
         ok, data = self.get_network_structure(network_path)
         if ok:
-            _, text = self.get_network_structure_text(network_path)
+            _, text = self.get_network_structure_text(network_path, box_name=box_name)
             np_arg = f'network_path="{network_path}", ' if network_path else ''
-            hint = f'get_network_structure({np_arg}page={page})'
+            bx_arg = f'box_name="{box_name}", ' if box_name else ''
+            hint = f'get_network_structure({np_arg}{bx_arg}page={page})'
             return {"success": True, "result": self._paginate_tool_result(
                 text, cache_key, hint, page)}
         return {"success": False, "error": data.get("error", "未知错误")}
@@ -2611,6 +2757,7 @@ class HoudiniMCP:
                     encoding='utf-8',
                     errors='replace',
                     env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                    creationflags=subprocess.CREATE_NO_WINDOW,  # ★ 阻止控制台窗口闪烁
                 )
             else:
                 proc = subprocess.run(
@@ -2643,6 +2790,87 @@ class HoudiniMCP:
             return {"success": False, "error": f"命令超时（{timeout}s 限制）\n命令: {command}\n耗时: {elapsed:.2f}s"}
         except Exception as e:
             return {"success": False, "error": f"Shell 执行失败: {e}"}
+
+    # ========================================
+    # NetworkBox 操作
+    # ========================================
+
+    def _tool_create_network_box(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """创建 NetworkBox 并可选地将节点加入其中"""
+        from . import hou_core
+
+        parent_path = args.get("parent_path", "")
+        if not parent_path:
+            # 默认使用当前网络
+            net = self._current_network()
+            if net is None:
+                return {"success": False, "error": "未找到当前网络，请指定 parent_path"}
+            parent_path = net.path()
+
+        name = args.get("name", "")
+        comment = args.get("comment", "")
+        color_preset = args.get("color_preset", "")
+        node_paths = args.get("node_paths", [])
+        if isinstance(node_paths, str):
+            node_paths = [p.strip() for p in node_paths.split(",") if p.strip()]
+
+        ok, msg, box = hou_core.create_network_box(
+            parent_path, name, comment, color_preset, node_paths
+        )
+        if ok:
+            result_data = {"box_name": box.name() if box else name, "message": msg}
+            return {"success": True, "result": msg}
+        return {"success": False, "error": msg}
+
+    def _tool_add_nodes_to_box(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """将节点添加到已有的 NetworkBox"""
+        from . import hou_core
+
+        parent_path = args.get("parent_path", "")
+        if not parent_path:
+            net = self._current_network()
+            if net is None:
+                return {"success": False, "error": "未找到当前网络，请指定 parent_path"}
+            parent_path = net.path()
+
+        box_name = args.get("box_name", "")
+        if not box_name:
+            return {"success": False, "error": "缺少 box_name 参数"}
+
+        node_paths = args.get("node_paths", [])
+        if isinstance(node_paths, str):
+            node_paths = [p.strip() for p in node_paths.split(",") if p.strip()]
+        if not node_paths:
+            return {"success": False, "error": "缺少 node_paths 参数"}
+
+        auto_fit = args.get("auto_fit", True)
+        ok, msg = hou_core.add_nodes_to_box(parent_path, box_name, node_paths, auto_fit)
+        return {"success": ok, "result": msg if ok else "", "error": "" if ok else msg}
+
+    def _tool_list_network_boxes(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """列出网络中所有 NetworkBox 及其内容"""
+        from . import hou_core
+
+        parent_path = args.get("parent_path", "")
+        if not parent_path:
+            net = self._current_network()
+            if net is None:
+                return {"success": False, "error": "未找到当前网络，请指定 parent_path"}
+            parent_path = net.path()
+
+        ok, msg, boxes_info = hou_core.list_network_boxes(parent_path)
+        if ok:
+            if not boxes_info:
+                return {"success": True, "result": f"{parent_path} 中没有 NetworkBox"}
+            lines = [f"{parent_path} 中有 {len(boxes_info)} 个 NetworkBox:\n"]
+            for box in boxes_info:
+                status = "📦" if not box["minimized"] else "📦(折叠)"
+                lines.append(f"{status} {box['name']}: {box['comment'] or '(无注释)'}")
+                lines.append(f"   包含 {box['node_count']} 个节点: {', '.join(box['nodes'][:10])}")
+                if box['node_count'] > 10:
+                    lines.append(f"   ...及另外 {box['node_count'] - 10} 个节点")
+            return {"success": True, "result": "\n".join(lines)}
+        return {"success": False, "error": msg}
 
     # ========================================
     # Skill 系统
@@ -2771,6 +2999,10 @@ class HoudiniMCP:
         "get_node_inputs": 'get_node_inputs(node_type="copytopoints", category="sop")',
         "run_skill": 'run_skill(skill_name="analyze_geometry_attribs", params={"node_path":"/obj/geo1/box1"})',
         "list_skills": 'list_skills()',
+        # NetworkBox
+        "create_network_box": 'create_network_box(parent_path="/obj/geo1", name="input_stage", comment="数据输入", color_preset="input", node_paths=["/obj/geo1/box1"])',
+        "add_nodes_to_box": 'add_nodes_to_box(parent_path="/obj/geo1", box_name="input_stage", node_paths=["/obj/geo1/box1"])',
+        "list_network_boxes": 'list_network_boxes(parent_path="/obj/geo1")',
     }
 
     # 工具名称 -> 处理方法名的映射表
@@ -2802,6 +3034,10 @@ class HoudiniMCP:
         "get_node_inputs": "_tool_get_node_inputs",
         "run_skill": "_tool_run_skill",
         "list_skills": "_tool_list_skills",
+        # NetworkBox
+        "create_network_box": "_tool_create_network_box",
+        "add_nodes_to_box": "_tool_add_nodes_to_box",
+        "list_network_boxes": "_tool_list_network_boxes",
     }
 
     # Python 代码安全黑名单

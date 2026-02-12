@@ -58,7 +58,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - AI 回复一键复制
 - `Ctrl+Enter` 发送消息
 
-## 可用工具（30+）
+## 可用工具（35+）
 
 ### 节点操作
 
@@ -80,7 +80,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 
 | 工具 | 说明 |
 |------|------|
-| `get_network_structure` | 获取节点网络拓扑（节点名、类型、连接关系、内嵌 VEX 代码） |
+| `get_network_structure` | 获取节点网络拓扑 — **NetworkBox 感知**：有分组时自动折叠为概览（名称+注释+节点数），传 `box_name` 可钻入查看详情；大型网络显著节省 Token |
 | `get_node_parameters` | 获取节点参数 + 状态标志、错误信息、输入输出连接（已合并原 `get_node_details`） |
 | `list_children` | 列出子节点及标志（类似 `ls`） |
 | `read_selection` | 读取视口中当前选中的节点 |
@@ -113,6 +113,14 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 |------|------|
 | `run_skill` | 执行预定义 Skill 脚本 |
 | `list_skills` | 列出所有可用 Skill |
+
+### NetworkBox（节点分组）
+
+| 工具 | 说明 |
+|------|------|
+| `create_network_box` | 创建 NetworkBox（分组框），支持语义颜色预设（input/processing/deform/output/simulation/utility），可在创建时直接包含指定节点 |
+| `add_nodes_to_box` | 将节点添加到已有的 NetworkBox，支持自动调整大小 |
+| `list_network_boxes` | 列出网络中所有 NetworkBox 及其内容和元数据 |
 
 ### 任务管理
 
@@ -162,10 +170,15 @@ Houdini-Agent/
     ├── shelf_tool.py               # Houdini 工具架集成
     ├── QUICK_SHELF_CODE.py         # 快速工具架代码片段
     ├── core/
-    │   └── main_window.py          # 主窗口（工作区保存/恢复）
+    │   ├── main_window.py          # 主窗口（工作区保存/恢复）
+    │   ├── agent_runner.py         # AgentRunnerMixin — Agent 循环辅助、确认模式、工具调度
+    │   └── session_manager.py      # SessionManagerMixin — 多会话创建/切换/关闭
     ├── ui/
-    │   ├── ai_tab.py              # AI Agent 标签页（Agent 循环、上下文管理、流式 UI）
-    │   └── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板）
+    │   ├── ai_tab.py              # AI Agent 标签页（Mixin 宿主、Agent 循环、上下文管理、流式 UI）
+    │   ├── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板）
+    │   ├── header.py              # HeaderMixin — 顶部设置栏（提供商、模型、功能开关）
+    │   ├── input_area.py          # InputAreaMixin — 输入区域、模式切换、@提及、确认模式
+    │   └── chat_view.py           # ChatViewMixin — 对话显示、滚动控制、Toast 消息
     ├── skills/                     # 预构建分析脚本
     │   ├── __init__.py            # Skill 注册表与加载器
     │   ├── analyze_normals.py     # 法线质量检测
@@ -263,6 +276,20 @@ launcher.show_tool()
 │  循环直到 AI 完成或达到最大迭代次数                        │
 └───────────────────────────────────────────────────────┘
 ```
+
+### Mixin 架构
+
+`AITab` 是核心组件，由五个聚焦的 Mixin 组合而成：
+
+| Mixin | 模块 | 职责 |
+|-------|------|------|
+| `HeaderMixin` | `ui/header.py` | 顶部设置栏 — 提供商/模型选择器、Agent/Web/Think 开关 |
+| `InputAreaMixin` | `ui/input_area.py` | 输入区域、发送/停止按钮、模式切换、@提及自动补全、确认模式 UI |
+| `ChatViewMixin` | `ui/chat_view.py` | 对话显示、消息插入、滚动控制、Toast 通知 |
+| `AgentRunnerMixin` | `core/agent_runner.py` | Agent 循环辅助、自动标题生成、确认模式拦截、工具分类常量 |
+| `SessionManagerMixin` | `core/session_manager.py` | 多会话创建/切换/关闭、会话标签栏、状态保存/恢复 |
+
+每个 Mixin 通过 `self` 访问 `AITab` 状态，实现职责分离同时共享状态。
 
 ### 上下文管理
 
@@ -377,6 +404,7 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **v6.6** — **Mixin 架构拆分**：`ai_tab.py` 拆分为 5 个聚焦的 Mixin 模块（`HeaderMixin`、`InputAreaMixin`、`ChatViewMixin`、`AgentRunnerMixin`、`SessionManagerMixin`），提升可维护性。**NetworkBox 工具**：新增 3 个工具 — `create_network_box`（语义颜色预设：input 蓝/processing 绿/deform 橙/output 红/simulation 紫/utility 灰，可直接包含节点）、`add_nodes_to_box`、`list_network_boxes`；`get_network_structure` 增强支持 `box_name` 钻入模式和概览模式（自动折叠 box 节省 Token）。**NetworkBox 分组规范**：系统提示词要求 AI 在每个逻辑阶段完成后将节点打包到 NetworkBox 中（每组至少 6 个节点），并提供层级导航准则。**确认模式**：`AgentRunnerMixin` 为破坏性工具（创建/删除/修改）添加执行前确认对话框。**思考区块重构**：`ThinkingSection` 从 `QLabel` 切换为 `QPlainTextEdit`，自带滚动条和动态高度计算（与 `ChatInput` 同方案），最大高度 400px。**脉冲指示器**：`PulseIndicator` 动画透明度脉冲圆点，表示"进行中"状态。**工具状态栏**：`ToolStatusBar` 在输入框下方实时显示工具执行状态。**节点补全弹窗**：`NodeCompleterPopup` 支持 `@` 提及自动补全节点路径。**更新器重构**：改用 GitHub Releases API（而非基于 branch 的 VERSION 文件检查），缓存 `zipball_url`。**训练数据导出**：支持多模态消息内容提取（剥离图片，保留 list 格式中的文本）。**模块重载**：所有 Mixin 模块加入重载列表；`MainWindow` 引用重载后刷新；旧窗口调用 `deleteLater()` 干净销毁。
 - **v6.5** — **Agent / Ask 模式**：输入区域下方 Radio 风格切换 — Agent 模式拥有全部工具权限；Ask 模式限制为只读/查询工具，带白名单守卫和系统提示词约束。**Undo All / Keep All**：批量操作栏追踪所有待确认的节点/参数变更，"Undo All" 按逆序撤销，"Keep All" 一键全部确认。**深度思考框架**：`<think>` 标签现在要求结构化 6 步流程（理解→现状→方案→决策→计划→风险），附带明确的思考原则。**自动更新器**：`VERSION` 文件用于语义版本追踪；启动时静默检查 GitHub；一键下载+覆盖+重启，带进度对话框；更新时保留 `config/`、`cache/`、`trainData/`。`tools_override` 参数支持模式级工具过滤。ParamDiff 默认展开。参数值未变时跳过 undo 快照。
 - **v6.4** — **参数 Diff UI**：`set_node_parameter` 显示内联红绿 diff（标量值）和可折叠统一 diff（多行 VEX 代码），支持一键撤销恢复旧值（标量/元组/表达式）。**用户消息折叠**：超过 2 行的消息自动折叠，点击展开/收起。**场景感知 RAG**：用选中节点类型增强检索查询，根据对话长度动态调整注入量（400/800/1200 字符）。**持久化 HTTP Session**：连接池复用，消除每轮 TLS 握手开销。**预编译正则**：XML 标签清洗模式类级编译一次。**消息清洗脏标志**：无新 tool 消息时跳过 O(n) 遍历。**去除工具间延迟**：Houdini 工具执行之间不再 sleep。
 - **v6.3** — **图片放大预览**：点击缩略图弹出全尺寸查看窗口。**`<think>` 标签强制规则升级**：系统提示词将缺失标签视为格式违规；工具执行后的后续回复同样要求标签。**健壮的 usage 解析**：统一处理 DeepSeek、OpenAI、Anthropic 和 Factory/拼好饭中转的缓存命中/未命中/写入指标（含首次诊断输出）。**精确节点路径提取**：`_extract_node_paths` 按工具类型使用专用正则，避免提取父网络等上下文路径。**多模态 Token 计算**：图片按 ~765 Token 估算，预算跟踪更准确。**Duojie 思考模式**：弃用 `reasoningEffort` 参数（实测无效），改为纯 `<think>` 标签提示。工具 Schema：数组参数值增加 `items` 类型提示。

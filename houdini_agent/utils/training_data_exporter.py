@@ -18,6 +18,24 @@ class ChatTrainingExporter:
     支持多轮对话、工具调用等复杂场景。
     """
     
+    @staticmethod
+    def _extract_text_content(content) -> str:
+        """从 content 中提取纯文本
+        
+        content 可能是 str 或 list（多模态消息，含 text/image_url 部分）。
+        训练数据只保留文本，丢弃图片等二进制内容。
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            # 多模态格式: [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+            return "\n".join(parts)
+        return str(content) if content else ""
+    
     def __init__(self, output_dir: Optional[Path] = None):
         """初始化导出器
         
@@ -203,7 +221,7 @@ class ChatTrainingExporter:
     def _clean_message(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """清理消息格式"""
         role = msg.get("role", "")
-        content = msg.get("content", "")
+        content = self._extract_text_content(msg.get("content", ""))
         
         if role == "user":
             if not content or not content.strip():
@@ -224,7 +242,7 @@ class ChatTrainingExporter:
     
     def _clean_assistant_message(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """清理 assistant 消息"""
-        content = msg.get("content", "")
+        content = self._extract_text_content(msg.get("content", ""))
         tool_calls = msg.get("tool_calls")
         
         result = {"role": "assistant"}
@@ -265,7 +283,7 @@ class ChatTrainingExporter:
         旧格式: {"role": "tool", "name": "xxx", "content": "..."}
         新格式: {"role": "tool", "tool_call_id": "xxx", "content": "..."}
         """
-        content = msg.get("content", "")
+        content = self._extract_text_content(msg.get("content", ""))
         tool_call_id = msg.get("tool_call_id")
         name = msg.get("name", "")
         

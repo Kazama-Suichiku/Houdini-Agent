@@ -21,12 +21,9 @@ from typing import Tuple
 
 GITHUB_OWNER = "Kazama-Suichiku"
 GITHUB_REPO = "Houdini-Agent"
-GITHUB_BRANCH = "main"
 
-# GitHub API 端点
-_API_LATEST_COMMIT = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits/{GITHUB_BRANCH}"
-_API_VERSION_FILE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/VERSION?ref={GITHUB_BRANCH}"
-_ARCHIVE_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/archive/refs/heads/{GITHUB_BRANCH}.zip"
+# GitHub API 端点 — 基于 Release（而非 branch）
+_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 
 # 项目根目录（VERSION 文件所在目录）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -73,70 +70,78 @@ def _version_gt(remote: str, local: str) -> bool:
 # 检查更新
 # ==========================================================
 
+# 模块级缓存：最新 release 的 zipball_url（check_update 写入，download_and_apply 读取）
+_cached_zipball_url: str = ""
+
+
 def check_update(timeout: float = 8.0) -> dict:
-    """检查 GitHub 上是否有新版本
+    """检查 GitHub Releases 上是否有新版本
     
     Returns:
         {
             'has_update': bool,
             'local_version': str,
-            'remote_version': str,   # 如果获取失败为 ''
-            'remote_commit': str,    # 最新 commit SHA（前 7 位）
-            'commit_message': str,   # 最新 commit 消息
+            'remote_version': str,   # Release tag（如 'v6.6.0' → '6.6.0'）
+            'release_name': str,     # Release 标题
+            'release_notes': str,    # Release 说明（首行）
             'error': str,            # 出错信息（成功为 ''）
         }
     """
+    global _cached_zipball_url
+    
     result = {
         'has_update': False,
         'local_version': get_local_version(),
         'remote_version': '',
-        'remote_commit': '',
-        'commit_message': '',
+        'release_name': '',
+        'release_notes': '',
         'error': '',
     }
     
     try:
         import requests  # type: ignore
     except ImportError:
-        # 尝试从 lib 目录导入
         lib_dir = str(_PROJECT_ROOT / "lib")
         if lib_dir not in sys.path:
             sys.path.insert(0, lib_dir)
         import requests  # type: ignore
     
-    # 1) 获取远程 VERSION 文件内容
     try:
         headers = {"Accept": "application/vnd.github.v3+json"}
-        resp = requests.get(_API_VERSION_FILE, headers=headers, timeout=timeout)
-        if resp.status_code == 200:
-            data = resp.json()
-            import base64
-            content_b64 = data.get("content", "")
-            remote_ver = base64.b64decode(content_b64).decode("utf-8").strip()
-            result['remote_version'] = remote_ver
-        else:
+        resp = requests.get(_API_LATEST_RELEASE, headers=headers, timeout=timeout)
+        
+        if resp.status_code == 404:
+            result['error'] = "暂无 Release 版本"
+            return result
+        
+        if resp.status_code != 200:
             result['error'] = f"GitHub API 返回 {resp.status_code}"
             return result
-    except requests.exceptions.Timeout:
-        result['error'] = "连接 GitHub 超时，请检查网络"
-        return result
+        
+        data = resp.json()
+        
+        # tag_name 通常为 'v6.6.0' 或 '6.6.0'
+        tag = data.get("tag_name", "")
+        remote_ver = tag.lstrip("vV")  # 去掉前缀 v/V
+        result['remote_version'] = remote_ver
+        result['release_name'] = data.get("name", "") or tag
+        
+        # Release notes（取首行作为摘要）
+        body = data.get("body", "") or ""
+        result['release_notes'] = body.split("\n")[0].strip() if body else ""
+        
+        # 缓存下载地址（zipball_url 由 GitHub 自动提供）
+        _cached_zipball_url = data.get("zipball_url", "")
+        
+        # 比较版本
+        if remote_ver:
+            result['has_update'] = _version_gt(remote_ver, result['local_version'])
+        
     except Exception as e:
-        result['error'] = f"检查更新失败: {e}"
-        return result
-    
-    # 2) 获取最新 commit 信息
-    try:
-        resp2 = requests.get(_API_LATEST_COMMIT, headers=headers, timeout=timeout)
-        if resp2.status_code == 200:
-            commit_data = resp2.json()
-            result['remote_commit'] = commit_data.get("sha", "")[:7]
-            result['commit_message'] = commit_data.get("commit", {}).get("message", "").split("\n")[0]
-    except Exception:
-        pass  # commit 信息获取失败不影响版本判断
-    
-    # 3) 比较版本
-    if result['remote_version']:
-        result['has_update'] = _version_gt(result['remote_version'], result['local_version'])
+        if 'Timeout' in type(e).__name__:
+            result['error'] = "连接 GitHub 超时，请检查网络"
+        else:
+            result['error'] = f"检查更新失败: {e}"
     
     return result
 
@@ -146,7 +151,9 @@ def check_update(timeout: float = 8.0) -> dict:
 # ==========================================================
 
 def download_and_apply(progress_callback=None) -> dict:
-    """下载最新版本并覆盖本地文件
+    """下载最新 Release 版本并覆盖本地文件
+    
+    必须先调用 check_update() 以缓存 zipball_url。
     
     Args:
         progress_callback: 可选回调 (stage: str, percent: int) -> None
@@ -156,12 +163,17 @@ def download_and_apply(progress_callback=None) -> dict:
     Returns:
         {'success': bool, 'error': str, 'updated_files': int}
     """
+    global _cached_zipball_url
+    
     def _progress(stage: str, pct: int):
         if progress_callback:
             try:
                 progress_callback(stage, pct)
             except Exception:
                 pass
+    
+    if not _cached_zipball_url:
+        return {'success': False, 'error': '未找到下载地址，请先检查更新', 'updated_files': 0}
     
     try:
         import requests  # type: ignore
@@ -173,9 +185,9 @@ def download_and_apply(progress_callback=None) -> dict:
     
     tmp_dir = None
     try:
-        # ---- 1. 下载 ZIP ----
+        # ---- 1. 下载 Release ZIP ----
         _progress('downloading', 0)
-        resp = requests.get(_ARCHIVE_URL, stream=True, timeout=60)
+        resp = requests.get(_cached_zipball_url, stream=True, timeout=60)
         resp.raise_for_status()
         
         total_size = int(resp.headers.get('content-length', 0))

@@ -2,6 +2,13 @@
 """
 Houdini Agent - AI Tab
 Agent loop, multi-turn tool calling, streaming UI
+
+模块拆分结构（逐步迁移中）:
+  ui/header.py          — HeaderMixin: 顶部设置栏构建
+  ui/input_area.py      — InputAreaMixin: 输入区域和模式切换
+  ui/chat_view.py       — ChatViewMixin: 对话显示和滚动逻辑
+  core/agent_runner.py  — AgentRunnerMixin: Agent 循环和工具调度
+  core/session_manager.py — SessionManagerMixin: 多会话管理和缓存
 """
 
 import json
@@ -36,13 +43,29 @@ from .cursor_widgets import (
     NodeContextBar,
     PythonShellWidget,
     SystemShellWidget,
-    ClickableImageLabel
+    ClickableImageLabel,
+    ToolStatusBar,
+    NodeCompleterPopup,
 )
 import re
 
+# Mixin 模块（从 ai_tab.py 拆分出的子模块）
+from .header import HeaderMixin
+from .input_area import InputAreaMixin
+from .chat_view import ChatViewMixin
+from ..core.agent_runner import AgentRunnerMixin
+from ..core.session_manager import SessionManagerMixin
 
-class AITab(QtWidgets.QWidget):
-    """AI 助手 - 极简侧边栏风格"""
+
+class AITab(
+    HeaderMixin,
+    InputAreaMixin,
+    ChatViewMixin,
+    AgentRunnerMixin,
+    SessionManagerMixin,
+    QtWidgets.QWidget,
+):
+    """AI 助手 - 极简侧边栏风格（Mixin 架构）"""
     
     # 信号（用于线程安全的 UI 更新）
     _appendContent = QtCore.Signal(str)
@@ -59,6 +82,11 @@ class AITab(QtWidgets.QWidget):
     _addThinking = QtCore.Signal(str)  # 思考内容更新信号（线程安全）
     _finalizeThinkingSignal = QtCore.Signal()  # 结束思考区块（线程安全）
     _resumeThinkingSignal = QtCore.Signal()    # 恢复思考区块（线程安全）
+    _showToolStatus = QtCore.Signal(str)       # 显示工具执行状态（线程安全）
+    _hideToolStatus = QtCore.Signal()          # 隐藏工具执行状态
+    _autoTitleDone = QtCore.Signal(str, str)   # 自动标题生成完成: (session_id, title)
+    _confirmToolRequest = QtCore.Signal()  # 确认模式：请求确认（参数通过属性传递，避免 QueuedConnection dict 问题）
+    _confirmToolResult = QtCore.Signal(bool)        # 确认模式：结果 (True=执行, False=取消)
     
     def __init__(self, parent=None, workspace_dir: Optional[Path] = None):
         super().__init__(parent)
@@ -154,6 +182,10 @@ class AITab(QtWidgets.QWidget):
         self._addThinking.connect(self._on_add_thinking)
         self._finalizeThinkingSignal.connect(self._finalize_thinking_main_thread)
         self._resumeThinkingSignal.connect(self._resume_thinking_main_thread)
+        self._showToolStatus.connect(self._on_show_tool_status)
+        self._hideToolStatus.connect(self._on_hide_tool_status)
+        self._autoTitleDone.connect(self._on_auto_title_done)
+        self._confirmToolRequest.connect(self._on_confirm_tool_request, QtCore.Qt.QueuedConnection)
         
         # 构建并缓存系统提示词（两个版本：有思考 / 无思考）
         self._system_prompt_think = self._build_system_prompt(with_thinking=True)
@@ -351,7 +383,26 @@ Todo 管理规则（严格遵守）:
 -收到复杂任务时，先用 add_todo 创建任务清单，拆分为具体步骤
 -每完成一个步骤，**立即**调用 update_todo 将该步骤标记为 done
 -每轮工具执行后，检查 Todo 列表，确认哪些已完成、哪些仍待处理
--所有步骤完成后，确保每个 todo 都已标记为 done，再进行最终验证"""
+-所有步骤完成后，确保每个 todo 都已标记为 done，再进行最终验证
+
+NetworkBox 节点分组规范（构建节点网络时必须遵守）:
+-完成一个逻辑阶段的节点创建和连接后，**必须**使用 create_network_box 将该阶段的节点打包成一个 NetworkBox
+-NetworkBox 的 comment 应清晰描述该组节点的功能（如 "基础几何输入", "噪波变形", "输出合并"）
+-根据阶段语义选择颜色预设: input(蓝/数据输入), processing(绿/几何处理), deform(橙/变形动画), output(红/输出渲染), simulation(紫/物理模拟), utility(灰/辅助工具)
+-分组粒度建议: 每组至少 6 个以上功能相关的节点，不要把所有节点塞进一个 box，节点数不足 6 个时与相邻阶段合并
+-典型分组示例:
+  输入阶段(input): file_read, null(作为输入标记)
+  处理阶段(processing): scatter, copy_to_points, transform
+  变形阶段(deform): mountain, bend, wrangle(VEX变形)
+  输出阶段(output): merge, null(作为输出标记), rop_geometry
+-如果后续在已有分组中追加节点，使用 add_nodes_to_box 而不是创建新的 box
+
+NetworkBox 层级导航（大型网络查询策略，必须遵守）:
+-调用 get_network_structure 时，如果网络中存在 NetworkBox，返回结果会**自动折叠**为 box 概览（名称+注释+节点数+主要类型），不会展开每个节点——这大幅减少上下文占用
+-需要了解某个 box 内部的详细节点和连接时，调用 get_network_structure(box_name="box名称") 钻入该 box
+-**不要一次性展开所有 box**，只展开当前任务需要操作的那个 box，操作完成后再按需展开下一个
+-未分组节点会在概览结果中直接显示详情，无需额外操作
+-跨组连接会在概览中单独列出，帮助你理解 box 之间的数据流向"""
         
         # 使用极致优化器压缩（已缓存）
         return UltraOptimizer.compress_system_prompt(base_prompt)
@@ -415,826 +466,14 @@ Todo 管理规则（严格遵守）:
         input_area = self._build_input_area()
         layout.addWidget(input_area)
 
-    def _build_header(self) -> QtWidgets.QWidget:
-        """顶部设置栏 - 分两行：上行选择器，下行功能按钮"""
-        header = QtWidgets.QFrame()
-        header.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CursorTheme.BG_SECONDARY};
-                border-bottom: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
-        
-        outer = QtWidgets.QVBoxLayout(header)
-        outer.setContentsMargins(6, 4, 6, 4)
-        outer.setSpacing(3)
-        
-        # -------- 第一行：提供商 + 模型 + Agent/Web --------
-        row1 = QtWidgets.QHBoxLayout()
-        row1.setSpacing(4)
-        
-        # 提供商（缩短名称，省空间）
-        self.provider_combo = QtWidgets.QComboBox()
-        self.provider_combo.addItem("Ollama", 'ollama')
-        self.provider_combo.addItem("DeepSeek", 'deepseek')
-        self.provider_combo.addItem("GLM", 'glm')
-        self.provider_combo.addItem("OpenAI", 'openai')
-        self.provider_combo.addItem("Duojie", 'duojie')
-        self.provider_combo.setStyleSheet(self._combo_style())
-        self.provider_combo.setMinimumWidth(70)
-        self.provider_combo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        row1.addWidget(self.provider_combo)
-        
-        # 模型
-        self.model_combo = QtWidgets.QComboBox()
-        self._model_map = {
-            'ollama': ['qwen2.5:14b', 'qwen2.5:7b', 'llama3:8b', 'mistral:7b'],
-            'deepseek': ['deepseek-chat', 'deepseek-reasoner'],
-            'glm': ['glm-4.7'],
-            'openai': ['gpt-5.2', 'gpt-5.3-codex'],
-            'duojie': [
-                'claude-sonnet-4-5',
-                'claude-opus-4-5-kiro',
-                'claude-opus-4-5-max',
-                'claude-opus-4-6-normal',
-                'claude-opus-4-6-kiro',
-                'claude-haiku-4-5',
-                'gemini-3-pro-image-preview',
-                'gpt-5.3-codex',
-            ],
-        }
-        self._model_context_limits = {
-            'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
-            'deepseek-chat': 64000, 'deepseek-reasoner': 64000,
-            'glm-4.7': 200000,
-            'gpt-5.2': 128000,
-            'gpt-5.3-codex': 200000,
-            # Duojie 模型
-            'claude-sonnet-4-5': 200000,
-            'claude-opus-4-5-kiro': 200000,
-            'claude-opus-4-5-max': 200000,
-            'claude-opus-4-6-normal': 200000,
-            'claude-opus-4-6-kiro': 200000,
-            'claude-haiku-4-5': 200000,
-            'gemini-3-pro-image-preview': 128000,
-        }
-        # 模型特性配置
-        # supports_prompt_caching: 是否支持提示缓存（保持消息前缀稳定可自动命中）
-        # supports_vision: 是否支持图片识别（可在消息中发送图片）
-        self._model_features = {
-            # Ollama
-            'qwen2.5:14b':               {'supports_prompt_caching': True, 'supports_vision': False},
-            'qwen2.5:7b':                {'supports_prompt_caching': True, 'supports_vision': False},
-            'llama3:8b':                  {'supports_prompt_caching': True, 'supports_vision': False},
-            'mistral:7b':                 {'supports_prompt_caching': True, 'supports_vision': False},
-            # DeepSeek
-            'deepseek-chat':              {'supports_prompt_caching': True, 'supports_vision': False},
-            'deepseek-reasoner':          {'supports_prompt_caching': True, 'supports_vision': False},
-            # GLM
-            'glm-4.7':                    {'supports_prompt_caching': True, 'supports_vision': False},
-            # OpenAI
-            'gpt-5.2':                    {'supports_prompt_caching': True, 'supports_vision': True},
-            'gpt-5.3-codex':              {'supports_prompt_caching': True, 'supports_vision': True},
-            # Duojie - Claude
-            'claude-sonnet-4-5':          {'supports_prompt_caching': True, 'supports_vision': True},
-            'claude-opus-4-5-kiro':       {'supports_prompt_caching': True, 'supports_vision': True},
-            'claude-opus-4-5-max':        {'supports_prompt_caching': True, 'supports_vision': True},
-            'claude-opus-4-6-normal':     {'supports_prompt_caching': True, 'supports_vision': True},
-            'claude-opus-4-6-kiro':       {'supports_prompt_caching': True, 'supports_vision': True},
-            'claude-haiku-4-5':           {'supports_prompt_caching': True, 'supports_vision': True},
-            # Duojie - Gemini
-            'gemini-3-pro-image-preview': {'supports_prompt_caching': True, 'supports_vision': True},
-        }
-        self._refresh_models('ollama')
-        self.model_combo.setStyleSheet(self._combo_style())
-        self.model_combo.setMinimumWidth(100)
-        self.model_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        row1.addWidget(self.model_combo, 1)  # stretch=1 让模型框占满剩余宽度
-        
-        # Web / Think 开关（Agent/Ask 模式已移至输入区域下方）
-        _chk_style = f"""
-            QCheckBox {{ color: {CursorTheme.TEXT_SECONDARY}; font-size: 12px; }}
-            QCheckBox::indicator {{ width: 11px; height: 11px; }}
-        """
-        self.web_check = QtWidgets.QCheckBox("Web")
-        self.web_check.setChecked(True)
-        self.web_check.setStyleSheet(_chk_style)
-        row1.addWidget(self.web_check)
-        
-        self.think_check = QtWidgets.QCheckBox("Think")
-        self.think_check.setChecked(True)
-        self.think_check.setToolTip("启用思考模式：AI 会先分析再回答，并显示思考过程")
-        self.think_check.setStyleSheet(_chk_style)
-        row1.addWidget(self.think_check)
-        
-        outer.addLayout(row1)
-        
-        # -------- 第二行：Key 状态 + 功能按钮 --------
-        row2 = QtWidgets.QHBoxLayout()
-        row2.setSpacing(4)
-        
-        # API Key 状态
-        self.key_status = QtWidgets.QLabel()
-        self.key_status.setStyleSheet(f"color: {CursorTheme.TEXT_MUTED}; font-size: 11px;")
-        row2.addWidget(self.key_status, 1)
-        
-        # 功能按钮（紧凑）
-        self.btn_key = QtWidgets.QPushButton("Key")
-        self.btn_key.setFixedHeight(24)
-        self.btn_key.setStyleSheet(self._small_btn_style())
-        row2.addWidget(self.btn_key)
-        
-        self.btn_clear = QtWidgets.QPushButton("Clear")
-        self.btn_clear.setFixedHeight(24)
-        self.btn_clear.setStyleSheet(self._small_btn_style())
-        row2.addWidget(self.btn_clear)
-        
-        self.btn_cache = QtWidgets.QPushButton("Cache")
-        self.btn_cache.setFixedHeight(24)
-        self.btn_cache.setStyleSheet(self._small_btn_style())
-        self.btn_cache.setToolTip("缓存管理：保存/加载对话历史")
-        row2.addWidget(self.btn_cache)
-        
-        self.btn_optimize = QtWidgets.QPushButton("Opt")
-        self.btn_optimize.setFixedHeight(24)
-        self.btn_optimize.setStyleSheet(self._small_btn_style())
-        self.btn_optimize.setToolTip("Token 优化：自动压缩和优化")
-        row2.addWidget(self.btn_optimize)
-        
-        # ★ 更新按钮（黄色醒目）
-        self.btn_update = QtWidgets.QPushButton("Update")
-        self.btn_update.setFixedHeight(24)
-        self.btn_update.setStyleSheet(f"""
-            QPushButton {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.ACCENT_YELLOW};
-                border: 1px solid {CursorTheme.ACCENT_YELLOW};
-                border-radius: 3px;
-                font-size: 11px;
-                padding: 2px 6px;
-                min-height: 20px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.ACCENT_YELLOW};
-                color: {CursorTheme.BG_PRIMARY};
-            }}
-        """)
-        self.btn_update.setToolTip("检查并更新到最新版本")
-        row2.addWidget(self.btn_update)
-        
-        outer.addLayout(row2)
-        
-        return header
-
-    # ===== 多会话管理 =====
-    
-    def _build_session_tabs(self) -> QtWidgets.QWidget:
-        """会话标签栏 - 支持多个对话窗口"""
-        container = QtWidgets.QFrame()
-        container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CursorTheme.BG_SECONDARY};
-                border-bottom: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
-        
-        hl = QtWidgets.QHBoxLayout(container)
-        hl.setContentsMargins(4, 2, 4, 2)
-        hl.setSpacing(0)
-        
-        self.session_tabs = QtWidgets.QTabBar()
-        self.session_tabs.setTabsClosable(False)
-        self.session_tabs.setMovable(False)
-        self.session_tabs.setExpanding(False)
-        self.session_tabs.setDrawBase(False)
-        self.session_tabs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.session_tabs.customContextMenuRequested.connect(self._on_tab_context_menu)
-        self.session_tabs.setStyleSheet(f"""
-            QTabBar {{
-                background: transparent;
-            }}
-            QTabBar::tab {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_MUTED};
-                border: 1px solid {CursorTheme.BORDER};
-                border-bottom: none;
-                padding: 5px 12px;
-                margin-right: 2px;
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                min-width: 60px;
-                max-width: 200px;
-            }}
-            QTabBar::tab:selected {{
-                background: {CursorTheme.BG_PRIMARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border-bottom: 2px solid {CursorTheme.ACCENT_BEIGE};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_SECONDARY};
-            }}
-        """)
-        hl.addWidget(self.session_tabs, 1)
-        
-        # "+" 新建对话按钮
-        self.btn_new_session = QtWidgets.QPushButton("+")
-        self.btn_new_session.setFixedSize(22, 22)
-        self.btn_new_session.setToolTip("新建对话")
-        self.btn_new_session.setStyleSheet(f"""
-            QPushButton {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 3px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
-        hl.addWidget(self.btn_new_session)
-        
-        return container
-    
-    def _on_tab_context_menu(self, pos):
-        """Tab 栏右键菜单：关闭 / 关闭其他"""
-        tab_index = self.session_tabs.tabAt(pos)
-        if tab_index < 0:
-            return
-        menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {CursorTheme.BG_SECONDARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                font-size: 12px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 4px 0px;
-            }}
-            QMenu::item {{
-                padding: 4px 20px;
-            }}
-            QMenu::item:selected {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
-        close_action = menu.addAction("关闭此对话")
-        close_others = menu.addAction("关闭其他对话")
-        if self.session_tabs.count() <= 1:
-            close_others.setEnabled(False)
-
-        chosen = menu.exec_(self.session_tabs.mapToGlobal(pos))
-        if chosen == close_action:
-            self._close_session_tab(tab_index)
-        elif chosen == close_others:
-            # 从后往前关闭，跳过当前 tab
-            for i in range(self.session_tabs.count() - 1, -1, -1):
-                if i != tab_index:
-                    self._close_session_tab(i)
-    
-    def _create_session_widgets(self) -> tuple:
-        """创建单个会话的 scroll_area / chat_container / chat_layout"""
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
-        scroll_area.setStyleSheet(f"QScrollArea {{ border: none; }}")
-        
-        chat_container = QtWidgets.QWidget()
-        chat_layout = QtWidgets.QVBoxLayout(chat_container)
-        chat_layout.setContentsMargins(4, 8, 4, 8)
-        chat_layout.setSpacing(0)
-        chat_layout.addStretch()
-        
-        chat_container.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Minimum
-        )
-        scroll_area.setWidget(chat_container)
-        scroll_area.setWidgetResizable(True)
-        
-        return scroll_area, chat_container, chat_layout
-    
-    def _create_initial_session(self):
-        """创建第一个（默认）会话"""
-        self._session_counter = 1
-        session_id = self._session_id  # __init__ 已生成
-        
-        scroll_area, chat_container, chat_layout = self._create_session_widgets()
-        self.session_stack.addWidget(scroll_area)
-        
-        tab_index = self.session_tabs.addTab("Chat 1")
-        self.session_tabs.setTabData(tab_index, session_id)
-        
-        # 设置当前引用
-        self.scroll_area = scroll_area
-        self.chat_container = chat_container
-        self.chat_layout = chat_layout
-        
-        # 每个会话独立的 TodoList
-        todo = self._create_todo_list(chat_container)
-        self.todo_list = todo
-        
-        # 存入 sessions 字典
-        self._sessions[session_id] = {
-            'scroll_area': scroll_area,
-            'chat_container': chat_container,
-            'chat_layout': chat_layout,
-            'todo_list': todo,
-            'conversation_history': self._conversation_history,
-            'context_summary': self._context_summary,
-            'current_response': self._current_response,
-            'token_stats': self._token_stats,
-        }
-    
-    def _create_todo_list(self, parent=None) -> TodoList:
-        """为会话创建 TodoList 控件（初始隐藏，首次使用时插入 chat_layout）"""
-        return TodoList(parent)
-    
-    def _ensure_todo_in_chat(self, todo=None, layout=None):
-        """确保 todo_list 已在 chat_layout 中（跟随对话流）
-        
-        Args:
-            todo: 要插入的 TodoList，默认使用 self.todo_list
-            layout: 目标 chat_layout，默认使用 self.chat_layout
-        """
-        todo = todo or self.todo_list
-        layout = layout or self.chat_layout
-        if not todo or not layout:
-            return
-        # 如果已在 layout 中，不要重复插入
-        for i in range(layout.count()):
-            if layout.itemAt(i).widget() is todo:
-                return
-        # 插入到当前最末的消息之后（stretch 之前）
-        idx = layout.count() - 1  # -1 跳过末尾 stretch
-        layout.insertWidget(idx, todo)
-    
-    def _new_session(self):
-        """新建对话会话"""
-        # 保存当前会话状态（如果当前 session 正在被 agent 写入则跳过，避免覆盖）
-        if self._agent_session_id != self._session_id:
-            self._save_current_session_state()
-        
-        # 自动保存旧会话缓存
-        if self._auto_save_cache and self._conversation_history:
-            self._save_cache()
-        
-        # 创建新会话
-        self._session_counter += 1
-        new_id = str(uuid.uuid4())[:8]
-        label = f"Chat {self._session_counter}"
-        
-        scroll_area, chat_container, chat_layout = self._create_session_widgets()
-        self.session_stack.addWidget(scroll_area)
-        
-        tab_index = self.session_tabs.addTab(label)
-        self.session_tabs.setTabData(tab_index, new_id)
-        
-        # 初始化新会话状态
-        new_token_stats = {
-            'input_tokens': 0, 'output_tokens': 0,
-            'cache_read': 0, 'cache_write': 0,
-            'total_tokens': 0, 'requests': 0,
-        }
-        
-        todo = self._create_todo_list(chat_container)
-        
-        self._sessions[new_id] = {
-            'scroll_area': scroll_area,
-            'chat_container': chat_container,
-            'chat_layout': chat_layout,
-            'todo_list': todo,
-            'conversation_history': [],
-            'context_summary': '',
-            'current_response': None,
-            'token_stats': new_token_stats,
-        }
-        
-        # 切换到新会话
-        self._session_id = new_id
-        self._conversation_history = []
-        self._context_summary = ''
-        self._current_response = None
-        self._token_stats = new_token_stats
-        self._pending_ops.clear()
-        self._update_batch_bar()
-        self.scroll_area = scroll_area
-        self.chat_container = chat_container
-        self.chat_layout = chat_layout
-        self.todo_list = todo
-        
-        # 切换 UI
-        self.session_tabs.blockSignals(True)
-        self.session_tabs.setCurrentIndex(tab_index)
-        self.session_tabs.blockSignals(False)
-        self.session_stack.setCurrentWidget(scroll_area)
-        
-        self._update_context_stats()
-    
-    def _switch_session(self, tab_index: int):
-        """切换到指定标签页的会话（运行中也允许切换）"""
-        new_session_id = self.session_tabs.tabData(tab_index)
-        if not new_session_id or new_session_id == self._session_id:
-            return
-        
-        # 保存当前会话（如果当前不是 agent 正在写入的 session，正常保存）
-        if self._agent_session_id != self._session_id:
-            self._save_current_session_state()
-        
-        # 加载目标会话
-        self._load_session_state(new_session_id)
-        
-        # 切换显示
-        sdata = self._sessions[new_session_id]
-        self.session_stack.setCurrentWidget(sdata['scroll_area'])
-        
-        # 更新按钮状态（取决于目标 session 是否就是正在运行的 session）
-        self._update_run_buttons()
-        self._update_context_stats()
-    
-    def _close_session_tab(self, tab_index: int):
-        """关闭指定标签页"""
-        sid = self.session_tabs.tabData(tab_index)
-        # 禁止关闭正在运行的 session
-        if sid and self._agent_session_id == sid:
-            return
-        
-        session_id = self.session_tabs.tabData(tab_index)
-        if not session_id:
-            return
-        
-        # 如果只剩一个标签，不关闭，只清空
-        if self.session_tabs.count() <= 1:
-            self._on_clear()
-            return
-        
-        # 如果关闭的是当前活动会话，先切到相邻标签
-        if session_id == self._session_id:
-            new_index = tab_index - 1 if tab_index > 0 else tab_index + 1
-            new_sid = self.session_tabs.tabData(new_index)
-            if new_sid:
-                self._load_session_state(new_sid)
-                sdata = self._sessions[new_sid]
-                self.session_stack.setCurrentWidget(sdata['scroll_area'])
-        
-        # 移除标签和会话数据
-        self.session_tabs.removeTab(tab_index)
-        sdata = self._sessions.pop(session_id, None)
-        if sdata and sdata.get('scroll_area'):
-            self.session_stack.removeWidget(sdata['scroll_area'])
-            sdata['scroll_area'].deleteLater()
-        
-        self._update_context_stats()
-    
-    def _save_current_session_state(self):
-        """将当前瞬态状态存入 _sessions 字典"""
-        if self._session_id not in self._sessions:
-            return
-        s = self._sessions[self._session_id]
-        s['conversation_history'] = self._conversation_history
-        s['context_summary'] = self._context_summary
-        s['current_response'] = self._current_response
-        s['token_stats'] = self._token_stats
-    
-    def _load_session_state(self, session_id: str):
-        """从 _sessions 恢复指定会话的状态"""
-        sdata = self._sessions.get(session_id)
-        if not sdata:
-            return
-        
-        self._session_id = session_id
-        self._conversation_history = sdata.get('conversation_history', [])
-        self._context_summary = sdata.get('context_summary', '')
-        self._current_response = sdata.get('current_response')
-        self._token_stats = sdata.get('token_stats', {
-            'input_tokens': 0, 'output_tokens': 0,
-            'cache_read': 0, 'cache_write': 0,
-            'total_tokens': 0, 'requests': 0,
-        })
-        self.scroll_area = sdata['scroll_area']
-        self.chat_container = sdata['chat_container']
-        self.chat_layout = sdata['chat_layout']
-        self.todo_list = sdata.get('todo_list') or self._create_todo_list(self.chat_container)
-    
-    def _auto_rename_tab(self, text: str):
-        """根据用户首条消息自动重命名当前标签"""
-        for i in range(self.session_tabs.count()):
-            if self.session_tabs.tabData(i) == self._session_id:
-                current_label = self.session_tabs.tabText(i)
-                if current_label.startswith("Chat "):
-                    short = text[:18].replace('\n', ' ').strip()
-                    if len(text) > 18:
-                        short += "..."
-                    self.session_tabs.setTabText(i, short)
-                break
-
-    def _build_input_area(self) -> QtWidgets.QWidget:
-        """输入区域"""
-        container = QtWidgets.QFrame()
-        container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CursorTheme.BG_SECONDARY};
-                border-top: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
-        
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        
-        # -------- Undo All / Keep All 批量操作栏（默认隐藏）--------
-        self._batch_bar = QtWidgets.QFrame()
-        self._batch_bar.setVisible(False)
-        self._batch_bar.setStyleSheet(f"""
-            QFrame {{
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-            }}
-        """)
-        batch_layout = QtWidgets.QHBoxLayout(self._batch_bar)
-        batch_layout.setContentsMargins(8, 3, 8, 3)
-        batch_layout.setSpacing(6)
-        
-        self._batch_count_label = QtWidgets.QLabel("")
-        self._batch_count_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_SECONDARY};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_CODE};
-        """)
-        batch_layout.addWidget(self._batch_count_label)
-        batch_layout.addStretch()
-        
-        self._btn_undo_all = QtWidgets.QPushButton("Undo All")
-        self._btn_undo_all.setCursor(QtCore.Qt.PointingHandCursor)
-        self._btn_undo_all.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_RED};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 2px 10px;
-                border: 1px solid {CursorTheme.ACCENT_RED};
-                border-radius: 3px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: #3d1f1f;
-            }}
-        """)
-        self._btn_undo_all.clicked.connect(self._undo_all_ops)
-        batch_layout.addWidget(self._btn_undo_all)
-        
-        self._btn_keep_all = QtWidgets.QPushButton("Keep All")
-        self._btn_keep_all.setCursor(QtCore.Qt.PointingHandCursor)
-        self._btn_keep_all.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_GREEN};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 2px 10px;
-                border: 1px solid {CursorTheme.ACCENT_GREEN};
-                border-radius: 3px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: #1f3d1f;
-            }}
-        """)
-        self._btn_keep_all.clicked.connect(self._keep_all_ops)
-        batch_layout.addWidget(self._btn_keep_all)
-        
-        layout.addWidget(self._batch_bar)
-        
-        # 图片附件预览区（输入框上方，默认隐藏）
-        self._pending_images = []  # List[Tuple[str, str, QPixmap]]  (base64_data, media_type, thumbnail)
-        self.image_preview_container = QtWidgets.QWidget()
-        self.image_preview_container.setVisible(False)
-        self.image_preview_layout = QtWidgets.QHBoxLayout(self.image_preview_container)
-        self.image_preview_layout.setContentsMargins(4, 2, 4, 2)
-        self.image_preview_layout.setSpacing(4)
-        self.image_preview_layout.addStretch()
-        layout.addWidget(self.image_preview_container)
-        
-        # 输入框（自适应高度）
-        self.input_edit = ChatInput()
-        self.input_edit.imageDropped.connect(self._on_image_dropped)
-        layout.addWidget(self.input_edit)
-        
-        # 按钮行
-        btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.setSpacing(6)
-        
-        # 图片附件按钮
-        self.btn_attach_image = QtWidgets.QPushButton("Img")
-        self.btn_attach_image.setStyleSheet(self._small_btn_style())
-        self.btn_attach_image.setToolTip("添加图片附件（支持 PNG/JPG/GIF/WebP，也可直接粘贴/拖拽图片到输入框）")
-        btn_layout.addWidget(self.btn_attach_image)
-        
-        # 快捷操作
-        self.btn_network = QtWidgets.QPushButton("Read Network")
-        self.btn_network.setStyleSheet(self._small_btn_style())
-        btn_layout.addWidget(self.btn_network)
-        
-        self.btn_selection = QtWidgets.QPushButton("Read Selection")
-        self.btn_selection.setStyleSheet(self._small_btn_style())
-        btn_layout.addWidget(self.btn_selection)
-        
-        # 导出训练数据按钮
-        self.btn_export_train = QtWidgets.QPushButton("Train")
-        self.btn_export_train.setStyleSheet(self._small_btn_style())
-        self.btn_export_train.setToolTip("导出当前对话为训练数据（用于大模型微调）")
-        btn_layout.addWidget(self.btn_export_train)
-        
-        btn_layout.addStretch()
-        
-        # Token 统计按钮（可点击查看详情）
-        self.token_stats_btn = QtWidgets.QPushButton("0")
-        self.token_stats_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {CursorTheme.TEXT_MUTED};
-                border: none;
-                font-size: 12px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                padding: 2px 6px;
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.TEXT_PRIMARY};
-                background: {CursorTheme.BG_HOVER};
-                border-radius: 3px;
-            }}
-        """)
-        self.token_stats_btn.setToolTip("点击查看详细 Token 统计")
-        self.token_stats_btn.clicked.connect(self._show_token_stats_dialog)
-        btn_layout.addWidget(self.token_stats_btn)
-        
-        # 上下文统计
-        self.context_label = QtWidgets.QLabel("0K / 64K")
-        self.context_label.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 12px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                padding: 0 4px;
-            }}
-        """)
-        btn_layout.addWidget(self.context_label)
-        
-        # 停止/发送
-        self.btn_stop = StopButton()
-        self.btn_stop.setVisible(False)
-        self.btn_stop.setFixedHeight(32)
-        btn_layout.addWidget(self.btn_stop)
-        
-        self.btn_send = SendButton()
-        self.btn_send.setFixedHeight(32)
-        btn_layout.addWidget(self.btn_send)
-        
-        layout.addLayout(btn_layout)
-        
-        # -------- 模式切换行：Agent / Ask（互斥 radio 风格复选框）--------
-        mode_layout = QtWidgets.QHBoxLayout()
-        mode_layout.setContentsMargins(0, 2, 0, 0)
-        mode_layout.setSpacing(8)
-        
-        self._agent_mode = True  # True=Agent, False=Ask
-        
-        # Agent 复选框 — 灰色圆形指示器
-        self.chk_mode_agent = QtWidgets.QCheckBox("Agent")
-        self.chk_mode_agent.setChecked(True)
-        self.chk_mode_agent.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_mode_agent.setToolTip("Agent 模式：AI 可以自主创建、修改、删除节点，执行完整操作")
-        self.chk_mode_agent.setStyleSheet(f"""
-            QCheckBox {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 12px;
-                spacing: 4px;
-            }}
-            QCheckBox::indicator {{
-                width: 13px; height: 13px;
-                border-radius: 7px;
-                border: 1.5px solid {CursorTheme.TEXT_MUTED};
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background: {CursorTheme.TEXT_SECONDARY};
-                border-color: {CursorTheme.TEXT_SECONDARY};
-                image: none;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
-        self.chk_mode_agent.toggled.connect(self._on_agent_toggled)
-        mode_layout.addWidget(self.chk_mode_agent)
-        
-        # Ask 复选框 — 绿色圆形指示器
-        self.chk_mode_ask = QtWidgets.QCheckBox("Ask")
-        self.chk_mode_ask.setChecked(False)
-        self.chk_mode_ask.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_mode_ask.setToolTip("Ask 模式：AI 只能查询和分析，不会修改场景（只读）")
-        self.chk_mode_ask.setStyleSheet(f"""
-            QCheckBox {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 12px;
-                spacing: 4px;
-            }}
-            QCheckBox::indicator {{
-                width: 13px; height: 13px;
-                border-radius: 7px;
-                border: 1.5px solid {CursorTheme.TEXT_MUTED};
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background: {CursorTheme.ACCENT_GREEN};
-                border-color: {CursorTheme.ACCENT_GREEN};
-                image: none;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {CursorTheme.ACCENT_GREEN};
-            }}
-        """)
-        self.chk_mode_ask.toggled.connect(self._on_ask_toggled)
-        mode_layout.addWidget(self.chk_mode_ask)
-        
-        mode_layout.addStretch()
-        layout.addLayout(mode_layout)
-        
-        return container
-
-    # ---------- Agent / Ask 模式互斥切换 ----------
-
-    def _on_agent_toggled(self, checked: bool):
-        """Agent 复选框状态改变"""
-        if self._agent_mode == checked:
-            # 防止取消勾选自己（至少保持一个选中）
-            if not checked:
-                self.chk_mode_agent.blockSignals(True)
-                self.chk_mode_agent.setChecked(True)
-                self.chk_mode_agent.blockSignals(False)
-            return
-        self._agent_mode = checked
-        # 互斥：勾选 Agent → 取消 Ask
-        self.chk_mode_ask.blockSignals(True)
-        self.chk_mode_ask.setChecked(not checked)
-        self.chk_mode_ask.blockSignals(False)
-
-    def _on_ask_toggled(self, checked: bool):
-        """Ask 复选框状态改变"""
-        is_agent = not checked
-        if self._agent_mode == is_agent:
-            # 防止取消勾选自己
-            if not checked:
-                self.chk_mode_ask.blockSignals(True)
-                self.chk_mode_ask.setChecked(True)
-                self.chk_mode_ask.blockSignals(False)
-            return
-        self._agent_mode = is_agent
-        # 互斥：勾选 Ask → 取消 Agent
-        self.chk_mode_agent.blockSignals(True)
-        self.chk_mode_agent.setChecked(not checked)
-        self.chk_mode_agent.blockSignals(False)
-
-    def _combo_style(self) -> str:
-        return f"""
-            QComboBox {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 3px;
-                padding: 3px 6px;
-                font-size: 12px;
-                min-height: 22px;
-            }}
-            QComboBox::drop-down {{ border: none; width: 12px; }}
-            QComboBox QAbstractItemView {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                font-size: 12px;
-            }}
-        """
-    
-    def _small_btn_style(self) -> str:
-        return f"""
-            QPushButton {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 3px;
-                font-size: 11px;
-                padding: 2px 6px;
-                min-height: 20px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """
+    # ===================================================================
+    # 以下方法已迁移到 Mixin 模块（通过继承自动可用）:
+    #   HeaderMixin       → _build_header, _combo_style, _small_btn_style
+    #   InputAreaMixin    → _build_input_area, mode toggles, @mention, tool status
+    #   ChatViewMixin     → _add_user_message, _add_ai_response, scroll, toast
+    #   AgentRunnerMixin  → title gen, confirm mode, tool constants
+    #   SessionManagerMixin → session tabs, create/switch/close session
+    # ===================================================================
 
     def _wire_events(self):
         self.btn_send.clicked.connect(self._on_send)
@@ -1540,87 +779,6 @@ Todo 管理规则（严格遵守）:
         self._load_model_preference()  # 切换提供商时也尝试加载上次使用的模型
         self._update_key_status()
 
-    def _add_user_message(self, text: str, images: list = None):
-        """添加用户消息（可含图片缩略图，点击可放大）"""
-        msg = UserMessage(text, self.chat_container)
-        # 如果有图片，在消息下方添加可点击的缩略图
-        if images:
-            img_row = QtWidgets.QHBoxLayout()
-            img_row.setSpacing(4)
-            img_row.setContentsMargins(12, 0, 12, 4)
-            for b64_data, _mt, thumb in images:
-                # 从 base64 还原完整 pixmap 用于放大预览
-                full_pixmap = QtGui.QPixmap()
-                full_pixmap.loadFromData(__import__('base64').b64decode(b64_data))
-                thumb_scaled = thumb.scaled(48, 48, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-                lbl = ClickableImageLabel(thumb_scaled, full_pixmap)
-                lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px; padding: 1px;")
-                img_row.addWidget(lbl)
-            img_row.addStretch()
-            msg.layout().addLayout(img_row)
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, msg)
-        self._scroll_to_bottom()
-
-    def _add_ai_response(self) -> AIResponse:
-        """添加 AI 回复块"""
-        response = AIResponse(self.chat_container)
-        response.createWrangleRequested.connect(self._on_create_wrangle)
-        response.nodePathClicked.connect(self._navigate_to_node)
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, response)
-        self._current_response = response
-        self._scroll_to_bottom(force=True)
-        return response
-
-    def _is_user_scrolled_up(self) -> bool:
-        """检查用户是否在查看历史（滚动条不在底部）"""
-        scrollbar = self.scroll_area.verticalScrollBar()
-        # 如果滚动条位置距离底部超过 100 像素，认为用户在查看历史
-        return scrollbar.maximum() - scrollbar.value() > 100
-
-    def _scroll_to_bottom(self, force: bool = False):
-        """滚动到底部，但尊重用户的查看位置（带节流防止事件循环过载）
-        
-        Args:
-            force: 强制滚动（用于新消息）
-        """
-        if force or not self._is_user_scrolled_up():
-            # 节流：如果已有待执行的滚动定时器，跳过本次
-            if not hasattr(self, '_scroll_timer'):
-                self._scroll_timer = QtCore.QTimer(self)
-                self._scroll_timer.setSingleShot(True)
-                self._scroll_timer.setInterval(60)
-                self._scroll_timer.timeout.connect(self._do_scroll)
-            if not self._scroll_timer.isActive():
-                self._scroll_timer.start()
-    
-    def _do_scroll(self):
-        """实际执行滚动"""
-        try:
-            sb = self.scroll_area.verticalScrollBar()
-            sb.setValue(sb.maximum())
-        except RuntimeError:
-            pass  # 控件可能已销毁
-    
-    def _scroll_agent_to_bottom(self, force: bool = False):
-        """滚动 agent 所在的 session（如果正在显示则滚动，否则跳过）"""
-        # 只有当前显示的 session 就是 agent session 时才滚动
-        if self._agent_session_id and self._agent_session_id != self._session_id:
-            return  # agent 在后台 session 跑，不要干扰用户正在看的 session
-        self._scroll_to_bottom(force=force)
-    
-    def _show_toast(self, text: str, duration_ms: int = 3000):
-        """在聊天区域底部显示临时提示，自动消失"""
-        toast = StatusLine(text)
-        self.chat_layout.addWidget(toast)
-        self._scroll_to_bottom(force=True)
-        def _remove():
-            try:
-                toast.setParent(None)
-                toast.deleteLater()
-            except RuntimeError:
-                pass
-        QtCore.QTimer.singleShot(duration_ms, _remove)
-
     def _set_running(self, running: bool):
         self._is_running = running
         
@@ -1816,6 +974,11 @@ Todo 管理规则（严格遵守）:
         if self._thinking_timer:
             self._thinking_timer.stop()
             self._thinking_timer = None
+        # ★ 停止输入框上方的思考指示条
+        try:
+            self.thinking_bar.stop()
+        except (RuntimeError, AttributeError):
+            pass
     
     @QtCore.Slot()
     def _resume_thinking_main_thread(self):
@@ -1833,6 +996,11 @@ Todo 管理规则（严格遵守）:
             self._thinking_timer = QtCore.QTimer(self)
             self._thinking_timer.timeout.connect(lambda: self._updateThinkingTime.emit())
             self._thinking_timer.start(1000)
+        # ★ 重新启动输入框上方的思考指示条
+        try:
+            self.thinking_bar.start()
+        except (RuntimeError, AttributeError):
+            pass
 
     def _emit_normal_content(self, text: str):
         """发送正式内容（带 token 限制 + 缓冲刷新）"""
@@ -1916,6 +1084,9 @@ Todo 管理规则（严格遵守）:
             resp = self._agent_response or self._current_response
             if resp:
                 resp.add_thinking(text)
+                # ★ 首次思考内容 → 启动输入框上方思考指示条
+                if hasattr(self, 'thinking_bar') and not self.thinking_bar.isVisible():
+                    self.thinking_bar.start()
             self._scroll_agent_to_bottom(force=False)
         except RuntimeError:
             pass  # widget 已被 clear 销毁
@@ -1934,10 +1105,20 @@ Todo 管理规则（严格遵守）:
             resp = self._agent_response or self._current_response
             if resp:
                 resp.update_thinking_time()
+                # ★ 同步更新输入框上方思考指示条的时间
+                if hasattr(self, 'thinking_bar') and self.thinking_bar.isVisible():
+                    if resp._has_thinking:
+                        self.thinking_bar.set_elapsed(resp.thinking_section._total_elapsed())
         except RuntimeError:
             pass  # 控件可能已销毁
 
     def _on_agent_done(self, result: dict):
+        # ★ 停止思考指示条
+        try:
+            self.thinking_bar.stop()
+        except (RuntimeError, AttributeError):
+            pass
+
         # 使用 agent 锚定的引用（可能已切走 session）
         resp = self._agent_response or self._current_response
         history = self._agent_history if self._agent_history is not None else self._conversation_history
@@ -2103,10 +1284,21 @@ Todo 管理规则（严格遵守）:
         
         self._set_running(False)
         
+        # 隐藏工具状态
+        self._hideToolStatus.emit()
+        
         # 更新上下文统计
         self._update_context_stats()
+        
+        # ★ 异步生成会话标题（仅在首次 agent 完成时）
+        self._maybe_generate_title(agent_sid, history)
 
     def _on_agent_error(self, error: str):
+        # 停止思考指示条
+        try:
+            self.thinking_bar.stop()
+        except (RuntimeError, AttributeError):
+            pass
         # 刷新输出缓冲区
         if hasattr(self, '_output_buffer') and self._output_buffer:
             self._on_append_content(self._output_buffer)
@@ -2123,6 +1315,11 @@ Todo 管理规则（严格遵守）:
         self._set_running(False)
 
     def _on_agent_stopped(self):
+        # 停止思考指示条
+        try:
+            self.thinking_bar.stop()
+        except (RuntimeError, AttributeError):
+            pass
         # 刷新输出缓冲区
         if hasattr(self, '_output_buffer') and self._output_buffer:
             self._on_append_content(self._output_buffer)
@@ -2137,6 +1334,9 @@ Todo 管理规则（严格遵守）:
             pass  # widget 已被 clear 销毁
         
         self._set_running(False)
+        self._hideToolStatus.emit()
+
+    # ---------- 工具执行状态 ----------
 
     def _on_update_todo(self, todo_id: str, text: str, status: str):
         """更新 Todo 列表（跟随对话流内联显示）
@@ -2159,44 +1359,6 @@ Todo 管理规则（严格遵守）:
         else:
             todo.update_todo(todo_id, status)
 
-    # 不需要 Houdini 主线程的工具集合（纯 Python / 系统操作，可在后台线程直接执行）
-    _BG_SAFE_TOOLS = frozenset({
-        'execute_shell',       # subprocess.run，不依赖 hou
-        'search_local_doc',    # 纯 Python 文本检索
-        'list_skills',         # 纯 Python 列表
-    })
-
-    # 静默工具：不在执行列表 UI 中显示（AI 自行调用，用户无需感知）
-    _SILENT_TOOLS = frozenset({
-        'add_todo',
-        'update_todo',
-    })
-
-    # ★ Ask 模式白名单：只读 / 查询 / 分析工具（不包含任何修改场景的操作）
-    _ASK_MODE_TOOLS = frozenset({
-        # 查询 & 检查
-        'get_network_structure',
-        'get_node_parameters',
-        'list_children',
-        'read_selection',
-        'search_node_types',
-        'semantic_search_nodes',
-        'find_nodes_by_param',
-        'get_node_inputs',
-        'check_errors',
-        'verify_and_summarize',
-        # 文档 & 搜索
-        'web_search',
-        'fetch_webpage',
-        'search_local_doc',
-        'get_houdini_node_doc',
-        # Skill（只读查看）
-        'list_skills',
-        # 任务管理
-        'add_todo',
-        'update_todo',
-    })
-
     def _execute_tool_with_todo(self, tool_name: str, **kwargs) -> dict:
         """执行工具，包含 Todo 相关的工具
         
@@ -2210,30 +1372,45 @@ Todo 管理规则（严格遵守）:
                 "error": f"[Ask 模式] 工具 '{tool_name}' 不可用。当前为只读模式，无法执行修改操作。请切换到 Agent 模式。"
             }
         
-        # 处理 Todo 相关工具（纯 Python 操作，线程安全）
-        if tool_name == "add_todo":
-            todo_id = kwargs.get("todo_id", "")
-            text = kwargs.get("text", "")
-            status = kwargs.get("status", "pending")
-            self._updateTodo.emit(todo_id, text, status)
-            return {"success": True, "result": f"Added todo: {text}"}
+        # ★ 确认模式：对关键节点操作弹出预览确认
+        if self._confirm_mode and tool_name in self._CONFIRM_TOOLS:
+            confirmed = self._request_tool_confirmation(tool_name, kwargs)
+            if not confirmed:
+                return {
+                    "success": False,
+                    "error": f"用户取消了 {tool_name} 操作。请根据用户意图调整方案或询问用户。"
+                }
         
-        elif tool_name == "update_todo":
-            todo_id = kwargs.get("todo_id", "")
-            status = kwargs.get("status", "done")
-            self._updateTodo.emit(todo_id, "", status)
-            return {"success": True, "result": f"Updated todo {todo_id} to {status}"}
+        # ★ 显示工具执行状态
+        self._showToolStatus.emit(tool_name)
         
-        elif tool_name == "verify_and_summarize":
-            # 需要在主线程执行 Houdini 操作
+        try:
+            # 处理 Todo 相关工具（纯 Python 操作，线程安全）
+            if tool_name == "add_todo":
+                todo_id = kwargs.get("todo_id", "")
+                text = kwargs.get("text", "")
+                status = kwargs.get("status", "pending")
+                self._updateTodo.emit(todo_id, text, status)
+                return {"success": True, "result": f"Added todo: {text}"}
+            
+            elif tool_name == "update_todo":
+                todo_id = kwargs.get("todo_id", "")
+                status = kwargs.get("status", "done")
+                self._updateTodo.emit(todo_id, "", status)
+                return {"success": True, "result": f"Updated todo {todo_id} to {status}"}
+            
+            elif tool_name == "verify_and_summarize":
+                # 需要在主线程执行 Houdini 操作
+                return self._execute_tool_in_main_thread(tool_name, kwargs)
+            
+            # 不依赖 hou 的工具 → 直接在后台线程执行（避免阻塞 UI）
+            if tool_name in self._BG_SAFE_TOOLS:
+                return self._execute_tool_in_bg(tool_name, kwargs)
+            
+            # 其他工具需要在主线程执行（Houdini hou 模块操作）
             return self._execute_tool_in_main_thread(tool_name, kwargs)
-        
-        # 不依赖 hou 的工具 → 直接在后台线程执行（避免阻塞 UI）
-        if tool_name in self._BG_SAFE_TOOLS:
-            return self._execute_tool_in_bg(tool_name, kwargs)
-        
-        # 其他工具需要在主线程执行（Houdini hou 模块操作）
-        return self._execute_tool_in_main_thread(tool_name, kwargs)
+        finally:
+            self._hideToolStatus.emit()
     
     def _execute_tool_in_bg(self, tool_name: str, kwargs: dict) -> dict:
         """在后台线程直接执行工具（不阻塞 UI 主线程）
@@ -3155,10 +2332,12 @@ Todo 管理规则（严格遵守）:
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
                     on_tool_call=lambda n, a: (
-                        self._addStatus.emit(f"[tool]{n}") if n not in self._SILENT_TOOLS else None
+                        (self._addStatus.emit(f"[tool]{n}"), self._showToolStatus.emit(n))
+                        if n not in self._SILENT_TOOLS else None
                     ),
                     on_tool_result=lambda n, a, r: (
-                        self._add_tool_result(n, r, a) if n not in self._SILENT_TOOLS else None
+                        (self._add_tool_result(n, r, a), self._hideToolStatus.emit())
+                        if n not in self._SILENT_TOOLS else None
                     )
                 )
             elif tools:
@@ -3174,10 +2353,12 @@ Todo 管理规则（严格遵守）:
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
                     on_tool_call=lambda n, a: (
-                        self._addStatus.emit(f"[tool]{n}") if n not in self._SILENT_TOOLS else None
+                        (self._addStatus.emit(f"[tool]{n}"), self._showToolStatus.emit(n))
+                        if n not in self._SILENT_TOOLS else None
                     ),
                     on_tool_result=lambda n, a, r: (
-                        self._add_tool_result(n, r, a) if n not in self._SILENT_TOOLS else None
+                        (self._add_tool_result(n, r, a), self._hideToolStatus.emit())
+                        if n not in self._SILENT_TOOLS else None
                     )
                 )
             else:
@@ -3684,6 +2865,7 @@ Todo 管理规则（严格遵守）:
             if label._decided:
                 continue
             label._on_keep()
+            label.collapse_diff()  # ★ 自动折叠 diff 展示区
             count += 1
         
         self._pending_ops.clear()
@@ -4460,7 +3642,7 @@ Todo 管理规则（严格遵守）:
                 with open(latest_file, 'w', encoding='utf-8') as f:
                     json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
-            print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话到磁盘")
+            # print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话到磁盘")
             return True
         except Exception as e:
             print(f"[Cache] 保存所有会话失败: {e}")
@@ -5639,24 +4821,24 @@ Todo 管理规则（严格遵守）:
         
         local_ver = result.get('local_version', '?')
         remote_ver = result.get('remote_version', '?')
-        commit_msg = result.get('commit_message', '')
-        commit_sha = result.get('remote_commit', '')
+        release_name = result.get('release_name', '')
+        release_notes = result.get('release_notes', '')
         
         if not result.get('has_update'):
             QtWidgets.QMessageBox.information(
                 self, "检查更新",
                 f"当前已是最新版本 ✓\n\n"
                 f"本地版本: v{local_ver}\n"
-                f"远程版本: v{remote_ver}"
+                f"最新 Release: v{remote_ver}"
             )
             return
         
         # ---- 有新版本，弹出确认对话框 ----
-        detail = f"本地版本: v{local_ver}\n远程版本: v{remote_ver}"
-        if commit_sha:
-            detail += f"\n最新提交: {commit_sha}"
-        if commit_msg:
-            detail += f"\n提交信息: {commit_msg}"
+        detail = f"本地版本: v{local_ver}\n最新 Release: v{remote_ver}"
+        if release_name:
+            detail += f"\n版本名称: {release_name}"
+        if release_notes:
+            detail += f"\n更新说明: {release_notes}"
         detail += "\n\n⚠️ 更新后插件窗口将自动重启。\n（config、cache、trainData 目录不会被覆盖）"
         
         reply = QtWidgets.QMessageBox.question(

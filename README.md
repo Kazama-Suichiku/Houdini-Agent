@@ -58,7 +58,7 @@ User request → AI plans → call tools → inspect results → call more tools
 - Copy button on AI responses
 - `Ctrl+Enter` to send messages
 
-## Available Tools (30+)
+## Available Tools (35+)
 
 ### Node Operations
 
@@ -80,7 +80,7 @@ User request → AI plans → call tools → inspect results → call more tools
 
 | Tool | Description |
 |------|-------------|
-| `get_network_structure` | Get the full node network topology (names, types, connections, embedded VEX code) |
+| `get_network_structure` | Get the node network topology — **NetworkBox-aware**: auto-folds boxes into overview (name + comment + node count) when present, use `box_name` to drill into a specific box; saves significant tokens on large networks |
 | `get_node_parameters` | Get node parameters **plus** node status, flags, errors, inputs, and outputs (replaces old `get_node_details`) |
 | `list_children` | List child nodes with flags (like `ls`) |
 | `read_selection` | Read the currently selected node(s) in the viewport |
@@ -113,6 +113,14 @@ User request → AI plans → call tools → inspect results → call more tools
 |------|-------------|
 | `run_skill` | Execute a named skill with parameters |
 | `list_skills` | List all available skills |
+
+### NetworkBox (Node Organization)
+
+| Tool | Description |
+|------|-------------|
+| `create_network_box` | Create a NetworkBox (grouping frame) with semantic color presets (input/processing/deform/output/simulation/utility) and optionally include specified nodes |
+| `add_nodes_to_box` | Add nodes to an existing NetworkBox with optional auto-fit |
+| `list_network_boxes` | List all NetworkBoxes in a network with their contents and metadata |
 
 ### Task Management
 
@@ -162,10 +170,15 @@ Houdini-Agent/
     ├── shelf_tool.py               # Houdini shelf tool integration
     ├── QUICK_SHELF_CODE.py         # Quick shelf code snippet
     ├── core/
-    │   └── main_window.py          # Main window (workspace save/restore)
+    │   ├── main_window.py          # Main window (workspace save/restore)
+    │   ├── agent_runner.py         # AgentRunnerMixin — agent loop helpers, confirm mode, tool scheduling
+    │   └── session_manager.py      # SessionManagerMixin — multi-session create/switch/close
     ├── ui/
-    │   ├── ai_tab.py              # AI Agent tab (agent loop, context management, streaming UI)
-    │   └── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics)
+    │   ├── ai_tab.py              # AI Agent tab (Mixin host, agent loop, context management, streaming UI)
+    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics)
+    │   ├── header.py              # HeaderMixin — top settings bar (provider, model, toggles)
+    │   ├── input_area.py          # InputAreaMixin — input area, mode switches, @mention, confirm mode
+    │   └── chat_view.py           # ChatViewMixin — chat display, scrolling, toast messages
     ├── skills/                     # Pre-built analysis scripts
     │   ├── __init__.py            # Skill registry & loader
     │   ├── analyze_normals.py     # Normal quality detection
@@ -263,6 +276,20 @@ Click the "Set API Key…" button and check "Save to local config".
 │  Loop until AI finishes or max iterations reached        │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Mixin Architecture
+
+`AITab` is the central widget, composed from five focused Mixins:
+
+| Mixin | Module | Responsibility |
+|-------|--------|---------------|
+| `HeaderMixin` | `ui/header.py` | Top settings bar — provider/model selectors, Agent/Web/Think toggles |
+| `InputAreaMixin` | `ui/input_area.py` | Input area, send/stop buttons, mode switches, @-mention autocomplete, confirm mode UI |
+| `ChatViewMixin` | `ui/chat_view.py` | Chat display, message insertion, scroll control, toast notifications |
+| `AgentRunnerMixin` | `core/agent_runner.py` | Agent loop helpers, auto title generation, confirm mode interception, tool category constants |
+| `SessionManagerMixin` | `core/session_manager.py` | Multi-session create/switch/close, session tab bar, state save/restore |
+
+Each Mixin accesses `AITab` state via `self`, enabling clean separation without breaking shared state.
 
 ### Context Management
 
@@ -377,6 +404,7 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
+- **v6.6** — **Mixin architecture**: `ai_tab.py` decomposed into 5 focused Mixin modules (`HeaderMixin`, `InputAreaMixin`, `ChatViewMixin`, `AgentRunnerMixin`, `SessionManagerMixin`) for better maintainability. **NetworkBox tools**: 3 new tools — `create_network_box` (semantic color presets: input/processing/deform/output/simulation/utility, auto-include nodes), `add_nodes_to_box`, `list_network_boxes`; `get_network_structure` enhanced with `box_name` drill-in and overview mode that auto-folds boxes to save tokens. **NetworkBox grouping rules**: System prompt requires AI to organize nodes into NetworkBoxes after each logical stage (min 6 nodes per group), with hierarchical navigation guidelines. **Confirm mode**: `AgentRunnerMixin` adds confirmation dialog for destructive tools (create/delete/modify) before execution. **ThinkingSection overhaul**: Switched from `QLabel` to `QPlainTextEdit` with scrollbar, dynamic height calculation matching `ChatInput` approach, max 400px. **PulseIndicator**: Animated opacity-pulsing dot widget for "in progress" status. **ToolStatusBar**: Real-time tool execution status display below input area. **NodeCompleterPopup**: `@`-mention autocomplete for node paths. **Updater refactored**: Now uses GitHub Releases API (not branch-based VERSION file), cached `zipball_url`. **Training data exporter**: Multimodal content extraction (strips images, keeps text from list-format messages). **Module reload**: All Mixin modules added to reload list; `MainWindow` reference refreshed after reload; `deleteLater()` on old window for clean teardown.
 - **v6.5** — **Agent / Ask mode**: Radio-style toggle below the input area — Agent mode has full tool access; Ask mode restricts to read-only/query tools with a whitelist guard and system prompt constraint. **Undo All / Keep All**: Batch operations bar tracks all pending node/param changes; "Undo All" reverts in reverse order, "Keep All" confirms everything at once. **Deep thinking framework**: `<think>` tag now requires a structured 6-step process (Understand → Status → Options → Decision → Plan → Risk) with explicit thinking principles. **Auto-updater**: `VERSION` file for semver tracking; silent GitHub API check on startup; one-click download + apply + restart with a progress dialog; preserves `config/`, `cache/`, `trainData/` during update. **`tools_override`**: `agent_loop_stream` and `agent_loop_json_mode` accept custom tool lists for mode-specific filtering. ParamDiff defaults to expanded. Skip undo snapshot when parameter value is unchanged.
 - **v6.4** — **Parameter Diff UI**: `set_node_parameter` now shows inline red/green diff for scalar changes and collapsible unified diff for multi-line VEX code, with one-click undo to restore old values (supports scalars, tuples, and expressions). **User message collapse**: messages longer than 2 lines auto-fold with "expand / collapse" toggle. **Scene-aware RAG**: auto-retrieval query enriched with selected node types from Houdini scene; dynamic `max_chars` (400/800/1200) based on conversation length. **Persistent HTTP Session**: `requests.Session` with connection pooling eliminates TLS renegotiation per turn. **Pre-compiled regex**: XML tag cleanup patterns compiled once at class level. **Sanitize dirty flag**: skip O(n) message sanitization when no new tool messages are added. **Removed inter-tool delays** (`time.sleep` eliminated between Houdini tool executions).
 - **v6.3** — **Image preview dialog**: click thumbnails to enlarge in a full-size modal viewer. **Stricter `<think>` tag enforcement**: system prompt now treats missing tags as format violations; follow-up replies after tool execution also require tags. **Robust usage parsing**: unified cache hit/miss/write metrics across DeepSeek, OpenAI, Anthropic, and Factory/Duojie relay formats (with one-time diagnostic dump). **Precise node path extraction**: `_extract_node_paths` now uses tool-specific regex rules to avoid picking up parent/context paths. **Multimodal token counting**: images estimated at ~765 tokens for accurate budget tracking. **Duojie think mode**: abandoned `reasoningEffort` parameter (ineffective), relies on `<think>` tag prompting only. Tool schema: added `items` type hint for array parameter values.

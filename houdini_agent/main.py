@@ -19,6 +19,12 @@ def _reload_modules():
         'houdini_agent.utils.mcp.client',
         'houdini_agent.utils.mcp',
         'houdini_agent.ui.cursor_widgets',
+        # ★ 新增：拆分出的 mixin 模块也需要重载，否则引用旧类导致异常
+        'houdini_agent.ui.header',
+        'houdini_agent.ui.input_area',
+        'houdini_agent.ui.chat_view',
+        'houdini_agent.core.agent_runner',
+        'houdini_agent.core.session_manager',
         'houdini_agent.ui.ai_tab',
         'houdini_agent.core.main_window',
     ]
@@ -35,10 +41,17 @@ from houdini_agent.core.main_window import MainWindow
 _main_window = None
 
 def show_tool():
-    global _main_window
+    global _main_window, MainWindow
     
     # 每次调用时强制重新加载模块
     _reload_modules()
+    
+    # ★ 重载后刷新 MainWindow 引用，避免使用旧类
+    try:
+        from houdini_agent.core.main_window import MainWindow as _MW
+        MainWindow = _MW
+    except Exception:
+        pass
     
     if not QtWidgets.QApplication.instance():
         app = QtWidgets.QApplication([])
@@ -54,9 +67,11 @@ def show_tool():
             else:
                 _main_window.force_quit = True
                 _main_window.close()
+                _main_window.deleteLater()
                 _main_window = None
+                # ★ 不要 processEvents()，它会触发队列中残留的事件导致窗口闪烁
     except Exception:
-        pass
+        _main_window = None
 
     try:
         _main_window = MainWindow()

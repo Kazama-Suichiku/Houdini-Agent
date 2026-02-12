@@ -539,6 +539,46 @@ def _setup_fastmcp_tools():
 		child_info = [{"name": c.name(), "type": c.type().name()} for c in children]
 		return ok("Children nodes retrieved successfully.", child_info)
 
+	# ========================================
+	# NetworkBox 工具（委托给 hou_core 共享层）
+	# ========================================
+
+	@mcp.tool  # type: ignore[attr-defined]
+	@tool_wrapper
+	def create_network_box(
+		parent_path: str,
+		name: str = "",
+		comment: str = "",
+		color_preset: str = "",
+		node_paths: list | None = None,
+	) -> dict:
+		"""创建 NetworkBox 并可选地将节点加入其中"""
+		success, msg, box = hou_core.create_network_box(
+			parent_path, name, comment, color_preset, node_paths or []
+		)
+		if success:
+			return ok(msg, {"box_name": box.name() if box else name})
+		return err(msg)
+
+	@mcp.tool  # type: ignore[attr-defined]
+	@tool_wrapper
+	def add_nodes_to_box(
+		parent_path: str,
+		box_name: str,
+		node_paths: list,
+		auto_fit: bool = True,
+	) -> dict:
+		"""将节点添加到已有的 NetworkBox"""
+		success, msg = hou_core.add_nodes_to_box(parent_path, box_name, node_paths, auto_fit)
+		return ok(msg) if success else err(msg)
+
+	@mcp.tool  # type: ignore[attr-defined]
+	@tool_wrapper
+	def list_network_boxes(parent_path: str) -> dict:
+		"""列出网络中所有 NetworkBox 及其内容"""
+		success, msg, boxes_info = hou_core.list_network_boxes(parent_path)
+		return ok(msg, boxes_info) if success else err(msg)
+
 	@mcp.tool  # type: ignore[attr-defined]
 	def get_task_queue_status() -> dict:
 		return {"status": "success", "message": "Task queue status retrieved.", "data": {"tasks_in_queue": task_queue.qsize(), "recent_results": getattr(mcp, "recent_results", []) if mcp else []}}

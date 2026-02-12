@@ -197,35 +197,115 @@ class CollapsibleSection(QtWidgets.QWidget):
 
 
 # ============================================================
-# 思考过程区块
+# 脉冲指示器
+# ============================================================
+
+class PulseIndicator(QtWidgets.QWidget):
+    """小型脉冲圆点 — 通过 opacity 动画表示"正在进行"状态"""
+
+    def __init__(self, color: str = CursorTheme.ACCENT_PURPLE, size: int = 8, parent=None):
+        super().__init__(parent)
+        self._color = QtGui.QColor(color)
+        self._dot_size = size
+        self._opacity = 1.0
+        self.setFixedSize(size + 6, size + 6)
+
+        self._anim = QtCore.QPropertyAnimation(self, b"pulseOpacity")
+        self._anim.setDuration(1200)
+        self._anim.setStartValue(0.25)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.InOutSine)
+        self._anim.setLoopCount(-1)  # 无限循环
+
+    # ---- Qt Property ----
+    def _get_opacity(self):
+        return self._opacity
+
+    def _set_opacity(self, v):
+        self._opacity = v
+        self.update()
+
+    pulseOpacity = QtCore.Property(float, _get_opacity, _set_opacity)
+
+    def start(self):
+        self._anim.start()
+
+    def stop(self):
+        self._anim.stop()
+        self._opacity = 0.0
+        self.update()
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        c = QtGui.QColor(self._color)
+        c.setAlphaF(self._opacity)
+        p.setBrush(c)
+        p.setPen(QtCore.Qt.NoPen)
+        x = (self.width() - self._dot_size) / 2
+        y = (self.height() - self._dot_size) / 2
+        p.drawEllipse(QtCore.QRectF(x, y, self._dot_size, self._dot_size))
+        p.end()
+
+
+# ============================================================
+# 思考过程区块（无内置脉冲，动画移至输入框上方）
 # ============================================================
 
 class ThinkingSection(CollapsibleSection):
-    """思考过程 - 显示 AI 的思考内容（支持多轮思考累计计时）"""
+    """思考过程 - 显示 AI 的思考内容（支持多轮思考累计计时）
+    
+    脉冲/动画指示器已移至输入框上方的 ThinkingBar，此处仅做内容展示。
+    ★ 使用 QPlainTextEdit(readOnly)，自带滚动条。
+    高度计算采用与 ChatInput 相同的可靠方案：
+      QTimer.singleShot(0) 延迟 + 逐块 block.layout().lineCount() 统计视觉行。
+    """
+    
+    # 最大高度（像素），超过此值则固定高度，内置滚动条自动出现
+    _MAX_HEIGHT_PX = 400
     
     def __init__(self, parent=None):
+        # ★ 默认折叠（和原版一致），首次收到思考内容时自动展开
         super().__init__("思考中...", icon="", collapsed=True, parent=parent)
+        # ★ 防止被父布局拉伸 —— 内容多大就多大
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Maximum,
+        )
         self._thinking_text = ""
         self._start_time = time.time()
-        self._accumulated_seconds = 0.0   # 已完成轮次的累计时间
-        self._round_start = time.time()   # 当前轮次开始时间
-        self._round_count = 0             # 思考轮次计数
+        self._accumulated_seconds = 0.0
+        self._round_start = time.time()
+        self._round_count = 0
         
-        # 思考内容标签（必须 PlainText，否则 QLabel 会将 <scatter>/<grid> 等节点名当 HTML 标签吞掉）
-        self.thinking_label = QtWidgets.QLabel()
-        self.thinking_label.setTextFormat(QtCore.Qt.PlainText)
-        self.thinking_label.setWordWrap(True)
-        self.thinking_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        # ★ 思考内容 — QPlainTextEdit(readOnly)，自带滚动条
+        self._text_font = QtGui.QFont(CursorTheme.FONT_BODY)
+        self._text_font.setPixelSize(13)
+        
+        self.thinking_label = QtWidgets.QPlainTextEdit()
+        self.thinking_label.setReadOnly(True)
+        self.thinking_label.setFont(self._text_font)
+        self.thinking_label.document().setDefaultFont(self._text_font)
+        self.thinking_label.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.thinking_label.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.thinking_label.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.thinking_label.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
         self.thinking_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 13px;
-            font-family: {CursorTheme.FONT_BODY};
-            padding: 4px;
-            line-height: 1.4;
+            QPlainTextEdit {{
+                color: {CursorTheme.TEXT_MUTED};
+                background: transparent;
+                border: none;
+                padding: 4px;
+                font-size: 13px;
+                font-family: {CursorTheme.FONT_BODY};
+            }}
         """)
+        # 初始高度为一行（紧凑），流式输入时会动态增大
+        self._line_h = QtGui.QFontMetrics(self._text_font).lineSpacing()
+        self.thinking_label.setFixedHeight(self._line_h + 12)
         self.content_layout.addWidget(self.thinking_label)
         
-        # 更新标题样式
+        # 标题样式
         self.header.setStyleSheet(f"""
             QPushButton {{
                 color: {CursorTheme.ACCENT_PURPLE};
@@ -241,22 +321,47 @@ class ThinkingSection(CollapsibleSection):
             }}
         """)
     
+    def _update_height(self):
+        """根据视觉行数（含自动换行）动态调整高度。
+        
+        与 ChatInput._adjust_height 相同的可靠方案：
+        逐块遍历 block.layout().lineCount() 统计真实视觉行数。
+        """
+        doc = self.thinking_label.document()
+        visual_lines = 0
+        block = doc.begin()
+        while block.isValid():
+            bl = block.layout()
+            if bl and bl.lineCount() > 0:
+                visual_lines += bl.lineCount()
+            else:
+                visual_lines += 1
+            block = block.next()
+        visual_lines = max(1, visual_lines)
+        
+        desired = self._line_h * visual_lines + 12   # 12 = padding
+        self.thinking_label.setFixedHeight(min(max(desired, self._line_h + 12), self._MAX_HEIGHT_PX))
+    
+    def _scroll_to_bottom(self):
+        """滚动到底部"""
+        vbar = self.thinking_label.verticalScrollBar()
+        vbar.setValue(vbar.maximum())
+    
     def _total_elapsed(self) -> float:
-        """当前累计总思考时间（含正在进行的轮次）"""
         if self._finalized:
             return self._accumulated_seconds
         return self._accumulated_seconds + (time.time() - self._round_start)
     
     def append_thinking(self, text: str):
-        """追加思考内容"""
-        # 清除可能残留的 U+FFFD 替换符（encoding 异常时产生的菱形乱码）
         if '\ufffd' in text:
             text = text.replace('\ufffd', '')
         self._thinking_text += text
-        self.thinking_label.setText(self._thinking_text)
+        self.thinking_label.setPlainText(self._thinking_text)
+        # ★ 延迟到下一事件循环（确保 Qt 布局完成后再计算高度，和 ChatInput 同策略）
+        QtCore.QTimer.singleShot(0, self._update_height)
+        QtCore.QTimer.singleShot(0, self._scroll_to_bottom)
     
     def update_time(self):
-        """更新思考时间（仅在未 finalize 时才更新）"""
         if self._finalized:
             return
         self.set_title(f"思考中... ({_fmt_duration(self._total_elapsed())})")
@@ -266,31 +371,258 @@ class ThinkingSection(CollapsibleSection):
         return getattr(self, '_is_finalized', False)
     
     def resume(self):
-        """恢复思考（新一轮 <think> 开始）— 重新开始计时"""
-        # 标记为未完成
         self._is_finalized = False
         self._round_start = time.time()
         self._round_count += 1
-        # 追加分隔符表示新一轮
         self._thinking_text += f"\n--- 第 {self._round_count + 1} 轮思考 ---\n"
-        self.thinking_label.setText(self._thinking_text)
+        self.thinking_label.setPlainText(self._thinking_text)
+        QtCore.QTimer.singleShot(0, self._update_height)
         self.set_title(f"思考中... ({_fmt_duration(self._total_elapsed())})")
-        # 确保展开以显示新内容
         if self._collapsed:
             self.toggle()
     
     def finalize(self):
-        """完成当前轮思考 — 累计时间并更新标题"""
         if self._finalized:
             return
         self._is_finalized = True
-        # 累计本轮时间
         self._accumulated_seconds += (time.time() - self._round_start)
         total = self._accumulated_seconds
         self.set_title(f"思考过程 ({_fmt_duration(total)})")
-        # 思考完成后自动折叠，用户可点击展开查看
         if not self._collapsed:
             self.toggle()
+
+
+# ============================================================
+# 输入框上方 "思考中" 指示条（流光动画）
+# ============================================================
+
+class ThinkingBar(QtWidgets.QWidget):
+    """显示在输入框上方的思考状态指示条。
+    
+    文字上有从左到右扫过的高亮流光效果，
+    提示用户 AI 正在推理，替代原 ThinkingSection 内置的脉冲圆点。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(18)
+        self.setVisible(False)
+
+        self._elapsed = 0.0   # 秒
+        self._phase = 0.0     # 流光相位 [0, 1]
+
+        # 流光定时器 ~25fps
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._tick)
+
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+    def start(self):
+        self._elapsed = 0.0
+        self._phase = 0.0
+        self.setVisible(True)
+        self._timer.start()
+        self.update()
+
+    def stop(self):
+        self._timer.stop()
+        self.setVisible(False)
+
+    def set_elapsed(self, seconds: float):
+        self._elapsed = seconds
+        self.update()
+
+    def _tick(self):
+        self._phase += 0.025
+        if self._phase > 1.0:
+            self._phase -= 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+
+        s = int(self._elapsed)
+        time_str = f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s"
+        display = f"  ✦ 思考中... ({time_str})"
+
+        font = QtGui.QFont(CursorTheme.FONT_BODY, 9)
+        p.setFont(font)
+        fm = QtGui.QFontMetrics(font)
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+
+        x = 8
+        for i, ch in enumerate(display):
+            char_pos = i / max(len(display), 1)
+            dist = abs(char_pos - self._phase)
+            dist = min(dist, 1.0 - dist)
+            glow = max(0.0, 1.0 - dist * 5.0)
+
+            base = QtGui.QColor(CursorTheme.ACCENT_PURPLE)
+            muted = QtGui.QColor(CursorTheme.TEXT_MUTED)
+            r = int(muted.red()   + (base.red()   - muted.red())   * glow)
+            g = int(muted.green() + (base.green() - muted.green()) * glow)
+            b = int(muted.blue()  + (base.blue()  - muted.blue())  * glow)
+
+            p.setPen(QtGui.QColor(r, g, b))
+            p.drawText(x, y, ch)
+            x += fm.horizontalAdvance(ch)
+
+        p.end()
+
+
+# ============================================================
+# 确认模式 — 内联预览确认控件（替代弹窗）
+# ============================================================
+
+class VEXPreviewInline(QtWidgets.QFrame):
+    """嵌入对话流中的工具执行预览卡片。
+    
+    用户点击 ✓ 确认 或 ✕ 取消后通过 confirmed / cancelled 信号通知。
+    """
+
+    confirmed = QtCore.Signal()
+    cancelled = QtCore.Signal()
+
+    def __init__(self, tool_name: str, args: dict, parent=None):
+        super().__init__(parent)
+        self._decided = False
+        # ★ 卡片整体不允许被父布局拉伸 —— 内容多大就多大
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Maximum,
+        )
+        self.setStyleSheet(f"""
+            VEXPreviewInline {{
+                background: {CursorTheme.BG_TERTIARY};
+                border: 1.5px solid {CursorTheme.ACCENT_BEIGE};
+                border-radius: 6px;
+            }}
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(3)
+
+        # 标题行
+        title = QtWidgets.QLabel(f"确认执行: {tool_name}")
+        title.setStyleSheet(f"color:{CursorTheme.ACCENT_BEIGE};font-size:13px;font-weight:bold;")
+        title.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        layout.addWidget(title)
+
+        # ★ 紧凑参数摘要（只显示关键参数，每个一行，最多 6 行）
+        summary_lines = []
+        for k, v in args.items():
+            sv = str(v)
+            if len(sv) > 120:
+                sv = sv[:117] + "..."
+            summary_lines.append(f"  {k}: {sv}")
+        if summary_lines:
+            summary_text = "\n".join(summary_lines[:6])
+            if len(summary_lines) > 6:
+                summary_text += f"\n  ... 共 {len(summary_lines)} 个参数"
+            summary_lbl = QtWidgets.QLabel(summary_text)
+            summary_lbl.setWordWrap(True)
+            summary_lbl.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            summary_lbl.setStyleSheet(f"""
+                color: {CursorTheme.TEXT_PRIMARY};
+                font-size: 11px;
+                font-family: {CursorTheme.FONT_CODE};
+                background: transparent;
+                padding: 2px 4px;
+            """)
+            summary_lbl.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Maximum,
+            )
+            layout.addWidget(summary_lbl)
+
+        # 按钮行（右对齐，紧凑）
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.addStretch()
+
+        btn_cancel = QtWidgets.QPushButton("✕ 取消")
+        btn_cancel.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_cancel.setFixedHeight(24)
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.TEXT_SECONDARY};
+                background: {CursorTheme.BG_TERTIARY};
+                border: 1px solid {CursorTheme.BORDER};
+                border-radius: 4px;
+                padding: 0 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {CursorTheme.BG_HOVER};
+                color: {CursorTheme.TEXT_PRIMARY};
+            }}
+        """)
+        btn_cancel.clicked.connect(self._on_cancel)
+        btn_row.addWidget(btn_cancel)
+
+        btn_confirm = QtWidgets.QPushButton("↵ 确认执行")
+        btn_confirm.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_confirm.setFixedHeight(24)
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.TEXT_BRIGHT};
+                background: {CursorTheme.ACCENT_GREEN};
+                border: none;
+                border-radius: 4px;
+                padding: 0 14px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: #5fd9c0;
+            }}
+        """)
+        btn_confirm.clicked.connect(self._on_confirm)
+        btn_row.addWidget(btn_confirm)
+
+        layout.addLayout(btn_row)
+
+    def _on_confirm(self):
+        if self._decided:
+            return
+        self._decided = True
+        # ★ 确认后直接隐藏整个卡片，不再显示"已确认执行"内嵌窗口
+        self.setVisible(False)
+        self.setFixedHeight(0)
+        self.confirmed.emit()
+
+    def _on_cancel(self):
+        if self._decided:
+            return
+        self._decided = True
+        # ★ 取消也直接隐藏整个卡片（和确认一致），不要内嵌窗口
+        self.setVisible(False)
+        self.setFixedHeight(0)
+        self.cancelled.emit()
+
+    def _show_decided(self, text: str, color: str):
+        """决策后将整个卡片替换为简短状态"""
+        layout = self.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            sub = item.layout()
+            if sub:
+                while sub.count():
+                    si = sub.takeAt(0)
+                    sw = si.widget()
+                    if sw:
+                        sw.deleteLater()
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(f"color:{color};font-size:12px;padding:4px 0;")
+        layout.addWidget(lbl)
+        self.setFixedHeight(30)
 
 
 # ============================================================
@@ -1303,12 +1635,17 @@ class NodeOperationLabel(QtWidgets.QWidget):
         root.addLayout(header)
         
         # ── 第二行：Diff 展示 ──
-        diff_widget = ParamDiffWidget(
+        self._diff_widget = ParamDiffWidget(
             param_name=param_diff.get("param_name", ""),
             old_value=param_diff.get("old_value", ""),
             new_value=param_diff.get("new_value", ""),
         )
-        root.addWidget(diff_widget)
+        root.addWidget(self._diff_widget)
+    
+    def collapse_diff(self):
+        """折叠 diff 展示区（Keep All 时调用）"""
+        if hasattr(self, '_diff_widget') and self._diff_widget:
+            self._diff_widget.collapse()
     
     def _on_undo(self):
         if self._decided:
@@ -1530,6 +1867,13 @@ class ParamDiffWidget(QtWidgets.QWidget):
         self._diff_frame.setVisible(not self._collapsed)
         arrow = "▶" if self._collapsed else "▼"
         self._toggle_btn.setText(f"{arrow} {self._title_text}")
+    
+    def collapse(self):
+        """外部调用：强制折叠 diff（仅对多行 diff 有效）"""
+        if hasattr(self, '_diff_frame') and not self._collapsed:
+            self._collapsed = True
+            self._diff_frame.setVisible(False)
+            self._toggle_btn.setText(f"▶ {self._title_text}")
     
     def _add_block(self, parent_layout, title: str, text: str, is_old: bool):
         """添加旧值/新值整块（用于 difflib 无差异时的 fallback）"""
@@ -2813,6 +3157,250 @@ class NodeContextBar(QtWidgets.QFrame):
 
 
 # ============================================================
+# 工具执行状态栏
+# ============================================================
+
+class ToolStatusBar(QtWidgets.QFrame):
+    """底部工具状态栏 — 显示当前正在执行的工具名 + 脉冲指示器"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(22)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: transparent;
+                border: none;
+            }}
+        """)
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(4, 0, 4, 0)
+        lay.setSpacing(4)
+
+        self._pulse = PulseIndicator(CursorTheme.ACCENT_BEIGE, 5, self)
+        lay.addWidget(self._pulse)
+
+        self._label = QtWidgets.QLabel("")
+        self._label.setStyleSheet(f"""
+            color: {CursorTheme.TEXT_MUTED};
+            font-size: 11px;
+            font-family: {CursorTheme.FONT_CODE};
+        """)
+        lay.addWidget(self._label)
+        lay.addStretch()
+
+        self.setVisible(False)
+
+    def show_tool(self, tool_name: str):
+        """显示正在执行的工具"""
+        self._label.setText(f"⚡ {tool_name}")
+        self._pulse.start()
+        self.setVisible(True)
+
+    def hide_tool(self):
+        """隐藏工具状态"""
+        self._pulse.stop()
+        self.setVisible(False)
+        self._label.setText("")
+
+
+# ============================================================
+# VEX 预览确认对话框
+# ============================================================
+
+class VEXPreviewDialog(QtWidgets.QDialog):
+    """VEX 代码预览对话框 — 用户确认后才执行创建操作"""
+
+    def __init__(self, tool_name: str, args: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"确认执行: {tool_name}")
+        self.setMinimumSize(560, 400)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {CursorTheme.BG_PRIMARY};
+                color: {CursorTheme.TEXT_PRIMARY};
+            }}
+        """)
+
+        self._accepted = False
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # 工具名称
+        title = QtWidgets.QLabel(f"工具: {tool_name}")
+        title.setStyleSheet(f"color:{CursorTheme.ACCENT_BEIGE};font-size:14px;font-weight:bold;")
+        layout.addWidget(title)
+
+        # 参数摘要
+        summary_parts = []
+        if 'node_name' in args:
+            summary_parts.append(f"节点名: {args['node_name']}")
+        if 'wrangle_type' in args:
+            summary_parts.append(f"类型: {args['wrangle_type']}")
+        if 'run_over' in args:
+            summary_parts.append(f"Run Over: {args['run_over']}")
+        if 'parent_path' in args:
+            summary_parts.append(f"父路径: {args['parent_path']}")
+        if 'node_type' in args:
+            summary_parts.append(f"节点类型: {args['node_type']}")
+        if 'node_path' in args:
+            summary_parts.append(f"节点路径: {args['node_path']}")
+        if summary_parts:
+            info = QtWidgets.QLabel("  |  ".join(summary_parts))
+            info.setStyleSheet(f"color:{CursorTheme.TEXT_SECONDARY};font-size:12px;")
+            info.setWordWrap(True)
+            layout.addWidget(info)
+
+        # VEX 代码 / 主要参数
+        vex_code = args.get('vex_code', '')
+        param_value = args.get('value', '')
+        code_text = vex_code or param_value or str(args)
+
+        code_edit = QtWidgets.QPlainTextEdit()
+        code_edit.setPlainText(code_text)
+        code_edit.setReadOnly(True)
+        code_edit.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background: {CursorTheme.BG_TERTIARY};
+                color: {CursorTheme.TEXT_PRIMARY};
+                border: 1px solid {CursorTheme.BORDER};
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 13px;
+                font-family: {CursorTheme.FONT_CODE};
+            }}
+        """)
+        layout.addWidget(code_edit, 1)
+
+        # 按钮行
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+
+        btn_cancel = QtWidgets.QPushButton("取消")
+        btn_cancel.setFixedHeight(30)
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.TEXT_SECONDARY};
+                background: {CursorTheme.BG_TERTIARY};
+                border: 1px solid {CursorTheme.BORDER};
+                border-radius: 4px;
+                padding: 0 20px;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background: {CursorTheme.BG_HOVER};
+                color: {CursorTheme.TEXT_PRIMARY};
+            }}
+        """)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_confirm = QtWidgets.QPushButton("✓ 确认执行")
+        btn_confirm.setFixedHeight(30)
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                color: {CursorTheme.TEXT_BRIGHT};
+                background: {CursorTheme.ACCENT_GREEN};
+                border: none;
+                border-radius: 4px;
+                padding: 0 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: #5fd9c0;
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+        btn_row.addWidget(btn_confirm)
+
+        layout.addLayout(btn_row)
+
+
+# ============================================================
+# 节点路径补全弹出框
+# ============================================================
+
+class NodeCompleterPopup(QtWidgets.QListWidget):
+    """节点路径自动补全弹出窗 — 在输入 @ 时显示场景节点列表"""
+
+    pathSelected = QtCore.Signal(str)  # 用户选中了一个节点路径
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # ★ 不在构造时设置 ToolTip 窗口标志（会创建原生窗口句柄导致闪烁）
+        # 改为在 show_filtered 中首次显示时再设置
+        self._flags_applied = False
+        self.setFixedWidth(320)
+        self.setMaximumHeight(200)
+        self.setStyleSheet(f"""
+            QListWidget {{
+                background: {CursorTheme.BG_TERTIARY};
+                color: {CursorTheme.TEXT_PRIMARY};
+                border: 1px solid {CursorTheme.BORDER_FOCUS};
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: {CursorTheme.FONT_CODE};
+                padding: 2px;
+            }}
+            QListWidget::item {{
+                padding: 3px 6px;
+                border-radius: 2px;
+            }}
+            QListWidget::item:selected {{
+                background: {CursorTheme.ACCENT_BLUE};
+                color: {CursorTheme.TEXT_BRIGHT};
+            }}
+            QListWidget::item:hover {{
+                background: {CursorTheme.BG_HOVER};
+            }}
+        """)
+        self.itemActivated.connect(self._on_item_activated)
+        self.setVisible(False)
+        self._all_paths: list = []
+
+    def set_node_paths(self, paths: list):
+        """设置可选的节点路径列表"""
+        self._all_paths = paths
+
+    def show_filtered(self, prefix: str, anchor_widget: QtWidgets.QWidget, cursor_rect):
+        """根据前缀过滤并显示"""
+        # ★ 首次显示时才设置窗口标志，避免构造时创建原生 tooltip 窗口导致闪烁
+        if not self._flags_applied:
+            self._flags_applied = True
+            self.setWindowFlags(QtCore.Qt.ToolTip | QtCore.Qt.FramelessWindowHint)
+        self.clear()
+        lower_prefix = prefix.lower()
+        matches = [p for p in self._all_paths if lower_prefix in p.lower()][:30]
+        if not matches:
+            self.setVisible(False)
+            return
+        for p in matches:
+            self.addItem(p)
+        # 定位到光标下方
+        global_pos = anchor_widget.mapToGlobal(cursor_rect.bottomLeft())
+        self.move(global_pos.x(), global_pos.y() + 4)
+        self.setVisible(True)
+        self.setCurrentRow(0)
+
+    def _on_item_activated(self, item):
+        self.pathSelected.emit(item.text())
+        self.setVisible(False)
+
+    def keyPressEvent(self, event):
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            current = self.currentItem()
+            if current:
+                self.pathSelected.emit(current.text())
+                self.setVisible(False)
+                return
+        elif event.key() == QtCore.Qt.Key_Escape:
+            self.setVisible(False)
+            return
+        super().keyPressEvent(event)
+
+
+# ============================================================
 # 输入区域
 # ============================================================
 
@@ -2821,17 +3409,19 @@ class ChatInput(QtWidgets.QPlainTextEdit):
     
     核心逻辑：统计文档中所有视觉行（含软换行），按行高计算目标高度，
     使输入框向上扩展而非隐藏已有行。
+    支持 @节点路径 补全和从 Network Editor 拖拽节点。
     """
     
     sendRequested = QtCore.Signal()
     imageDropped = QtCore.Signal(QtGui.QImage)  # 粘贴或拖拽图片时触发
+    atTriggered = QtCore.Signal(str, QtCore.QRect)  # @ 触发补全: (当前前缀, 光标矩形)
     
     _MIN_H = 44
     _MAX_H = 220
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行, Ctrl+V 粘贴图片)")
+        self.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行, @提及节点)")
         # 确保自动换行
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
         self.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)
@@ -2858,6 +3448,10 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setMaximumHeight(self._MAX_H)
         # 使用 textChanged，并延迟到下一事件循环执行（确保布局先完成）
         self.textChanged.connect(self._schedule_adjust)
+        self.textChanged.connect(self._check_at_trigger)
+        # @ 补全状态
+        self._at_active = False
+        self._at_start_pos = -1
     
     def _schedule_adjust(self):
         """延迟调整高度，确保文档布局已更新"""
@@ -2895,7 +3489,60 @@ class ChatInput(QtWidgets.QPlainTextEdit):
             # 通知父布局重新分配空间
             self.updateGeometry()
     
+    def _check_at_trigger(self):
+        """检测输入中的 @ 字符，触发节点路径补全"""
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.toPlainText()
+        if not text or pos == 0:
+            if self._at_active:
+                self._at_active = False
+            return
+
+        # 查找光标前最近的 @
+        left = text[:pos]
+        at_idx = left.rfind('@')
+        if at_idx == -1:
+            if self._at_active:
+                self._at_active = False
+            return
+
+        # @ 后面的内容不能包含空格（否则认为已结束）
+        prefix_after_at = left[at_idx + 1:]
+        if ' ' in prefix_after_at or '\n' in prefix_after_at:
+            if self._at_active:
+                self._at_active = False
+            return
+
+        self._at_active = True
+        self._at_start_pos = at_idx
+        # 发射信号，由外部(ai_tab)提供节点列表
+        crect = self.cursorRect(cursor)
+        self.atTriggered.emit(prefix_after_at, crect)
+
+    def cancel_at_completion(self):
+        """取消当前 @ 补全"""
+        self._at_active = False
+        self._at_start_pos = -1
+
+    def insert_at_completion(self, path: str):
+        """将补全结果插入文本，替换 @前缀"""
+        if self._at_start_pos < 0:
+            return
+        cursor = self.textCursor()
+        pos = cursor.position()
+        # 选中从 @ 到当前位置的文本并替换
+        cursor.setPosition(self._at_start_pos)
+        cursor.setPosition(pos, QtGui.QTextCursor.KeepAnchor)
+        cursor.insertText(path + " ")
+        self.setTextCursor(cursor)
+        self._at_active = False
+        self._at_start_pos = -1
+
     def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape and self._at_active:
+            self.cancel_at_completion()
+            return
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
             if event.modifiers() & QtCore.Qt.ShiftModifier:
                 super().keyPressEvent(event)
@@ -2908,6 +3555,58 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         """窗口宽度变化时重新计算高度（自动换行可能改变行数）"""
         super().resizeEvent(event)
         self._schedule_adjust()
+
+    # ---- 拖拽节点支持 ----
+    
+    def dragEnterEvent(self, event):
+        """接受来自 Houdini Network Editor 的节点路径拖拽"""
+        mime = event.mimeData()
+        if mime.hasText():
+            text = mime.text().strip()
+            # 检查是否像 Houdini 节点路径
+            if text.startswith('/') and '/' in text[1:]:
+                event.acceptProposedAction()
+                return
+        # 也接受图片拖拽（原有逻辑）
+        if mime.hasImage() or mime.hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        """拖拽释放：优先检查节点路径，其次处理图片"""
+        mime = event.mimeData()
+        # 1) Houdini 节点路径拖拽
+        if mime.hasText():
+            text = mime.text().strip()
+            if text.startswith('/') and '/' in text[1:]:
+                cursor = self.cursorForPosition(
+                    event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
+                )
+                cursor.insertText(text + " ")
+                self.setTextCursor(cursor)
+                event.acceptProposedAction()
+                return
+        # 2) 图片拖拽
+        if mime.hasImage():
+            image = mime.imageData()
+            if image and not image.isNull():
+                self.imageDropped.emit(image)
+                event.acceptProposedAction()
+                return
+        if mime.hasUrls():
+            _IMG_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+            for url in mime.urls():
+                if url.isLocalFile():
+                    import os
+                    ext = os.path.splitext(url.toLocalFile())[1].lower()
+                    if ext in _IMG_EXTS:
+                        img = QtGui.QImage(url.toLocalFile())
+                        if not img.isNull():
+                            self.imageDropped.emit(img)
+                            event.acceptProposedAction()
+                            return
+        super().dropEvent(event)
     
     # ---- 图片粘贴支持 ----
     
@@ -2932,36 +3631,6 @@ class ChatInput(QtWidgets.QPlainTextEdit):
                             return
         # 默认文本粘贴
         super().insertFromMimeData(source)
-    
-    def dragEnterEvent(self, event):
-        """拖拽进入：接受图片文件"""
-        if event.mimeData().hasImage() or event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-    
-    def dropEvent(self, event):
-        """拖拽释放：处理图片文件"""
-        mime = event.mimeData()
-        if mime.hasImage():
-            image = mime.imageData()
-            if image and not image.isNull():
-                self.imageDropped.emit(image)
-                event.acceptProposedAction()
-                return
-        if mime.hasUrls():
-            _IMG_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
-            for url in mime.urls():
-                if url.isLocalFile():
-                    import os
-                    ext = os.path.splitext(url.toLocalFile())[1].lower()
-                    if ext in _IMG_EXTS:
-                        img = QtGui.QImage(url.toLocalFile())
-                        if not img.isNull():
-                            self.imageDropped.emit(img)
-                            event.acceptProposedAction()
-                            return
-        super().dropEvent(event)
 
 
 # ============================================================

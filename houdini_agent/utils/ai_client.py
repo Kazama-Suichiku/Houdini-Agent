@@ -515,13 +515,17 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_network_structure",
-            "description": "获取当前网络编辑器中的节点网络结构，包括所有节点名称、类型和连接关系。轻量级操作，不包含详细参数。结果支持分页，大型网络可翻页查看。",
+            "description": "获取节点网络结构。如果网络中存在 NetworkBox 分组，默认返回 box 级别概览（名称+注释+节点数），大幅节省上下文；传入 box_name 可钻入查看该 box 内的详细节点。无 NetworkBox 时返回全部节点。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "network_path": {
                         "type": "string",
                         "description": "网络路径如 '/obj/geo1'，留空使用当前网络"
+                    },
+                    "box_name": {
+                        "type": "string",
+                        "description": "指定 NetworkBox 名称以查看其内部详细节点和连接。留空则显示概览（box 摘要 + 未分组节点）。"
                     },
                     "page": {
                         "type": "integer",
@@ -1104,6 +1108,91 @@ HOUDINI_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+                "required": []
+            }
+        }
+    },
+    # ============================================================
+    # NetworkBox 工具 — 节点分组与可视化组织
+    # ============================================================
+    {
+        "type": "function",
+        "function": {
+            "name": "create_network_box",
+            "description": "创建 NetworkBox（节点分组框），用于将功能相关的节点组织在一起。支持设置名称、注释、颜色预设，并可在创建时直接包含指定节点。建议在每完成一个逻辑阶段后使用此工具将该阶段的节点打包。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_path": {
+                        "type": "string",
+                        "description": "父网络路径（如 /obj/geo1）。留空则使用当前活跃网络。"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "NetworkBox 名称（如 input_stage, deform_stage）。留空则自动生成。"
+                    },
+                    "comment": {
+                        "type": "string",
+                        "description": "注释文字，显示在 NetworkBox 标题栏上，描述这组节点的功能（如 '数据输入与基础几何', '噪波变形处理'）。"
+                    },
+                    "color_preset": {
+                        "type": "string",
+                        "enum": ["input", "processing", "deform", "output", "simulation", "utility"],
+                        "description": "颜色预设: input(蓝/输入), processing(绿/处理), deform(橙/变形), output(红/输出), simulation(紫/模拟), utility(灰/辅助)。"
+                    },
+                    "node_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要加入 box 的节点完整路径列表。创建后会自动调整 box 大小以包围这些节点。"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_nodes_to_box",
+            "description": "将节点添加到已有的 NetworkBox 中。用于在创建新节点后将其归入对应的分组。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_path": {
+                        "type": "string",
+                        "description": "父网络路径（如 /obj/geo1）。留空则使用当前活跃网络。"
+                    },
+                    "box_name": {
+                        "type": "string",
+                        "description": "目标 NetworkBox 的名称。"
+                    },
+                    "node_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要添加的节点完整路径列表。"
+                    },
+                    "auto_fit": {
+                        "type": "boolean",
+                        "description": "是否自动调整 box 大小以包围所有节点。默认 true。"
+                    }
+                },
+                "required": ["box_name", "node_paths"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_network_boxes",
+            "description": "列出指定网络中所有 NetworkBox 及其包含的节点。用于了解当前网络的分组组织情况。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_path": {
+                        "type": "string",
+                        "description": "要查询的网络路径（如 /obj/geo1）。留空则使用当前活跃网络。"
+                    }
+                },
                 "required": []
             }
         }
