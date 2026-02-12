@@ -1113,6 +1113,62 @@ HOUDINI_TOOLS = [
         }
     },
     # ============================================================
+    # 节点布局工具 — 自动整理节点位置
+    # ============================================================
+    {
+        "type": "function",
+        "function": {
+            "name": "layout_nodes",
+            "description": "自动布局节点位置。在 verify_and_summarize 通过后、创建 NetworkBox 之前调用，确保节点排列整齐。支持多种布局策略：auto（智能选择）、grid（网格排列）、columns（按拓扑深度分列）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "network_path": {
+                        "type": "string",
+                        "description": "父网络路径（如 /obj/geo1）。留空则使用当前活跃网络。"
+                    },
+                    "node_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要布局的节点完整路径列表。留空则布局整个网络的所有子节点。"
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["auto", "grid", "columns"],
+                        "description": "布局方法。auto=智能选择（推荐），grid=网格排列，columns=按拓扑深度分列。默认 auto。"
+                    },
+                    "spacing": {
+                        "type": "number",
+                        "description": "节点间距倍率，默认 1.0。增大则节点间距更宽松。"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_node_positions",
+            "description": "获取节点的位置信息（坐标、类型），用于检查布局效果或在手动微调时查看当前状态。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "network_path": {
+                        "type": "string",
+                        "description": "父网络路径（如 /obj/geo1）。留空则使用当前活跃网络。"
+                    },
+                    "node_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要查询的节点完整路径列表。留空则返回整个网络下所有子节点的位置。"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    # ============================================================
     # NetworkBox 工具 — 节点分组与可视化组织
     # ============================================================
     {

@@ -38,6 +38,8 @@ class AgentRunnerMixin:
         # NetworkBox（会修改场景）
         'create_network_box',
         'add_nodes_to_box',
+        # 节点布局（会修改节点位置）
+        'layout_nodes',
     })
 
     # 不需要 Houdini 主线程的工具集合（纯 Python / 系统操作，可在后台线程直接执行）
@@ -76,6 +78,8 @@ class AgentRunnerMixin:
         # 任务管理
         'add_todo',
         'update_todo',
+        # 节点布局（只读查询）
+        'get_node_positions',
         # NetworkBox（只读查看）
         'list_network_boxes',
         # PerfMon 性能分析（只读）

@@ -409,6 +409,14 @@ Todo Management Rules (MUST follow strictly):
 -After each tool execution round, review the Todo list to confirm what's done and what's pending
 -After all steps complete, ensure every todo is marked done before final verification
 
+Node Layout Rules (MUST execute after verification passes, before creating NetworkBox):
+-After verify_and_summarize passes, MUST call layout_nodes to auto-arrange all nodes before creating any NetworkBox
+-Default: layout_nodes() with no parameters — auto-layouts all nodes in the current network
+-If only specific nodes need layout (e.g., newly created ones), pass their paths in node_paths
+-Layout MUST happen before create_network_box, because NetworkBox.fitAroundContents() depends on node positions
+-If layout result looks wrong, use get_node_positions to check, and try method="grid" or method="columns" as fallback
+-Execution order: create nodes → connect → verify_and_summarize → layout_nodes → create_network_box
+
 NetworkBox Grouping Rules (MUST follow when building node networks):
 -After completing a logical phase of node creation and connection, MUST use create_network_box to package that phase's nodes into a NetworkBox
 -NetworkBox comment should clearly describe the group's function (e.g., "Base Geometry Input", "Noise Deformation", "Output Merge")
@@ -1764,6 +1772,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         '|web_search|fetch_webpage|search_local_doc|get_houdini_node_doc'
         '|execute_python|execute_shell|check_errors|get_node_inputs|add_todo|update_todo'
         '|verify_and_summarize|run_skill|list_skills'
+        '|layout_nodes|get_node_positions'
         '|perf_start_profile|perf_stop_and_report'
     )
     _FAKE_TOOL_PATTERNS = re.compile(

@@ -178,6 +178,238 @@ def layout_children(parent_path: str) -> Tuple[bool, str]:
 
 
 # ============================================================
+# 节点布局工具
+# ============================================================
+
+def layout_nodes(
+    parent_path: str = "",
+    node_paths: Optional[List[str]] = None,
+    method: str = "auto",
+    spacing: float = 1.0,
+) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    """多策略节点布局
+
+    Args:
+        parent_path: 父网络路径，留空使用当前活跃网络
+        node_paths: 要布局的节点路径列表；为空时布局整个网络
+        method: 布局方法 auto / grid / columns
+        spacing: 间距倍率（默认 1.0）
+
+    Returns:
+        (success, message, positions_list)
+        positions_list 中每项: {name, path, x, y}
+    """
+    if hou is None:
+        return False, "Houdini 环境不可用", []
+
+    # 解析父网络
+    parent = None
+    if parent_path:
+        parent = hou.node(parent_path)
+    if parent is None:
+        # 尝试当前网络编辑器的 pwd
+        try:
+            editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+            if editor:
+                parent = editor.pwd()
+        except Exception:
+            pass
+    if parent is None:
+        try:
+            parent = hou.node("/obj")
+        except Exception:
+            pass
+    if parent is None:
+        return False, "未找到目标网络", []
+
+    try:
+        # ---------- 收集目标节点 ----------
+        if node_paths:
+            nodes = [hou.node(p) for p in node_paths if hou.node(p)]
+            if not nodes:
+                return False, "指定的节点路径均无效", []
+        else:
+            nodes = list(parent.children())
+            if not nodes:
+                return False, f"{parent.path()} 下没有子节点", []
+
+        # ---------- 执行布局 ----------
+        layout_method_used = method
+
+        if method == "auto":
+            if node_paths:
+                # 有指定节点 → 优先用 NetworkEditor.layoutNodes
+                try:
+                    editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+                    if editor and hasattr(editor, "layoutNodes"):
+                        editor.layoutNodes(nodes)
+                        layout_method_used = "NetworkEditor.layoutNodes"
+                    else:
+                        raise AttributeError("layoutNodes 不可用")
+                except Exception:
+                    # 降级：逐个 moveToGoodPosition
+                    for n in nodes:
+                        try:
+                            n.moveToGoodPosition()
+                        except Exception:
+                            pass
+                    layout_method_used = "moveToGoodPosition"
+            else:
+                # 全网络 → layoutChildren（支持间距）
+                h_sp = 2.0 * spacing
+                v_sp = 1.0 * spacing
+                try:
+                    parent.layoutChildren(
+                        horizontal_spacing=h_sp,
+                        vertical_spacing=v_sp,
+                    )
+                    layout_method_used = "layoutChildren"
+                except TypeError:
+                    # 旧版 Houdini 可能不支持间距参数
+                    parent.layoutChildren()
+                    layout_method_used = "layoutChildren(no-spacing)"
+
+        elif method == "grid":
+            _layout_grid(nodes, spacing)
+            layout_method_used = "grid"
+
+        elif method == "columns":
+            _layout_columns(nodes, spacing)
+            layout_method_used = "columns"
+
+        else:
+            return False, f"未知布局方法: {method}", []
+
+        # ---------- 收集结果位置 ----------
+        positions = []
+        for n in nodes:
+            pos = n.position()
+            positions.append({
+                "name": n.name(),
+                "path": n.path(),
+                "x": round(pos[0], 3),
+                "y": round(pos[1], 3),
+            })
+
+        return (
+            True,
+            f"已布局 {len(nodes)} 个节点（方法: {layout_method_used}）",
+            positions,
+        )
+
+    except Exception as e:
+        return False, f"布局失败: {e}", []
+
+
+def _layout_grid(nodes: list, spacing: float = 1.0) -> None:
+    """网格布局：按节点列表顺序排成 N 列网格"""
+    if not nodes:
+        return
+    import math
+    cols = max(1, int(math.ceil(math.sqrt(len(nodes)))))
+    h_sp = 3.5 * spacing
+    v_sp = 1.5 * spacing
+    for idx, node in enumerate(nodes):
+        col = idx % cols
+        row = idx // cols
+        node.setPosition(hou.Vector2(col * h_sp, -row * v_sp))
+
+
+def _layout_columns(nodes: list, spacing: float = 1.0) -> None:
+    """按拓扑深度分列布局：根节点在最上方，逐层向下排列"""
+    if not nodes:
+        return
+    node_set = set(id(n) for n in nodes)
+
+    # 计算每个节点的深度（输入链长度）
+    depth_map: Dict[int, int] = {}
+
+    def _depth(n) -> int:
+        nid = id(n)
+        if nid in depth_map:
+            return depth_map[nid]
+        inputs = [inp for inp in (n.inputs() or []) if inp and id(inp) in node_set]
+        if not inputs:
+            depth_map[nid] = 0
+            return 0
+        d = max(_depth(inp) for inp in inputs) + 1
+        depth_map[nid] = d
+        return d
+
+    for n in nodes:
+        _depth(n)
+
+    # 按深度分组
+    layers: Dict[int, list] = {}
+    for n in nodes:
+        d = depth_map.get(id(n), 0)
+        layers.setdefault(d, []).append(n)
+
+    h_sp = 3.5 * spacing
+    v_sp = 2.0 * spacing
+    for depth in sorted(layers.keys()):
+        layer_nodes = layers[depth]
+        for idx, node in enumerate(layer_nodes):
+            x = (idx - len(layer_nodes) / 2.0 + 0.5) * h_sp
+            y = -depth * v_sp
+            node.setPosition(hou.Vector2(x, y))
+
+
+def get_node_positions(
+    parent_path: str = "",
+    node_paths: Optional[List[str]] = None,
+) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    """获取节点位置信息
+
+    Args:
+        parent_path: 父网络路径（当 node_paths 为空时使用）
+        node_paths: 特定节点路径列表
+
+    Returns:
+        (success, message, positions_list)
+        positions_list 每项: {name, path, x, y, type}
+    """
+    if hou is None:
+        return False, "Houdini 环境不可用", []
+
+    nodes = []
+    if node_paths:
+        for p in node_paths:
+            n = hou.node(p)
+            if n:
+                nodes.append(n)
+        if not nodes:
+            return False, "指定的节点路径均无效", []
+    else:
+        parent = hou.node(parent_path) if parent_path else None
+        if parent is None:
+            try:
+                editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+                if editor:
+                    parent = editor.pwd()
+            except Exception:
+                pass
+        if parent is None:
+            return False, "未找到目标网络", []
+        nodes = list(parent.children())
+        if not nodes:
+            return False, f"{parent.path()} 下没有子节点", []
+
+    positions = []
+    for n in nodes:
+        pos = n.position()
+        positions.append({
+            "name": n.name(),
+            "path": n.path(),
+            "x": round(pos[0], 3),
+            "y": round(pos[1], 3),
+            "type": n.type().name(),
+        })
+
+    return True, f"获取了 {len(positions)} 个节点的位置", positions
+
+
+# ============================================================
 # NetworkBox 操作
 # ============================================================
 

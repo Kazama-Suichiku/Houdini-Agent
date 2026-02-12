@@ -2814,6 +2814,76 @@ class HoudiniMCP:
             return {"success": False, "error": f"Shell 执行失败: {e}"}
 
     # ========================================
+    # 节点布局工具
+    # ========================================
+
+    def _tool_layout_nodes(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """布局节点 — 多策略自动整理节点位置"""
+        from . import hou_core
+
+        parent_path = args.get("network_path", "") or args.get("parent_path", "")
+        if not parent_path:
+            net = self._current_network()
+            if net is not None:
+                parent_path = net.path()
+
+        node_paths = args.get("node_paths", None)
+        if isinstance(node_paths, str):
+            node_paths = [p.strip() for p in node_paths.split(",") if p.strip()]
+        if node_paths is not None and len(node_paths) == 0:
+            node_paths = None
+
+        method = args.get("method", "auto")
+        spacing = float(args.get("spacing", 1.0))
+
+        ok, msg, positions = hou_core.layout_nodes(
+            parent_path=parent_path,
+            node_paths=node_paths,
+            method=method,
+            spacing=spacing,
+        )
+        if ok:
+            # 构建可读的位置摘要
+            lines = [msg]
+            if positions and len(positions) <= 20:
+                lines.append("节点位置:")
+                for p in positions:
+                    lines.append(f"  {p['path']}: ({p['x']}, {p['y']})")
+            elif positions:
+                lines.append(f"(共 {len(positions)} 个节点，仅显示前 10 个)")
+                for p in positions[:10]:
+                    lines.append(f"  {p['path']}: ({p['x']}, {p['y']})")
+            return {"success": True, "result": "\n".join(lines)}
+        return {"success": False, "error": msg}
+
+    def _tool_get_node_positions(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """获取节点位置信息"""
+        from . import hou_core
+
+        parent_path = args.get("network_path", "") or args.get("parent_path", "")
+        if not parent_path:
+            net = self._current_network()
+            if net is not None:
+                parent_path = net.path()
+
+        node_paths = args.get("node_paths", None)
+        if isinstance(node_paths, str):
+            node_paths = [p.strip() for p in node_paths.split(",") if p.strip()]
+        if node_paths is not None and len(node_paths) == 0:
+            node_paths = None
+
+        ok, msg, positions = hou_core.get_node_positions(
+            parent_path=parent_path,
+            node_paths=node_paths,
+        )
+        if ok:
+            lines = [msg]
+            for p in positions:
+                lines.append(f"  {p['path']} ({p['type']}): ({p['x']}, {p['y']})")
+            return {"success": True, "result": "\n".join(lines)}
+        return {"success": False, "error": msg}
+
+    # ========================================
     # NetworkBox 操作
     # ========================================
 
@@ -3162,6 +3232,9 @@ class HoudiniMCP:
         "get_node_inputs": 'get_node_inputs(node_type="copytopoints", category="sop")',
         "run_skill": 'run_skill(skill_name="analyze_geometry_attribs", params={"node_path":"/obj/geo1/box1"})',
         "list_skills": 'list_skills()',
+        # 节点布局
+        "layout_nodes": 'layout_nodes(network_path="/obj/geo1", method="auto")',
+        "get_node_positions": 'get_node_positions(network_path="/obj/geo1")',
         # NetworkBox
         "create_network_box": 'create_network_box(parent_path="/obj/geo1", name="input_stage", comment="数据输入", color_preset="input", node_paths=["/obj/geo1/box1"])',
         "add_nodes_to_box": 'add_nodes_to_box(parent_path="/obj/geo1", box_name="input_stage", node_paths=["/obj/geo1/box1"])',
@@ -3200,6 +3273,9 @@ class HoudiniMCP:
         "get_node_inputs": "_tool_get_node_inputs",
         "run_skill": "_tool_run_skill",
         "list_skills": "_tool_list_skills",
+        # 节点布局
+        "layout_nodes": "_tool_layout_nodes",
+        "get_node_positions": "_tool_get_node_positions",
         # NetworkBox
         "create_network_box": "_tool_create_network_box",
         "add_nodes_to_box": "_tool_add_nodes_to_box",

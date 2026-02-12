@@ -12,7 +12,7 @@ Built on the **OpenAI Function Calling** protocol, the agent can read node netwo
 
 The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Two modes are available:
 
-- **Agent mode** — Full access to all 35+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
+- **Agent mode** — Full access to all 37+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
 - **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a whitelist guard.
 
 ```
@@ -58,7 +58,7 @@ User request → AI plans → call tools → inspect results → call more tools
 - Copy button on AI responses
 - `Ctrl+Enter` to send messages
 
-## Available Tools (35+)
+## Available Tools (37+)
 
 ### Node Operations
 
@@ -121,6 +121,13 @@ User request → AI plans → call tools → inspect results → call more tools
 | `create_network_box` | Create a NetworkBox (grouping frame) with semantic color presets (input/processing/deform/output/simulation/utility) and optionally include specified nodes |
 | `add_nodes_to_box` | Add nodes to an existing NetworkBox with optional auto-fit |
 | `list_network_boxes` | List all NetworkBoxes in a network with their contents and metadata |
+
+### Node Layout
+
+| Tool | Description |
+|------|-------------|
+| `layout_nodes` | Auto-layout nodes — supports `auto` (smart), `grid`, and `columns` (topological depth) strategies with adjustable spacing |
+| `get_node_positions` | Get node positions (x, y coordinates and type) for layout verification or manual fine-tuning |
 
 ### Performance Profiling
 
@@ -423,6 +430,7 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
+- **v6.8.2** — **Node layout tools**: New `layout_nodes` tool with 3 strategies — `auto` (smart, uses NetworkEditor.layoutNodes or moveToGoodPosition), `grid` (fixed-width grid arrangement), `columns` (topological depth-based column layout with adjustable spacing). New `get_node_positions` for querying node coordinates. **Layout workflow rule**: System prompt enforces execution order: create nodes → connect → verify_and_summarize → layout_nodes → create_network_box (layout must happen before NetworkBox because fitAroundContents depends on node positions). **Widget flash fix**: `CollapsibleSection` and `ParamDiffWidget` now call `setVisible` after `addWidget` to prevent parentless widget flash-as-window artifacts.
 - **v6.8.1** — **English system prompt & bare node name auto-resolution**: System prompt fully rewritten in English for better multi-model compatibility (Chinese reply enforced via `CRITICAL: You MUST reply in Simplified Chinese`). **Bare node name auto-resolution**: New `_resolve_bare_node_names()` post-processor automatically replaces bare node names (e.g. `box1`) in AI replies with full absolute paths (e.g. `/obj/geo1/box1`) using a session-level node path map collected from tool results. Safety rules: only replaces names ending with digits, only when unique path mapping exists, skips code blocks, skips existing path components. **Labs catalog English labels**: Category names in `doc_rag.py` switched to English. **NetworkBox grouping threshold**: Raised to 6+ nodes per box; smaller groups are left ungrouped to reduce clutter.
 - **v6.8** — **Performance profiling & expanded knowledge**: New `perf_start_profile` / `perf_stop_and_report` tools for precise Houdini perfMon-based cook-time and memory profiling. New `analyze_cook_performance` skill for quick network-wide cook-time ranking and bottleneck detection without perfMon. **Expanded knowledge bases**: 5 new domain-specific knowledge bases — SideFX Labs (301KB, with auto-injected node catalog in system prompt), HeightFields/Terrain (249KB), Copernicus/COP (87KB), MPM solver (91KB), Machine Learning (53KB); knowledge trigger keywords extended from VEX-only to all domains. **Labs catalog injection**: System prompt dynamically injects a categorized Labs node directory so the AI proactively recommends Labs tools for game dev, texture baking, terrain, procedural generation, etc. **Universal node-change detection**: `execute_python`, `run_skill`, `copy_node`, and other mutation tools now take before/after network snapshots to auto-generate checkpoint labels and undo entries — previously only `create_node` / `set_node_parameter` had this. **Connection port labels**: `get_network_structure` and all connection displays now show `input_label` (e.g. `First Input(0)`) alongside the index for clearer data-flow understanding. **Thinking section always expanded**: `ThinkingSection` defaults to expanded and stays open after finalization (user preference). **Obstacle collaboration rules**: System prompt now explicitly forbids the AI from abandoning a plan when encountering obstacles — instead it must pause, describe the blocker clearly, and request specific user action. **Performance optimization guidelines**: System prompt includes 6 common optimization strategies (cache nodes, avoid time-dependent expressions, VEX over Python SOP, reduce scatter counts, packed primitives, for-each loop audit). **Pending ops cleanup**: Chat clear now properly resets the batch operations bar and pending ops list.
 - **v6.7** — **PySide2/PySide6 compatibility**: Unified `qt_compat.py` layer auto-detects PySide version; all modules import from this single source. `invoke_on_main()` helper abstracts `QMetaObject.invokeMethod`+`Q_ARG` (PySide6) vs `QTimer.singleShot` (PySide2). Supports Houdini 20.5 (PySide2) through Houdini 21+ (PySide6). **Streaming performance fix**: `AIResponse.content_label` switched from `QLabel.setText` (O(n) full re-render) to `QPlainTextEdit.insertPlainText` (O(1) incremental append) — eliminates long-reply streaming stutter. Dynamic height auto-resize via `contentsChanged` signal. Buffer flush threshold raised to 200 chars / 250ms. **Image content stripping**: New `_strip_image_content()` in `AIClient` strips base64 `image_url` from older messages to prevent 413 context overflow; integrated into `_progressive_trim` (level-aware: keeps 2→1→0 recent images) and `agent_loop_auto`/`agent_loop_json_mode` (pre-strip for non-vision models). **Cursor-style image lifecycle**: Only the current round's user message retains images for vision models; all older rounds are automatically stripped to plain text. **@-mention keyboard navigation**: Up/Down arrows navigate the completer list; Enter/Tab select; Escape closes; mouse click and focus-out auto-dismiss the popup. **Token Analytics**: Records now displayed newest-first (reversed order). **DeepSeek context limit**: Updated from 64K→128K for both `deepseek-chat` and `deepseek-reasoner`. **Wrangle class mapping**: System prompt now documents run_over class integer values (0=Detail, 1=Primitives, 2=Points, 3=Vertices, 4=Numbers) for `set_node_parameter`. **Progressive trim tuning**: Level 2 keeps 3 rounds (was 5); level 3 keeps 2 rounds (was 3); `isinstance(c, str)` guard prevents crashing on multimodal tool content.

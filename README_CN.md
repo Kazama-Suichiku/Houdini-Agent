@@ -122,6 +122,13 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | `add_nodes_to_box` | 将节点添加到已有的 NetworkBox，支持自动调整大小 |
 | `list_network_boxes` | 列出网络中所有 NetworkBox 及其内容和元数据 |
 
+### 节点布局
+
+| 工具 | 说明 |
+|------|------|
+| `layout_nodes` | 自动布局节点 — 支持 `auto`（智能）、`grid`（网格）、`columns`（按拓扑深度分列）策略，可调间距 |
+| `get_node_positions` | 获取节点位置信息（x/y 坐标和类型），用于检查布局效果或手动微调 |
+
 ### 性能分析
 
 | 工具 | 说明 |
@@ -423,6 +430,7 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **v6.8.2** — **节点布局工具**：新增 `layout_nodes` 工具，支持 3 种策略 — `auto`（智能，使用 NetworkEditor.layoutNodes 或 moveToGoodPosition）、`grid`（固定宽度网格排列）、`columns`（基于拓扑深度的分列布局，可调间距）。新增 `get_node_positions` 查询节点坐标。**布局工作流规则**：System Prompt 强制执行顺序：创建节点 → 连接 → verify_and_summarize → layout_nodes → create_network_box（布局必须在 NetworkBox 之前，因为 fitAroundContents 依赖节点位置）。**Widget 闪烁修复**：`CollapsibleSection` 和 `ParamDiffWidget` 将 `setVisible` 调用移到 `addWidget` 之后，防止无 parent 窗口闪烁。
 - **v6.8.1** — **英文 System Prompt 与裸节点名自动解析**：System Prompt 全面改写为英文以提升多模型兼容性（通过 `CRITICAL: You MUST reply in Simplified Chinese` 指令确保中文回复）。**裸节点名自动解析**：新增 `_resolve_bare_node_names()` 后处理器，自动将 AI 回复中的裸节点名（如 `box1`）替换为完整绝对路径（如 `/obj/geo1/box1`），数据来源为会话级节点路径映射（从工具结果中收集）。安全规则：仅替换以数字结尾的名称、仅在唯一路径映射时替换、跳过代码块、跳过已有路径成分。**Labs 目录英文标签**：`doc_rag.py` 中 Labs 分类名切换为英文。**NetworkBox 分组阈值**：调整为 6 个以上节点才创建 NetworkBox，避免小组过度封装。
 - **v6.8** — **性能分析与扩展知识库**：新增 `perf_start_profile` / `perf_stop_and_report` 工具，基于 hou.perfMon 进行精确的 cook 时间和内存分析。新增 `analyze_cook_performance` Skill，快速诊断全网络 cook 时间排名和瓶颈节点（无需 perfMon）。**扩展知识库**：新增 5 个专题知识库 — SideFX Labs（301KB，含自动注入的节点分类目录）、HeightField/地形（249KB）、Copernicus/COP（87KB）、MPM 求解器（91KB）、机器学习（53KB）；知识库触发关键词从纯 VEX 扩展至全领域。**Labs 目录注入**：系统提示词动态注入 Labs 节点分类目录，AI 可主动推荐 Labs 工具用于游戏开发、纹理烘焙、地形生成、程序化创建等场景。**通用节点变更检测**：`execute_python`、`run_skill`、`copy_node` 等修改类工具执行前后自动快照网络子节点，检测到变更时生成 checkpoint 标签和撤销入口（之前仅 `create_node` / `set_node_parameter` 有此功能）。**连接端口名称**：`get_network_structure` 及所有连接关系显示中新增 `input_label`（如 `First Input(0)`），便于理解数据流方向。**思考区块默认展开**：`ThinkingSection` 默认展开且结束后保持展开状态（用户偏好）。**障碍协作规则**：系统提示词明确禁止 AI 在遇到障碍时放弃方案，要求暂停并清晰描述障碍和所需用户操作。**性能优化策略**：系统提示词内置 6 种常见优化手段（Cache 节点、避免 time dependent 表达式、VEX 替代 Python SOP、减少散点数量、Packed Primitives、for-each 循环审查）。**待确认操作清理**：清空对话时正确重置批量操作栏和待确认列表。
 - **v6.7** — **PySide2/PySide6 兼容**：统一 `qt_compat.py` 兼容层自动检测 PySide 版本，所有模块从单一源导入。`invoke_on_main()` 辅助函数抽象 `QMetaObject.invokeMethod`+`Q_ARG`（PySide6）vs `QTimer.singleShot`（PySide2）差异。支持 Houdini 20.5（PySide2）到 Houdini 21+（PySide6）。**流式输出性能修复**：`AIResponse.content_label` 从 `QLabel.setText`（O(n) 全文重排）切换为 `QPlainTextEdit.insertPlainText`（O(1) 增量追加），彻底消除长回复流式输出卡顿。通过 `contentsChanged` 信号自动调整高度。缓冲刷新阈值提升至 200 字符 / 250ms。**图片内容剥离**：`AIClient` 新增 `_strip_image_content()` 方法，从旧消息中剥离 base64 `image_url`，防止 413 上下文溢出；集成到 `_progressive_trim`（按裁剪级别保留 2→1→0 张近期图片）和 `agent_loop_auto`/`agent_loop_json_mode`（非视觉模型预处理剥离）。**Cursor 风格图片生命周期**：仅当前轮次的用户消息为视觉模型保留图片，旧轮次自动转为纯文本。**@提及键盘导航**：上下箭头在补全列表中导航，Enter/Tab 选中，Escape 关闭，鼠标点击和失焦自动收起弹窗。**Token 分析面板**：记录改为倒序显示（最新优先）。**DeepSeek 上下文限制**：从 64K 更新为 128K（`deepseek-chat` 和 `deepseek-reasoner`）。**Wrangle class 参数映射**：系统提示词新增 run_over class 整数值对应关系（0=Detail, 1=Primitives, 2=Points, 3=Vertices, 4=Numbers），方便 `set_node_parameter` 设置。**渐进裁剪调优**：Level 2 保留 3 轮（原 5 轮），Level 3 保留 2 轮（原 3 轮）；`isinstance(c, str)` 类型守卫防止多模态 tool 内容导致崩溃。

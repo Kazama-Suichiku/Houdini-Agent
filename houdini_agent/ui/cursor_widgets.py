@@ -140,13 +140,14 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(6, 4, 4, 4)
         self.content_layout.setSpacing(2)
-        self.content_widget.setVisible(not collapsed)
         self.content_widget.setStyleSheet(f"""
             QWidget {{
                 background: {CursorTheme.BG_TERTIARY};
             }}
         """)
         layout.addWidget(self.content_widget)
+        # ★ 必须在 addWidget 之后再 setVisible，否则无 parent 的 widget 会闪烁为独立窗口
+        self.content_widget.setVisible(not collapsed)
     
     def _update_header(self):
         arrow = "▶" if self._collapsed else "▼"
@@ -1843,8 +1844,9 @@ class ParamDiffWidget(QtWidgets.QWidget):
                         )
                         diff_layout.addWidget(lbl)
             
-            self._diff_frame.setVisible(True)  # ★ 默认展开
+            # ★ 必须先 addWidget（设置 parent）再 setVisible，避免无 parent 窗口闪烁
             root_layout.addWidget(self._diff_frame)
+            self._diff_frame.setVisible(True)  # 默认展开
         else:
             # ── 内联 diff (标量) ──
             inline = QtWidgets.QHBoxLayout()
