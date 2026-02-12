@@ -926,12 +926,12 @@ class HoudiniDocIndex:
             self._labs_catalog_cache = ""
             return ""
 
-        # 按功能分类
+        # Categorize by function
         categories: Dict[str, List[str]] = {
-            '游戏开发/优化': [], '纹理/UV': [], '地形': [],
-            '摄影测量': [], '程序化生成': [], '建模/几何': [],
-            'FX/视觉': [], '导入导出': [], 'Flowmap': [],
-            '树木生成': [], '工具': [],
+            'Game Dev/Optimization': [], 'Texture/UV': [], 'Terrain': [],
+            'Photogrammetry': [], 'Procedural Generation': [], 'Modeling/Geometry': [],
+            'FX/Visual': [], 'Import/Export': [], 'Flowmap': [],
+            'Tree Generation': [], 'Utility': [],
         }
 
         for name, desc in nodes:
@@ -939,38 +939,38 @@ class HoudiniDocIndex:
             dl = desc.lower()
             c = nl + ' ' + dl
             if 'av ' in nl or 'alicevision' in dl or 'photogramm' in dl:
-                categories['摄影测量'].append(name)
+                categories['Photogrammetry'].append(name)
             elif 'flowmap' in nl:
                 categories['Flowmap'].append(name)
             elif 'tree' in nl and any(w in nl for w in ('branch', 'trunk', 'leaf', 'controller', 'simple leaf')):
-                categories['树木生成'].append(name)
+                categories['Tree Generation'].append(name)
             elif any(w in c for w in ('game', 'lod', 'baker', 'bake', 'pivot painter',
                                        'impostor', 'niagara', 'unreal', 'fbx archive')):
-                categories['游戏开发/优化'].append(name)
+                categories['Game Dev/Optimization'].append(name)
             elif any(w in c for w in ('texture', 'texel', 'trim', 'uv ', 'material',
                                        'triplanar', 'normal', 'detail mesh')):
-                categories['纹理/UV'].append(name)
+                categories['Texture/UV'].append(name)
             elif any(w in c for w in ('terrain', 'height', 'slope', 'hf ')):
-                categories['地形'].append(name)
+                categories['Terrain'].append(name)
             elif any(w in c for w in ('wfc', 'wave function', 'lightning', 'superformula',
                                        'wang tile', 'sci-fi', 'scifi')):
-                categories['程序化生成'].append(name)
+                categories['Procedural Generation'].append(name)
             elif any(w in c for w in ('mesh', 'edge', 'dissolve', 'thicken', 'border',
                                        'partition', 'skeleton', 'path deform', 'group',
                                        'poly', 'deform', 'resample', 'inside face')):
-                categories['建模/几何'].append(name)
+                categories['Modeling/Geometry'].append(name)
             elif any(w in c for w in ('destruction', 'color', 'shader', 'pbr', 'toon',
                                        'physics', 'fracture', 'pyro', 'rbd', 'smoke')):
-                categories['FX/视觉'].append(name)
+                categories['FX/Visual'].append(name)
             elif any(w in c for w in ('export', 'import', 'osm', 'csv', 'xyz', 'goz',
                                        'obj import', 'substance', 'marmoset', 'vector field',
                                        'volume', 'sketchfab', 'pdg')):
-                categories['导入导出'].append(name)
+                categories['Import/Export'].append(name)
             else:
-                categories['工具'].append(name)
+                categories['Utility'].append(name)
 
-        # 生成紧凑文本
-        lines = [f"SideFX Labs 可用节点({len(nodes)}个) - 使用前必须先用 search_local_doc 查询详细文档:"]
+        # Generate compact text
+        lines = [f"SideFX Labs Available Nodes ({len(nodes)}) - MUST use search_local_doc before using any:"]
         for cat, items in categories.items():
             if not items:
                 continue
@@ -991,7 +991,7 @@ class HoudiniDocIndex:
             s += f": {d.description[:120]}"
         if d.parameters:
             names = ", ".join(p[0] for p in d.parameters[:6])
-            s += f"\n   参数: {names}"
+            s += f"\n   Params: {names}"
         return s
 
     @staticmethod
