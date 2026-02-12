@@ -3419,6 +3419,7 @@ Todo 管理规则（严格遵守）:
             elif name == 'set_node_parameter':
                 op_type = 'modify'
                 # undo_snapshot 包含 node_path, param_name, old_value, new_value
+                # ★ 无 snapshot = 参数值未变化 → 不显示 checkpoint（避免用户困惑）
                 if undo_snapshot:
                     node_path = undo_snapshot.get("node_path", "")
                     param_name = undo_snapshot.get("param_name", "")
@@ -3432,9 +3433,6 @@ Todo 管理规则（严格遵守）:
                         "new_value": new_val,
                     }
                     label = NodeOperationLabel('modify', 1, paths, param_diff=param_diff) if paths else None
-                else:
-                    paths = self._extract_node_paths(result_text, 'set_node_parameter') or []
-                    label = NodeOperationLabel('modify', 1, paths) if paths else None
             
             if label:
                 label.nodeClicked.connect(self._navigate_to_node)
