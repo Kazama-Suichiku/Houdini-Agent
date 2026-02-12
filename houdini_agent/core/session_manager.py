@@ -9,7 +9,7 @@ Session Manager — 多会话管理和缓存
 """
 
 import uuid
-from PySide6 import QtWidgets, QtCore
+from houdini_agent.qt_compat import QtWidgets, QtCore
 
 from ..ui.cursor_widgets import (
     CursorTheme,

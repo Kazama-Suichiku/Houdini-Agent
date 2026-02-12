@@ -5,7 +5,7 @@ Cursor 风格 UI 组件 - 重构版
 每次对话形成完整块：思考 → 操作 → 总结
 """
 
-from PySide6 import QtWidgets, QtCore, QtGui
+from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from datetime import datetime
 from typing import Optional, List, Dict
 import html

@@ -9,7 +9,7 @@ import json
 import atexit
 import hou
 from pathlib import Path
-from PySide6 import QtWidgets, QtGui, QtCore
+from houdini_agent.qt_compat import QtWidgets, QtGui, QtCore
 from houdini_agent.ui.ai_tab import AITab
 from houdini_agent.ui.cursor_widgets import CursorTheme
 

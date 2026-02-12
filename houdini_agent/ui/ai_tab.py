@@ -21,8 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from PySide6 import QtWidgets, QtCore, QtGui
-from PySide6.QtCore import QSettings
+from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui, QSettings, invoke_on_main
 
 from ..utils.ai_client import AIClient, HOUDINI_TOOLS
 from ..utils.mcp import HoudiniMCP
@@ -2477,12 +2476,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                 self._addPythonShell.emit(code, json.dumps(shell_data))
                 # 同时设置 ToolCallItem 结果
                 short = f"[ok] Python ({len(code.splitlines())} lines)" if success else f"[err] {result_text[:50]}"
-                QtCore.QMetaObject.invokeMethod(
-                    self, "_add_tool_result_ui",
-                    QtCore.Qt.QueuedConnection,
-                    QtCore.Q_ARG(str, name),
-                    QtCore.Q_ARG(str, short)
-                )
+                invoke_on_main(self, "_add_tool_result_ui", name, short)
                 return
         
         # === execute_shell 专用展示 ===
@@ -2498,12 +2492,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                 }
                 self._addSystemShell.emit(command, json.dumps(shell_data))
                 short = f"[ok] $ {command[:40]}" if success else f"[err] {result_text[:50]}"
-                QtCore.QMetaObject.invokeMethod(
-                    self, "_add_tool_result_ui",
-                    QtCore.Qt.QueuedConnection,
-                    QtCore.Q_ARG(str, name),
-                    QtCore.Q_ARG(str, short)
-                )
+                invoke_on_main(self, "_add_tool_result_ui", name, short)
                 return
         
         # 检查是否是节点操作，需要高亮显示
@@ -2513,12 +2502,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
                 # 成功时使用节点操作标签（直接传 dict，避免 JSON 序列化开销）
                 self._addNodeOperation.emit(name, result)
                 # 同时设置 ToolCallItem 结果（折叠式，可展开查看完整内容）
-                QtCore.QMetaObject.invokeMethod(
-                    self, "_add_tool_result_ui",
-                    QtCore.Qt.QueuedConnection,
-                    QtCore.Q_ARG(str, name),
-                    QtCore.Q_ARG(str, f"[ok] {result_text}")
-                )
+                invoke_on_main(self, "_add_tool_result_ui", name, f"[ok] {result_text}")
                 return
             else:
                 # 失败时显示错误信息（继续下面的逻辑）
@@ -2527,12 +2511,7 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
         # 添加到执行流程（CollapsibleSection 风格，点击展开查看完整结果）
         if self._agent_response or self._current_response:
             prefix = "[err]" if not success else "[ok]"
-            QtCore.QMetaObject.invokeMethod(
-                self, "_add_tool_result_ui",
-                QtCore.Qt.QueuedConnection,
-                QtCore.Q_ARG(str, name),
-                QtCore.Q_ARG(str, f"{prefix} {result_text}")
-            )
+            invoke_on_main(self, "_add_tool_result_ui", name, f"{prefix} {result_text}")
     
     @QtCore.Slot(str, str)
     def _add_tool_result_ui(self, name: str, result: str):
@@ -3143,9 +3122,8 @@ NetworkBox 层级导航（大型网络查询策略，必须遵守）:
         if not self._current_model_supports_vision():
             return
         import base64
-        from PySide6.QtCore import QBuffer, QIODevice
-        buf = QBuffer()
-        buf.open(QIODevice.WriteOnly)
+        buf = QtCore.QBuffer()
+        buf.open(QtCore.QIODevice.WriteOnly)
         image.save(buf, "PNG")
         b64 = base64.b64encode(buf.data().data()).decode('utf-8')
         buf.close()

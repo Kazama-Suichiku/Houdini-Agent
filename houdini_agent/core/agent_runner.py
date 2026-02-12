@@ -10,7 +10,7 @@ Agent Runner — Agent 循环辅助：标题生成、确认模式、工具调度
 
 import threading
 import queue
-from PySide6 import QtWidgets, QtCore
+from houdini_agent.qt_compat import QtWidgets, QtCore
 from ..ui.cursor_widgets import VEXPreviewInline
 
 

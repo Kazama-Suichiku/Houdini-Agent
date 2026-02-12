@@ -5,7 +5,7 @@ Header UI 构建 — 顶部设置栏（模型选择、Provider、Web/Think 开�
 从 ai_tab.py 中拆分出的 Mixin，所有方法通过 self 访问 AITab 实例状态。
 """
 
-from PySide6 import QtWidgets, QtCore
+from houdini_agent.qt_compat import QtWidgets, QtCore
 from .cursor_widgets import CursorTheme
 
 

@@ -8,7 +8,7 @@ Chat View — 对话显示和滚动逻辑
 - Toast 消息显示
 """
 
-from PySide6 import QtWidgets, QtCore, QtGui
+from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .cursor_widgets import (
     CursorTheme,
     UserMessage,

@@ -168,6 +168,7 @@ Houdini-Agent/
 └── houdini_agent/                   # 主模块
     ├── main.py                     # 模块入口与窗口管理
     ├── shelf_tool.py               # Houdini 工具架集成
+    ├── qt_compat.py                # PySide2/PySide6 兼容层
     ├── QUICK_SHELF_CODE.py         # 快速工具架代码片段
     ├── core/
     │   ├── main_window.py          # 主窗口（工作区保存/恢复）
@@ -210,7 +211,7 @@ Houdini-Agent/
 
 - **Houdini 20.5+**（或 21+）
 - **Python 3.9+**（Houdini 自带）
-- **PySide6**（Houdini 自带）
+- **PySide2 或 PySide6**（Houdini 自带 — Houdini ≤20.5 为 PySide2，Houdini 21+ 为 PySide6）
 - **Windows**（主要），Linux/macOS 理论上可支持
 
 ### 安装
@@ -404,7 +405,7 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
-- **v6.7** — **流式输出性能修复**：`AIResponse.content_label` 从 `QLabel.setText`（O(n) 全文重排）切换为 `QPlainTextEdit.insertPlainText`（O(1) 增量追加），彻底消除长回复流式输出卡顿。通过 `contentsChanged` 信号自动调整高度。缓冲刷新阈值提升至 200 字符 / 250ms。**图片内容剥离**：`AIClient` 新增 `_strip_image_content()` 方法，从旧消息中剥离 base64 `image_url`，防止 413 上下文溢出；集成到 `_progressive_trim`（按裁剪级别保留 2→1→0 张近期图片）和 `agent_loop_auto`/`agent_loop_json_mode`（非视觉模型预处理剥离）。**Cursor 风格图片生命周期**：仅当前轮次的用户消息为视觉模型保留图片，旧轮次自动转为纯文本。**@提及键盘导航**：上下箭头在补全列表中导航，Enter/Tab 选中，Escape 关闭，鼠标点击和失焦自动收起弹窗。**Token 分析面板**：记录改为倒序显示（最新优先）。**DeepSeek 上下文限制**：从 64K 更新为 128K（`deepseek-chat` 和 `deepseek-reasoner`）。**Wrangle class 参数映射**：系统提示词新增 run_over class 整数值对应关系（0=Detail, 1=Primitives, 2=Points, 3=Vertices, 4=Numbers），方便 `set_node_parameter` 设置。**渐进裁剪调优**：Level 2 保留 3 轮（原 5 轮），Level 3 保留 2 轮（原 3 轮）；`isinstance(c, str)` 类型守卫防止多模态 tool 内容导致崩溃。
+- **v6.7** — **PySide2/PySide6 兼容**：统一 `qt_compat.py` 兼容层自动检测 PySide 版本，所有模块从单一源导入。`invoke_on_main()` 辅助函数抽象 `QMetaObject.invokeMethod`+`Q_ARG`（PySide6）vs `QTimer.singleShot`（PySide2）差异。支持 Houdini 20.5（PySide2）到 Houdini 21+（PySide6）。**流式输出性能修复**：`AIResponse.content_label` 从 `QLabel.setText`（O(n) 全文重排）切换为 `QPlainTextEdit.insertPlainText`（O(1) 增量追加），彻底消除长回复流式输出卡顿。通过 `contentsChanged` 信号自动调整高度。缓冲刷新阈值提升至 200 字符 / 250ms。**图片内容剥离**：`AIClient` 新增 `_strip_image_content()` 方法，从旧消息中剥离 base64 `image_url`，防止 413 上下文溢出；集成到 `_progressive_trim`（按裁剪级别保留 2→1→0 张近期图片）和 `agent_loop_auto`/`agent_loop_json_mode`（非视觉模型预处理剥离）。**Cursor 风格图片生命周期**：仅当前轮次的用户消息为视觉模型保留图片，旧轮次自动转为纯文本。**@提及键盘导航**：上下箭头在补全列表中导航，Enter/Tab 选中，Escape 关闭，鼠标点击和失焦自动收起弹窗。**Token 分析面板**：记录改为倒序显示（最新优先）。**DeepSeek 上下文限制**：从 64K 更新为 128K（`deepseek-chat` 和 `deepseek-reasoner`）。**Wrangle class 参数映射**：系统提示词新增 run_over class 整数值对应关系（0=Detail, 1=Primitives, 2=Points, 3=Vertices, 4=Numbers），方便 `set_node_parameter` 设置。**渐进裁剪调优**：Level 2 保留 3 轮（原 5 轮），Level 3 保留 2 轮（原 3 轮）；`isinstance(c, str)` 类型守卫防止多模态 tool 内容导致崩溃。
 - **v6.6** — **Mixin 架构拆分**：`ai_tab.py` 拆分为 5 个聚焦的 Mixin 模块（`HeaderMixin`、`InputAreaMixin`、`ChatViewMixin`、`AgentRunnerMixin`、`SessionManagerMixin`），提升可维护性。**NetworkBox 工具**：新增 3 个工具 — `create_network_box`（语义颜色预设：input 蓝/processing 绿/deform 橙/output 红/simulation 紫/utility 灰，可直接包含节点）、`add_nodes_to_box`、`list_network_boxes`；`get_network_structure` 增强支持 `box_name` 钻入模式和概览模式（自动折叠 box 节省 Token）。**NetworkBox 分组规范**：系统提示词要求 AI 在每个逻辑阶段完成后将节点打包到 NetworkBox 中（每组至少 6 个节点），并提供层级导航准则。**确认模式**：`AgentRunnerMixin` 为破坏性工具（创建/删除/修改）添加执行前确认对话框。**思考区块重构**：`ThinkingSection` 从 `QLabel` 切换为 `QPlainTextEdit`，自带滚动条和动态高度计算（与 `ChatInput` 同方案），最大高度 400px。**脉冲指示器**：`PulseIndicator` 动画透明度脉冲圆点，表示"进行中"状态。**工具状态栏**：`ToolStatusBar` 在输入框下方实时显示工具执行状态。**节点补全弹窗**：`NodeCompleterPopup` 支持 `@` 提及自动补全节点路径。**更新器重构**：改用 GitHub Releases API（而非基于 branch 的 VERSION 文件检查），缓存 `zipball_url`。**训练数据导出**：支持多模态消息内容提取（剥离图片，保留 list 格式中的文本）。**模块重载**：所有 Mixin 模块加入重载列表；`MainWindow` 引用重载后刷新；旧窗口调用 `deleteLater()` 干净销毁。
 - **v6.5** — **Agent / Ask 模式**：输入区域下方 Radio 风格切换 — Agent 模式拥有全部工具权限；Ask 模式限制为只读/查询工具，带白名单守卫和系统提示词约束。**Undo All / Keep All**：批量操作栏追踪所有待确认的节点/参数变更，"Undo All" 按逆序撤销，"Keep All" 一键全部确认。**深度思考框架**：`<think>` 标签现在要求结构化 6 步流程（理解→现状→方案→决策→计划→风险），附带明确的思考原则。**自动更新器**：`VERSION` 文件用于语义版本追踪；启动时静默检查 GitHub；一键下载+覆盖+重启，带进度对话框；更新时保留 `config/`、`cache/`、`trainData/`。`tools_override` 参数支持模式级工具过滤。ParamDiff 默认展开。参数值未变时跳过 undo 快照。
 - **v6.4** — **参数 Diff UI**：`set_node_parameter` 显示内联红绿 diff（标量值）和可折叠统一 diff（多行 VEX 代码），支持一键撤销恢复旧值（标量/元组/表达式）。**用户消息折叠**：超过 2 行的消息自动折叠，点击展开/收起。**场景感知 RAG**：用选中节点类型增强检索查询，根据对话长度动态调整注入量（400/800/1200 字符）。**持久化 HTTP Session**：连接池复用，消除每轮 TLS 握手开销。**预编译正则**：XML 标签清洗模式类级编译一次。**消息清洗脏标志**：无新 tool 消息时跳过 O(n) 遍历。**去除工具间延迟**：Houdini 工具执行之间不再 sleep。

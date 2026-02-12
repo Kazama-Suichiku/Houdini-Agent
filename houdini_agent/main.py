@@ -1,7 +1,7 @@
 import os
 import sys
 import hou
-from PySide6 import QtWidgets
+from houdini_agent.qt_compat import QtWidgets
 
 # 强制重新加载模块，避免缓存问题
 def _reload_modules():
@@ -11,6 +11,7 @@ def _reload_modules():
         del sys.modules[k]
     
     modules_to_reload = [
+        'houdini_agent.qt_compat',  # ★ Qt 兼容层最先重载
         'houdini_agent.utils.token_optimizer',
         'houdini_agent.utils.ultra_optimizer',
         'houdini_agent.utils.training_data_exporter',
