@@ -194,7 +194,7 @@ Houdini-Agent/
 
 - **Houdini 20.5+** (or 21+)
 - **Python 3.9+** (bundled with Houdini)
-- **PySide6** (bundled with Houdini)
+- **PySide2** (bundled with Houdini)
 - **Windows** (primary), Linux/macOS support possible
 
 ### Installation

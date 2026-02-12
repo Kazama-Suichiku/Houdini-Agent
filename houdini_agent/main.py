@@ -1,7 +1,7 @@
 import os
 import sys
 import hou
-from PySide6 import QtWidgets
+from PySide2 import QtWidgets
 
 # 强制重新加载模块，避免缓存问题
 def _reload_modules():

@@ -194,7 +194,7 @@ Houdini-Agent/
 
 - **Houdini 20.5+**（或 21+）
 - **Python 3.9+**（Houdini 自带）
-- **PySide6**（Houdini 自带）
+- **PySide2**（Houdini 自带）
 - **Windows**（主要），Linux/macOS 理论上可支持
 
 ### 安装
