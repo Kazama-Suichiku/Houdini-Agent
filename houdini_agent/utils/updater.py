@@ -11,6 +11,7 @@ UI 回调通过 Qt Signal 回到主线程。
 
 import os
 import sys
+import json
 import shutil
 import zipfile
 import tempfile
@@ -28,6 +29,9 @@ _API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO
 # 项目根目录（VERSION 文件所在目录）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _VERSION_FILE = _PROJECT_ROOT / "VERSION"
+
+# ETag 缓存文件（用于减少 GitHub API 计数、应对 403 限流）
+_ETAG_CACHE_FILE = _PROJECT_ROOT / "cache" / "update_cache.json"
 
 # 更新时需要保留（不覆盖）的路径
 _PRESERVE_PATHS = frozenset({
@@ -67,6 +71,31 @@ def _version_gt(remote: str, local: str) -> bool:
 
 
 # ==========================================================
+# ETag 缓存
+# ==========================================================
+
+def _load_etag_cache() -> dict:
+    """加载 ETag 缓存（包含上次的 ETag 和 release 数据）"""
+    try:
+        if _ETAG_CACHE_FILE.exists():
+            with open(_ETAG_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_etag_cache(data: dict):
+    """保存 ETag 缓存"""
+    try:
+        _ETAG_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_ETAG_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ==========================================================
 # 检查更新
 # ==========================================================
 
@@ -76,6 +105,11 @@ _cached_zipball_url: str = ""
 
 def check_update(timeout: float = 8.0) -> dict:
     """检查 GitHub Releases 上是否有新版本
+    
+    使用 ETag 缓存机制:
+    - 首次请求：记录 ETag + 完整 release 数据
+    - 后续请求：发送 If-None-Match → 304 不计入限流配额
+    - 遇到 403 限流：降级使用缓存数据
     
     Returns:
         {
@@ -106,21 +140,50 @@ def check_update(timeout: float = 8.0) -> dict:
             sys.path.insert(0, lib_dir)
         import requests  # type: ignore
     
+    # 加载 ETag 缓存
+    etag_cache = _load_etag_cache()
+    
     try:
         headers = {"Accept": "application/vnd.github.v3+json"}
+        
+        # 如果有缓存的 ETag，使用条件请求（304 不计入 API 配额）
+        cached_etag = etag_cache.get("etag", "")
+        if cached_etag:
+            headers["If-None-Match"] = cached_etag
+        
         resp = requests.get(_API_LATEST_RELEASE, headers=headers, timeout=timeout)
         
-        if resp.status_code == 404:
+        if resp.status_code == 304:
+            # 304 Not Modified: Release 数据未变，使用缓存
+            data = etag_cache.get("release_data", {})
+            if not data:
+                result['error'] = "缓存数据异常，请稍后重试"
+                return result
+        elif resp.status_code == 404:
             result['error'] = "暂无 Release 版本"
             return result
-        
-        if resp.status_code != 200:
+        elif resp.status_code == 403:
+            # 403: API 限流 — 降级使用缓存
+            cached_data = etag_cache.get("release_data", {})
+            if cached_data:
+                data = cached_data
+                # 不报错，静默使用缓存（但在 release_notes 中提示）
+            else:
+                result['error'] = "GitHub API 限流 (403)，请等待几分钟后重试"
+                return result
+        elif resp.status_code != 200:
             result['error'] = f"GitHub API 返回 {resp.status_code}"
             return result
+        else:
+            # 200 OK: 解析新数据并更新缓存
+            data = resp.json()
+            new_etag = resp.headers.get("ETag", "")
+            _save_etag_cache({
+                "etag": new_etag,
+                "release_data": data,
+            })
         
-        data = resp.json()
-        
-        # tag_name 通常为 'v6.6.0' 或 '6.6.0'
+        # 解析 release 数据
         tag = data.get("tag_name", "")
         remote_ver = tag.lstrip("vV")  # 去掉前缀 v/V
         result['remote_version'] = remote_ver
@@ -133,11 +196,28 @@ def check_update(timeout: float = 8.0) -> dict:
         # 缓存下载地址（zipball_url 由 GitHub 自动提供）
         _cached_zipball_url = data.get("zipball_url", "")
         
-        # 比较版本
-        if remote_ver:
-            result['has_update'] = _version_gt(remote_ver, result['local_version'])
+        # 比较版本 — 如果 remote_version 为空，视为解析失败
+        if not remote_ver:
+            result['error'] = "无法解析远程版本号"
+            return result
+        
+        result['has_update'] = _version_gt(remote_ver, result['local_version'])
         
     except Exception as e:
+        # 网络异常时尝试降级到缓存
+        cached_data = etag_cache.get("release_data", {})
+        if cached_data:
+            tag = cached_data.get("tag_name", "")
+            remote_ver = tag.lstrip("vV")
+            if remote_ver:
+                result['remote_version'] = remote_ver
+                result['release_name'] = cached_data.get("name", "") or tag
+                body = cached_data.get("body", "") or ""
+                result['release_notes'] = body.split("\n")[0].strip() if body else ""
+                _cached_zipball_url = cached_data.get("zipball_url", "")
+                result['has_update'] = _version_gt(remote_ver, result['local_version'])
+                return result
+        
         if 'Timeout' in type(e).__name__:
             result['error'] = "连接 GitHub 超时，请检查网络"
         else:
