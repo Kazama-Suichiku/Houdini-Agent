@@ -27,6 +27,8 @@ from ..utils.ai_client import AIClient, HOUDINI_TOOLS
 from ..utils.mcp import HoudiniMCP
 from ..utils.token_optimizer import TokenOptimizer, TokenBudget, CompressionStrategy
 from ..utils.ultra_optimizer import UltraOptimizer
+from .theme_engine import ThemeEngine
+from .font_settings_dialog import FontSettingsDialog
 from .cursor_widgets import (
     CursorTheme,
     UserMessage,
@@ -460,33 +462,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         return UltraOptimizer.compress_system_prompt(base_prompt)
 
     def _build_ui(self):
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {CursorTheme.BG_PRIMARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                font-family: 'Microsoft YaHei', 'SimSun', 'Segoe UI', sans-serif;
-            }}
-            QScrollBar:vertical {{
-                background: {CursorTheme.BG_SECONDARY};
-                width: 12px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {CursorTheme.BG_HOVER};
-                border-radius: 4px;
-                min-height: 30px;
-                margin: 2px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {CursorTheme.TEXT_MUTED};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-        """)
+        # ---- 全局 QSS（由 ThemeEngine 从模板渲染） ----
+        self.setObjectName("aiTab")
+        self._theme = ThemeEngine()
+        self._theme.load_template(Path(__file__).parent / "style_template.qss")
+        self._theme.load_preference()
+        self.setStyleSheet(self._theme.render())
         
         self.setMinimumWidth(320)
         
@@ -539,8 +520,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self.btn_export_train.clicked.connect(self._on_export_training_data)
         self.btn_attach_image.clicked.connect(self._on_attach_image)
         self.btn_update.clicked.connect(self._on_check_update)
+        self.btn_font_scale.clicked.connect(self._on_font_settings)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.model_combo.currentIndexChanged.connect(self._update_context_stats)
+        
+        # 字号缩放快捷键
+        # QShortcut 在 PySide6 中位于 QtGui，PySide2 中位于 QtWidgets
+        _QShortcut = getattr(QtWidgets, 'QShortcut', None) or QtGui.QShortcut
+        _QShortcut(QtGui.QKeySequence("Ctrl+="), self, self._zoom_in)
+        _QShortcut(QtGui.QKeySequence("Ctrl++"), self, self._zoom_in)
+        _QShortcut(QtGui.QKeySequence("Ctrl+-"), self, self._zoom_out)
+        _QShortcut(QtGui.QKeySequence("Ctrl+0"), self, self._zoom_reset)
         # 切换提供商或模型或 Think 时自动保存偏好
         self.provider_combo.currentIndexChanged.connect(self._save_model_preference)
         self.model_combo.currentIndexChanged.connect(self._save_model_preference)
@@ -550,6 +540,39 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 多会话标签
         self.session_tabs.currentChanged.connect(self._switch_session)
         self.btn_new_session.clicked.connect(self._new_session)
+
+    # ===== 字号缩放 =====
+
+    def _apply_font_scale(self):
+        """重新渲染 QSS 并应用到界面"""
+        self.setStyleSheet(self._theme.render())
+        self._theme.save_preference()
+
+    def _zoom_in(self):
+        self._theme.zoom_in()
+        self._apply_font_scale()
+
+    def _zoom_out(self):
+        self._theme.zoom_out()
+        self._apply_font_scale()
+
+    def _zoom_reset(self):
+        self._theme.zoom_reset()
+        self._apply_font_scale()
+
+    def _on_font_settings(self):
+        """打开字号设置面板"""
+        dlg = FontSettingsDialog(current_scale=self._theme.scale, parent=self)
+        dlg.scaleChanged.connect(self._on_font_scale_preview)
+        dlg.exec_()
+        # 对话框关闭后保存最终结果
+        self._theme.set_scale(dlg.scale)
+        self._apply_font_scale()
+
+    def _on_font_scale_preview(self, scale: float):
+        """实时预览字号缩放"""
+        self._theme.set_scale(scale)
+        self.setStyleSheet(self._theme.render())
 
     # ===== 上下文统计 =====
     
@@ -683,25 +706,22 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             color = CursorTheme.ACCENT_RED
         
         self.context_label.setText(f"{percent:.1f}% {used_str}/{limit_str}{optimize_indicator}")
-        self.context_label.setStyleSheet(f"""
-            QLabel {{
-                color: {color};
-                font-size: 15px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                padding: 0 4px;
-            }}
-        """)
+        # 动态状态 → QSS 选择器 QLabel#contextLabel[state="..."]
+        if percent < 50:
+            ctx_state = ""
+        elif percent < 80:
+            ctx_state = "warning"
+        else:
+            ctx_state = "critical"
+        self.context_label.setProperty("state", ctx_state)
+        self.context_label.style().unpolish(self.context_label)
+        self.context_label.style().polish(self.context_label)
         
         # 更新优化按钮状态（如果超过阈值，高亮显示）
-        if percent >= 80:
-            self.btn_optimize.setStyleSheet(self._small_btn_style() + f"""
-                QPushButton {{
-                    background-color: {CursorTheme.ACCENT_ORANGE};
-                    color: white;
-                }}
-            """)
-        else:
-            self.btn_optimize.setStyleSheet(self._small_btn_style())
+        opt_state = "warning" if percent >= 80 else ""
+        self.btn_optimize.setProperty("state", opt_state)
+        self.btn_optimize.style().unpolish(self.btn_optimize)
+        self.btn_optimize.style().polish(self.btn_optimize)
 
     def _update_token_stats_display(self):
         """更新 Token 统计按钮显示（对齐 Cursor：显示费用）"""
@@ -813,17 +833,19 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             result = self.client.test_connection('ollama')
             if result.get('ok'):
                 self.key_status.setText("Local")
-                self.key_status.setStyleSheet(f"color: {CursorTheme.ACCENT_GREEN}; font-size: 10px;")
+                self.key_status.setProperty("state", "ok")
             else:
                 self.key_status.setText("Offline")
-                self.key_status.setStyleSheet(f"color: {CursorTheme.ACCENT_RED}; font-size: 10px;")
+                self.key_status.setProperty("state", "error")
         elif self.client.has_api_key(provider):
             masked = self.client.get_masked_key(provider)
             self.key_status.setText(masked)
-            self.key_status.setStyleSheet(f"color: {CursorTheme.ACCENT_GREEN}; font-size: 10px;")
+            self.key_status.setProperty("state", "ok")
         else:
             self.key_status.setText("No Key")
-            self.key_status.setStyleSheet(f"color: {CursorTheme.ACCENT_ORANGE}; font-size: 10px;")
+            self.key_status.setProperty("state", "warning")
+        self.key_status.style().unpolish(self.key_status)
+        self.key_status.style().polish(self.key_status)
 
     def _on_provider_changed(self):
         provider = self._current_provider()
@@ -3401,17 +3423,13 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         img_layout.setSpacing(1)
         
         lbl = ClickableImageLabel(thumb, full_pixmap)
-        lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
+        lbl.setObjectName("imgThumb")
         img_layout.addWidget(lbl)
         
         # 删除按钮
         rm_btn = QtWidgets.QPushButton("x")
         rm_btn.setFixedSize(16, 16)
-        rm_btn.setStyleSheet(f"""
-            QPushButton {{ background: {CursorTheme.ACCENT_RED}; color: white; 
-                          border: none; border-radius: 8px; font-size: 10px; }}
-            QPushButton:hover {{ background: #ff6b6b; }}
-        """)
+        rm_btn.setObjectName("imgRemoveBtn")
         rm_btn.clicked.connect(lambda checked=False, i=idx: self._remove_pending_image(i))
         img_layout.addWidget(rm_btn, alignment=QtCore.Qt.AlignCenter)
         
@@ -3453,16 +3471,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             full_pixmap = QtGui.QPixmap()
             full_pixmap.loadFromData(__import__('base64').b64decode(b64))
             lbl = ClickableImageLabel(thumb, full_pixmap)
-            lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px;")
+            lbl.setObjectName("imgThumb")
             img_layout.addWidget(lbl)
             
             rm_btn = QtWidgets.QPushButton("x")
             rm_btn.setFixedSize(16, 16)
-            rm_btn.setStyleSheet(f"""
-                QPushButton {{ background: {CursorTheme.ACCENT_RED}; color: white; 
-                              border: none; border-radius: 8px; font-size: 10px; }}
-                QPushButton:hover {{ background: #ff6b6b; }}
-            """)
+            rm_btn.setObjectName("imgRemoveBtn")
             rm_btn.clicked.connect(lambda checked=False, idx=i: self._remove_pending_image(idx))
             img_layout.addWidget(rm_btn, alignment=QtCore.Qt.AlignCenter)
             
@@ -5021,22 +5035,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             # 用醒目样式标记按钮
             self.btn_update.setText(f"🔄 v{remote_ver}")
             self.btn_update.setToolTip(f"发现新版本 v{remote_ver}，点击更新")
-            self.btn_update.setStyleSheet(f"""
-                QPushButton {{
-                    background: {CursorTheme.ACCENT_GREEN};
-                    color: {CursorTheme.BG_PRIMARY};
-                    border: 1px solid {CursorTheme.ACCENT_GREEN};
-                    border-radius: 3px;
-                    font-size: 11px;
-                    font-weight: bold;
-                    padding: 2px 6px;
-                    min-height: 20px;
-                }}
-                QPushButton:hover {{
-                    background: #5fd9c0;
-                    color: {CursorTheme.BG_PRIMARY};
-                }}
-            """)
+            self.btn_update.setProperty("state", "available")
+            self.btn_update.style().unpolish(self.btn_update)
+            self.btn_update.style().polish(self.btn_update)
             # 保存检查结果，供手动点击时直接使用
             self._cached_update_result = result
 
@@ -5074,7 +5075,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         """[主线程] 处理检查结果"""
         self.btn_update.setEnabled(True)
         self.btn_update.setText("Update")
-        self.btn_update.setStyleSheet(self._small_btn_style())  # 恢复默认样式
+        self.btn_update.setProperty("state", "")  # 恢复默认样式
+        self.btn_update.style().unpolish(self.btn_update)
+        self.btn_update.style().polish(self.btn_update)
         
         if result.get('error'):
             QtWidgets.QMessageBox.warning(self, "检查更新", f"检查更新失败:\n{result['error']}")
@@ -5124,24 +5127,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._update_progress_dlg.setAutoReset(False)
         self._update_progress_dlg.setMinimumDuration(0)
         self._update_progress_dlg.setValue(0)
-        self._update_progress_dlg.setStyleSheet(f"""
-            QProgressDialog {{
-                background: {CursorTheme.BG_SECONDARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-            QProgressBar {{
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                text-align: center;
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-            QProgressBar::chunk {{
-                background: {CursorTheme.ACCENT_GREEN};
-                border-radius: 3px;
-            }}
-        """)
+        # QProgressDialog / QProgressBar 样式由全局 QSS 控制
         
         # 连接信号
         try:

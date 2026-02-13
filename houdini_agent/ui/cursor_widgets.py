@@ -118,21 +118,7 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.header.setCursor(QtCore.Qt.PointingHandCursor)
         self.header.clicked.connect(self.toggle)
         self._update_header()
-        self.header.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 4px 8px;
-                border: none;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        self.header.setObjectName("collapseHeader")
         layout.addWidget(self.header)
         
         # 内容区
@@ -140,11 +126,7 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(6, 4, 4, 4)
         self.content_layout.setSpacing(2)
-        self.content_widget.setStyleSheet(f"""
-            QWidget {{
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-        """)
+        self.content_widget.setObjectName("collapseContent")
         layout.addWidget(self.content_widget)
         # ★ 必须在 addWidget 之后再 setVisible，否则无 parent 的 widget 会闪烁为独立窗口
         self.content_widget.setVisible(not collapsed)
@@ -178,21 +160,8 @@ class CollapsibleSection(QtWidgets.QWidget):
         label = QtWidgets.QLabel(text)
         label.setWordWrap(True)
         label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        
-        if style == "muted":
-            color = CursorTheme.TEXT_MUTED
-        elif style == "success":
-            color = CursorTheme.ACCENT_GREEN
-        elif style == "error":
-            color = CursorTheme.ACCENT_RED
-        else:
-            color = CursorTheme.TEXT_SECONDARY
-        
-        label.setStyleSheet(f"""
-            color: {color};
-            font-size: 14px;
-            padding: 2px 0;
-        """)
+        label.setObjectName("collapseText")
+        label.setProperty("textStyle", style)
         self.content_layout.addWidget(label)
         return label
 
@@ -292,36 +261,14 @@ class ThinkingSection(CollapsibleSection):
         self.thinking_label.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.thinking_label.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.thinking_label.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
-        self.thinking_label.setStyleSheet(f"""
-            QPlainTextEdit {{
-                color: {CursorTheme.TEXT_MUTED};
-                background: transparent;
-                border: none;
-                padding: 4px;
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-        """)
+        self.thinking_label.setObjectName("thinkLabel")
         # 初始高度为一行（紧凑），流式输入时会动态增大
         self._line_h = QtGui.QFontMetrics(self._text_font).lineSpacing()
         self.thinking_label.setFixedHeight(self._line_h + 12)
         self.content_layout.addWidget(self.thinking_label)
         
         # 标题样式
-        self.header.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_PURPLE};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 4px 8px;
-                border: none;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        self.header.setObjectName("thinkHeader")
     
     def _update_height(self):
         """根据视觉行数（含自动换行）动态调整高度。
@@ -496,13 +443,7 @@ class VEXPreviewInline(QtWidgets.QFrame):
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Maximum,
         )
-        self.setStyleSheet(f"""
-            VEXPreviewInline {{
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1.5px solid {CursorTheme.ACCENT_BEIGE};
-                border-radius: 6px;
-            }}
-        """)
+        self.setObjectName("vexPreviewInline")
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -510,7 +451,7 @@ class VEXPreviewInline(QtWidgets.QFrame):
 
         # 标题行
         title = QtWidgets.QLabel(f"确认执行: {tool_name}")
-        title.setStyleSheet(f"color:{CursorTheme.ACCENT_BEIGE};font-size:13px;font-weight:bold;")
+        title.setObjectName("vexPreviewTitle")
         title.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(title)
 
@@ -528,13 +469,7 @@ class VEXPreviewInline(QtWidgets.QFrame):
             summary_lbl = QtWidgets.QLabel(summary_text)
             summary_lbl.setWordWrap(True)
             summary_lbl.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-            summary_lbl.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_PRIMARY};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_CODE};
-                background: transparent;
-                padding: 2px 4px;
-            """)
+            summary_lbl.setObjectName("vexInlineSummary")
             summary_lbl.setSizePolicy(
                 QtWidgets.QSizePolicy.Expanding,
                 QtWidgets.QSizePolicy.Maximum,
@@ -549,40 +484,14 @@ class VEXPreviewInline(QtWidgets.QFrame):
         btn_cancel = QtWidgets.QPushButton("✕ 取消")
         btn_cancel.setCursor(QtCore.Qt.PointingHandCursor)
         btn_cancel.setFixedHeight(24)
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                padding: 0 12px;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        btn_cancel.setObjectName("btnCancel")
         btn_cancel.clicked.connect(self._on_cancel)
         btn_row.addWidget(btn_cancel)
 
         btn_confirm = QtWidgets.QPushButton("↵ 确认执行")
         btn_confirm.setCursor(QtCore.Qt.PointingHandCursor)
         btn_confirm.setFixedHeight(24)
-        btn_confirm.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_BRIGHT};
-                background: {CursorTheme.ACCENT_GREEN};
-                border: none;
-                border-radius: 4px;
-                padding: 0 14px;
-                font-size: 12px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background: #5fd9c0;
-            }}
-        """)
+        btn_confirm.setObjectName("btnConfirmGreen")
         btn_confirm.clicked.connect(self._on_confirm)
         btn_row.addWidget(btn_confirm)
 
@@ -622,7 +531,10 @@ class VEXPreviewInline(QtWidgets.QFrame):
                     if sw:
                         sw.deleteLater()
         lbl = QtWidgets.QLabel(text)
-        lbl.setStyleSheet(f"color:{color};font-size:12px;padding:4px 0;")
+        lbl.setObjectName("vexPreviewStatus")
+        lbl.setProperty("state", "confirmed" if color == CursorTheme.ACCENT_GREEN else "cancelled")
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)
         layout.addWidget(lbl)
         self.setFixedHeight(30)
 
@@ -641,23 +553,6 @@ class ToolCallItem(CollapsibleSection):
 
     nodePathClicked = QtCore.Signal(str)  # 节点路径被点击
 
-    # 统一灰色标题样式（和 CollapsibleSection 默认一致）
-    _HEADER_STYLE = f"""
-        QPushButton {{
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 13px;
-            font-family: {CursorTheme.FONT_CODE};
-            text-align: left;
-            padding: 3px 8px;
-            border: none;
-            background: transparent;
-        }}
-        QPushButton:hover {{
-            background: {CursorTheme.BG_HOVER};
-            color: {CursorTheme.TEXT_PRIMARY};
-        }}
-    """
-
     def __init__(self, tool_name: str, parent=None):
         super().__init__(tool_name, icon="", collapsed=True, parent=parent)
         self.tool_name = tool_name
@@ -665,22 +560,14 @@ class ToolCallItem(CollapsibleSection):
         self._success = None
         self._start_time = time.time()
 
-        self.header.setStyleSheet(self._HEADER_STYLE)
+        self.header.setObjectName("toolCallHeader")
 
         # 进度条（嵌入 content_layout 顶部，执行完毕后隐藏）
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setFixedHeight(2)
         self.progress_bar.setRange(0, 0)  # indeterminate
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                background: {CursorTheme.BG_TERTIARY};
-                border: none;
-            }}
-            QProgressBar::chunk {{
-                background: {CursorTheme.ACCENT_BEIGE};
-            }}
-        """)
+        self.progress_bar.setObjectName("toolProgress")
         self.content_layout.addWidget(self.progress_bar)
 
         self._result_label = None
@@ -699,24 +586,12 @@ class ToolCallItem(CollapsibleSection):
 
         # 失败时标题用白色（更亮），成功保持灰色
         if not success:
-            self.header.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.TEXT_BRIGHT};
-                    font-size: 13px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    text-align: left;
-                    padding: 3px 8px;
-                    border: none;
-                    background: transparent;
-                }}
-                QPushButton:hover {{
-                    background: {CursorTheme.BG_HOVER};
-                }}
-            """)
+            self.header.setProperty("state", "failed")
+            self.header.style().unpolish(self.header)
+            self.header.style().polish(self.header)
 
         # 添加结果文本（灰色，失败时白色）—— 节点路径可点击
         if result.strip():
-            text_color = CursorTheme.TEXT_MUTED if success else CursorTheme.TEXT_BRIGHT
             rich_html = _linkify_node_paths_plain(result)
             self._result_label = QtWidgets.QLabel(rich_html)
             self._result_label.setWordWrap(True)
@@ -726,12 +601,9 @@ class ToolCallItem(CollapsibleSection):
                 QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse
             )
             self._result_label.linkActivated.connect(self._on_result_link)
-            self._result_label.setStyleSheet(f"""
-                color: {text_color};
-                font-size: 12px;
-                padding: 2px 4px;
-                font-family: {CursorTheme.FONT_CODE};
-            """)
+            self._result_label.setObjectName("toolResultLabel")
+            if not success:
+                self._result_label.setProperty("state", "failed")
             self.content_layout.addWidget(self._result_label)
 
     def _on_result_link(self, url: str):
@@ -755,20 +627,7 @@ class ExecutionSection(CollapsibleSection):
         self._start_time = time.time()
         
         # 更新标题样式
-        self.header.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_BEIGE};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 4px 8px;
-                border: none;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        self.header.setObjectName("execHeader")
     
     def add_tool_call(self, tool_name: str) -> ToolCallItem:
         """添加工具调用"""
@@ -846,7 +705,7 @@ class ImagePreviewDialog(QtWidgets.QDialog):
         self.resize(init_w, init_h)
 
         # 深色背景
-        self.setStyleSheet(f"background: {CursorTheme.BG_PRIMARY};")
+        self.setObjectName("imgPreviewDlg")
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -855,11 +714,10 @@ class ImagePreviewDialog(QtWidgets.QDialog):
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setAlignment(QtCore.Qt.AlignCenter)
-        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll.setObjectName("chatScrollArea")
 
         self._img_label = QtWidgets.QLabel()
         self._img_label.setAlignment(QtCore.Qt.AlignCenter)
-        self._img_label.setStyleSheet("background: transparent;")
         scroll.setWidget(self._img_label)
         layout.addWidget(scroll)
 
@@ -867,16 +725,11 @@ class ImagePreviewDialog(QtWidgets.QDialog):
         bar = QtWidgets.QHBoxLayout()
         bar.setContentsMargins(12, 4, 12, 8)
         info = QtWidgets.QLabel(f"{pixmap.width()} × {pixmap.height()} px")
-        info.setStyleSheet(f"color: {CursorTheme.TEXT_SECONDARY}; font-size: 12px;")
+        info.setObjectName("imgInfoLabel")
         bar.addWidget(info)
         bar.addStretch()
         close_btn = QtWidgets.QPushButton("关闭")
-        close_btn.setStyleSheet(f"""
-            QPushButton {{ background: {CursorTheme.BG_TERTIARY}; color: {CursorTheme.TEXT_PRIMARY};
-                          border: 1px solid {CursorTheme.BORDER}; border-radius: 4px;
-                          padding: 4px 16px; font-size: 13px; }}
-            QPushButton:hover {{ background: {CursorTheme.BG_HOVER}; }}
-        """)
+        close_btn.setObjectName("imgCloseBtn")
         close_btn.clicked.connect(self.close)
         bar.addWidget(close_btn)
         layout.addLayout(bar)
@@ -943,12 +796,6 @@ class UserMessage(QtWidgets.QWidget):
 
         # ---- 主容器（带左边框） ----
         self._container = QtWidgets.QWidget()
-        self._container.setStyleSheet(f"""
-            QWidget#userMsgContainer {{
-                background: {CursorTheme.BG_TERTIARY};
-                border-left: 3px solid {CursorTheme.BORDER_USER};
-            }}
-        """)
         self._container.setObjectName("userMsgContainer")
         container_layout = QtWidgets.QVBoxLayout(self._container)
         container_layout.setContentsMargins(12, 8, 12, 4)
@@ -959,14 +806,7 @@ class UserMessage(QtWidgets.QWidget):
         self.content.setWordWrap(True)
         self.content.setTextFormat(QtCore.Qt.PlainText)
         self.content.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.content.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.TEXT_BRIGHT};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                background: transparent;
-            }}
-        """)
+        self.content.setObjectName("userMsgText")
         container_layout.addWidget(self.content)
 
         # ---- 展开/收起 按钮 ----
@@ -974,20 +814,7 @@ class UserMessage(QtWidgets.QWidget):
         self._toggle_btn.setFlat(True)
         self._toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._toggle_btn.setFixedHeight(20)
-        self._toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 12px;
-                font-family: {CursorTheme.FONT_BODY};
-                border: none;
-                background: transparent;
-                text-align: left;
-                padding: 0;
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.ACCENT_BLUE};
-            }}
-        """)
+        self._toggle_btn.setObjectName("userMsgToggle")
         self._toggle_btn.clicked.connect(self._toggle_collapse)
         self._toggle_btn.setVisible(False)  # 默认隐藏，_maybe_collapse 决定
         container_layout.addWidget(self._toggle_btn)
@@ -1074,50 +901,19 @@ class AIResponse(QtWidgets.QWidget):
         # === Python Shell 区块（可折叠，默认折叠）===
         self.shell_section = CollapsibleSection("Python Shell", collapsed=True, parent=self)
         self.shell_section.setVisible(False)
-        self.shell_section.header.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_YELLOW if hasattr(CursorTheme, 'ACCENT_YELLOW') else '#E5C07B'};
-                font-size: 14px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 4px 8px;
-                border: none;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        self.shell_section.header.setObjectName("shellHeaderPython")
         layout.addWidget(self.shell_section)
         
         # === System Shell 区块（可折叠，默认折叠）===
         self._sys_shell_count = 0
         self.sys_shell_section = CollapsibleSection("System Shell", collapsed=True, parent=self)
         self.sys_shell_section.setVisible(False)
-        self.sys_shell_section.header.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_GREEN};
-                font-size: 14px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 4px 8px;
-                border: none;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        self.sys_shell_section.header.setObjectName("shellHeaderSystem")
         layout.addWidget(self.sys_shell_section)
         
         # === 总结/回复区域 ===
         self.summary_frame = QtWidgets.QFrame()
-        self.summary_frame.setStyleSheet(f"""
-            QFrame {{
-                background: {CursorTheme.BG_SECONDARY};
-                border-left: 3px solid {CursorTheme.BORDER_AI};
-            }}
-        """)
+        self.summary_frame.setObjectName("aiSummary")
         summary_layout = QtWidgets.QVBoxLayout(self.summary_frame)
         summary_layout.setContentsMargins(8, 8, 6, 8)
         summary_layout.setSpacing(4)
@@ -1128,11 +924,7 @@ class AIResponse(QtWidgets.QWidget):
         status_row.setSpacing(8)
         
         self.status_label = QtWidgets.QLabel("思考中...")
-        self.status_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 13px;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self.status_label.setObjectName("aiStatusLabel")
         status_row.addWidget(self.status_label)
         status_row.addStretch()
         
@@ -1141,22 +933,7 @@ class AIResponse(QtWidgets.QWidget):
         self._copy_btn.setVisible(False)
         self._copy_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._copy_btn.setFixedHeight(22)
-        self._copy_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                background: transparent;
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                font-size: 12px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 0 8px;
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.TEXT_PRIMARY};
-                background: {CursorTheme.BG_HOVER};
-                border-color: {CursorTheme.ACCENT_BLUE};
-            }}
-        """)
+        self._copy_btn.setObjectName("aiCopyBtn")
         self._copy_btn.clicked.connect(self._copy_content)
         status_row.addWidget(self._copy_btn)
         
@@ -1176,16 +953,7 @@ class AIResponse(QtWidgets.QWidget):
         self.content_label.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
         )
-        self.content_label.setStyleSheet(f"""
-            QPlainTextEdit {{
-                color: {CursorTheme.TEXT_PRIMARY};
-                background: transparent;
-                border: none;
-                padding: 0px;
-                font-size: 14px;
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-        """)
+        self.content_label.setObjectName("aiContentLabel")
         # 初始高度紧凑，流式输入时自动增长
         self._content_line_h = QtGui.QFontMetrics(
             self.content_label.document().defaultFont()
@@ -1315,39 +1083,18 @@ class AIResponse(QtWidgets.QWidget):
             QtWidgets.QApplication.clipboard().setText(content)
             # 临时反馈
             self._copy_btn.setText("已复制")
-            self._copy_btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.ACCENT_GREEN};
-                    background: transparent;
-                    border: 1px solid {CursorTheme.ACCENT_GREEN};
-                    border-radius: 4px;
-                    font-size: 12px;
-                    font-family: {CursorTheme.FONT_BODY};
-                    padding: 0 8px;
-                }}
-            """)
+            self._copy_btn.setProperty("state", "copied")
+            self._copy_btn.style().unpolish(self._copy_btn)
+            self._copy_btn.style().polish(self._copy_btn)
             QtCore.QTimer.singleShot(1500, self._reset_copy_btn)
     
     def _reset_copy_btn(self):
         """恢复复制按钮样式"""
         try:
             self._copy_btn.setText("复制")
-            self._copy_btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.TEXT_SECONDARY};
-                    background: transparent;
-                    border: 1px solid {CursorTheme.BORDER};
-                    border-radius: 4px;
-                    font-size: 12px;
-                    font-family: {CursorTheme.FONT_BODY};
-                    padding: 0 8px;
-                }}
-                QPushButton:hover {{
-                    color: {CursorTheme.TEXT_PRIMARY};
-                    background: {CursorTheme.BG_HOVER};
-                    border-color: {CursorTheme.ACCENT_BLUE};
-                }}
-            """)
+            self._copy_btn.setProperty("state", "")
+            self._copy_btn.style().unpolish(self._copy_btn)
+            self._copy_btn.style().polish(self._copy_btn)
         except RuntimeError:
             pass  # widget 已销毁
     
@@ -1389,14 +1136,9 @@ class AIResponse(QtWidgets.QWidget):
                 self.content_label.setPlainText("执行完成，详见上方执行过程。")
             else:
                 self.content_label.setPlainText("（无回复内容）")
-            self.content_label.setStyleSheet(f"""
-                QPlainTextEdit {{
-                    color: {CursorTheme.TEXT_MUTED};
-                    background: transparent;
-                    border: none;
-                    font-size: 13px;
-                }}
-            """)
+            self.content_label.setProperty("state", "empty")
+            self.content_label.style().unpolish(self.content_label)
+            self.content_label.style().polish(self.content_label)
         else:
             # 始终显示完整回复内容（不折叠）
             has_node_path = bool(_NODE_PATH_RE.search(content))
@@ -1425,13 +1167,7 @@ class StatusLine(QtWidgets.QLabel):
     
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
-        self.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 16px;
-                padding: 1px 0;
-            }}
-        """)
+        self.setObjectName("statusLine")
         self.setWordWrap(True)
 
 
@@ -1446,24 +1182,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
     undoRequested = QtCore.Signal()       # 请求撤销此操作
     decided = QtCore.Signal()             # undo 或 keep 完成后通知（用于更新批量操作栏）
     
-    _BTN_STYLE = f"""
-        QPushButton {{{{
-            color: {{color}};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_BODY};
-            padding: 1px 6px;
-            border: 1px solid {{border}};
-            border-radius: 3px;
-            background: transparent;
-        }}}}
-        QPushButton:hover {{{{
-            background: {{hover}};
-        }}}}
-        QPushButton:disabled {{{{
-            color: {CursorTheme.TEXT_MUTED};
-            border-color: transparent;
-        }}}}
-    """
+    # _BTN_STYLE removed — use objectName-based QSS instead
     
     def __init__(self, operation: str, count: int, node_paths: list = None, 
                  detail_text: str = None, param_diff: dict = None, parent=None):
@@ -1506,17 +1225,10 @@ class NodeOperationLabel(QtWidgets.QWidget):
         count_text = f"{prefix}{count} {plural}"
         
         count_label = QtWidgets.QLabel(count_text)
-        count_label.setStyleSheet(f"""
-            QLabel {{
-                color: {color};
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_BODY};
-                font-weight: bold;
-                padding: 2px 6px;
-                background: {CursorTheme.BG_TERTIARY};
-                border-radius: 3px;
-            }}
-        """)
+        count_label.setObjectName("nodeOpCount")
+        count_label.setProperty("op", operation)
+        count_label.style().unpolish(count_label)
+        count_label.style().polish(count_label)
         layout.addWidget(count_label)
         
         # 每个节点名作为可点击按钮
@@ -1527,37 +1239,19 @@ class NodeOperationLabel(QtWidgets.QWidget):
             btn.setFlat(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setToolTip(f"点击跳转: {path}")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.ACCENT_BEIGE};
-                    font-size: 12px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    padding: 1px 4px;
-                    border: 1px solid transparent;
-                    text-decoration: underline;
-                }}
-                QPushButton:hover {{
-                    color: {CursorTheme.TEXT_BRIGHT};
-                    background: {CursorTheme.BG_HOVER};
-                    border-color: {CursorTheme.BORDER};
-                }}
-            """)
+            btn.setObjectName("nodePathBtn")
             btn.clicked.connect(lambda checked=False, p=path: self.nodeClicked.emit(p))
             layout.addWidget(btn)
         
         if len(self._node_paths) > 5:
             more = QtWidgets.QLabel(f"+{len(self._node_paths) - 5} more")
-            more.setStyleSheet(f"color: {CursorTheme.TEXT_MUTED}; font-size: 10px;")
+            more.setObjectName("nodeOpMore")
             layout.addWidget(more)
         
         # 简单文本详情（仅在没有 param_diff 时使用）
         if detail_text:
             detail_label = QtWidgets.QLabel(detail_text)
-            detail_label.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_CODE};
-            """)
+            detail_label.setObjectName("nodeOpDetail")
             detail_label.setToolTip(detail_text)
             layout.addWidget(detail_label)
         
@@ -1567,28 +1261,20 @@ class NodeOperationLabel(QtWidgets.QWidget):
         self._undo_btn = QtWidgets.QPushButton("undo")
         self._undo_btn.setFixedHeight(20)
         self._undo_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self._undo_btn.setStyleSheet(self._BTN_STYLE.format(
-            color=CursorTheme.ACCENT_RED, border=CursorTheme.ACCENT_RED,
-            hover=CursorTheme.BG_HOVER))
+        self._undo_btn.setObjectName("btnUndoOp")
         self._undo_btn.clicked.connect(self._on_undo)
         layout.addWidget(self._undo_btn)
         
         self._keep_btn = QtWidgets.QPushButton("keep")
         self._keep_btn.setFixedHeight(20)
         self._keep_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self._keep_btn.setStyleSheet(self._BTN_STYLE.format(
-            color=CursorTheme.ACCENT_GREEN, border=CursorTheme.ACCENT_GREEN,
-            hover=CursorTheme.BG_HOVER))
+        self._keep_btn.setObjectName("btnKeepOp")
         self._keep_btn.clicked.connect(self._on_keep)
         layout.addWidget(self._keep_btn)
         
         # 决定后的状态标签（替代按钮）
         self._status_label = QtWidgets.QLabel()
-        self._status_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self._status_label.setObjectName("nodeOpStatus")
         self._status_label.setVisible(False)
         layout.addWidget(self._status_label)
     
@@ -1607,17 +1293,10 @@ class NodeOperationLabel(QtWidgets.QWidget):
         color = CursorTheme.ACCENT_YELLOW
         plural = "params" if count > 1 else "param"
         count_label = QtWidgets.QLabel(f"~{count} {plural}")
-        count_label.setStyleSheet(f"""
-            QLabel {{
-                color: {color};
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_BODY};
-                font-weight: bold;
-                padding: 2px 6px;
-                background: {CursorTheme.BG_TERTIARY};
-                border-radius: 3px;
-            }}
-        """)
+        count_label.setObjectName("nodeOpCount")
+        count_label.setProperty("op", "modify")
+        count_label.style().unpolish(count_label)
+        count_label.style().polish(count_label)
         header.addWidget(count_label)
         
         for path in self._node_paths[:3]:
@@ -1626,21 +1305,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
             btn.setFlat(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setToolTip(f"点击跳转: {path}")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.ACCENT_BEIGE};
-                    font-size: 12px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    padding: 1px 4px;
-                    border: 1px solid transparent;
-                    text-decoration: underline;
-                }}
-                QPushButton:hover {{
-                    color: {CursorTheme.TEXT_BRIGHT};
-                    background: {CursorTheme.BG_HOVER};
-                    border-color: {CursorTheme.BORDER};
-                }}
-            """)
+            btn.setObjectName("nodePathBtn")
             btn.clicked.connect(lambda checked=False, p=path: self.nodeClicked.emit(p))
             header.addWidget(btn)
         
@@ -1649,27 +1314,19 @@ class NodeOperationLabel(QtWidgets.QWidget):
         self._undo_btn = QtWidgets.QPushButton("undo")
         self._undo_btn.setFixedHeight(20)
         self._undo_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self._undo_btn.setStyleSheet(self._BTN_STYLE.format(
-            color=CursorTheme.ACCENT_RED, border=CursorTheme.ACCENT_RED,
-            hover=CursorTheme.BG_HOVER))
+        self._undo_btn.setObjectName("btnUndoOp")
         self._undo_btn.clicked.connect(self._on_undo)
         header.addWidget(self._undo_btn)
         
         self._keep_btn = QtWidgets.QPushButton("keep")
         self._keep_btn.setFixedHeight(20)
         self._keep_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self._keep_btn.setStyleSheet(self._BTN_STYLE.format(
-            color=CursorTheme.ACCENT_GREEN, border=CursorTheme.ACCENT_GREEN,
-            hover=CursorTheme.BG_HOVER))
+        self._keep_btn.setObjectName("btnKeepOp")
         self._keep_btn.clicked.connect(self._on_keep)
         header.addWidget(self._keep_btn)
         
         self._status_label = QtWidgets.QLabel()
-        self._status_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self._status_label.setObjectName("nodeOpStatus")
         self._status_label.setVisible(False)
         header.addWidget(self._status_label)
         
@@ -1695,11 +1352,9 @@ class NodeOperationLabel(QtWidgets.QWidget):
         self._undo_btn.setVisible(False)
         self._keep_btn.setVisible(False)
         self._status_label.setText("已撤销")
-        self._status_label.setStyleSheet(f"""
-            color: {CursorTheme.ACCENT_RED};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self._status_label.setProperty("state", "undone")
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)
         self._status_label.setVisible(True)
         self.undoRequested.emit()
         self.decided.emit()
@@ -1763,32 +1418,13 @@ class ParamDiffWidget(QtWidgets.QWidget):
             self._toggle_btn = QtWidgets.QPushButton(f"▼ {param_name}")
             self._toggle_btn.setFlat(True)
             self._toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
-            self._toggle_btn.setStyleSheet(f"""
-                QPushButton {{
-                    color: {CursorTheme.ACCENT_YELLOW};
-                    font-size: 11px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    text-align: left;
-                    padding: 1px 4px;
-                    border: none;
-                    background: transparent;
-                }}
-                QPushButton:hover {{
-                    color: {CursorTheme.TEXT_BRIGHT};
-                }}
-            """)
+            self._toggle_btn.setObjectName("diffToggle")
             self._toggle_btn.clicked.connect(self._toggle)
             root_layout.addWidget(self._toggle_btn)
             
             # diff 内容区（默认展开）
             self._diff_frame = QtWidgets.QFrame()
-            self._diff_frame.setStyleSheet(f"""
-                QFrame {{
-                    background: {CursorTheme.BG_PRIMARY};
-                    border: 1px solid {CursorTheme.BORDER};
-                    border-radius: 3px;
-                }}
-            """)
+            self._diff_frame.setObjectName("diffFrame")
             diff_layout = QtWidgets.QVBoxLayout(self._diff_frame)
             diff_layout.setContentsMargins(0, 2, 0, 2)
             diff_layout.setSpacing(0)
@@ -1811,38 +1447,17 @@ class ParamDiffWidget(QtWidgets.QWidget):
             else:
                 for line in diff_body:
                     line_stripped = line.rstrip('\n')
+                    lbl = QtWidgets.QLabel(line_stripped)
+                    lbl.setObjectName("diffLine")
                     if line.startswith('@@'):
-                        lbl = QtWidgets.QLabel(line_stripped)
-                        lbl.setStyleSheet(
-                            f"color: {CursorTheme.ACCENT_PURPLE}; "
-                            f"background: {CursorTheme.BG_TERTIARY}; "
-                            + self._LINE_BASE.format(font=_font)
-                        )
-                        diff_layout.addWidget(lbl)
+                        lbl.setProperty("diffType", "hunk")
                     elif line.startswith('-'):
-                        lbl = QtWidgets.QLabel(line_stripped)
-                        lbl.setStyleSheet(
-                            f"color: {self._RED_TEXT}; "
-                            f"background: {self._RED_BG}; "
-                            + self._LINE_BASE.format(font=_font)
-                        )
-                        diff_layout.addWidget(lbl)
+                        lbl.setProperty("diffType", "del")
                     elif line.startswith('+'):
-                        lbl = QtWidgets.QLabel(line_stripped)
-                        lbl.setStyleSheet(
-                            f"color: {self._GREEN_TEXT}; "
-                            f"background: {self._GREEN_BG}; "
-                            + self._LINE_BASE.format(font=_font)
-                        )
-                        diff_layout.addWidget(lbl)
+                        lbl.setProperty("diffType", "add")
                     else:
-                        lbl = QtWidgets.QLabel(line_stripped)
-                        lbl.setStyleSheet(
-                            f"color: {self._GREY_TEXT}; "
-                            f"background: {CursorTheme.BG_PRIMARY}; "
-                            + self._LINE_BASE.format(font=_font)
-                        )
-                        diff_layout.addWidget(lbl)
+                        lbl.setProperty("diffType", "ctx")
+                    diff_layout.addWidget(lbl)
             
             # ★ 必须先 addWidget（设置 parent）再 setVisible，避免无 parent 窗口闪烁
             root_layout.addWidget(self._diff_frame)
@@ -1855,51 +1470,24 @@ class ParamDiffWidget(QtWidgets.QWidget):
             
             # 参数名
             name_lbl = QtWidgets.QLabel(f"{param_name}:")
-            name_lbl.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_CODE};
-            """)
+            name_lbl.setObjectName("diffParamName")
             inline.addWidget(name_lbl)
             
             # 旧值 (红框)
             old_lbl = QtWidgets.QLabel(self._truncate(old_str, 30))
             old_lbl.setToolTip(f"旧值: {old_str}")
-            old_lbl.setStyleSheet(f"""
-                QLabel {{
-                    color: {self._RED_TEXT};
-                    background: {self._RED_BG};
-                    border: 1px solid {self._RED_BORDER};
-                    border-radius: 3px;
-                    font-size: 11px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    padding: 1px 6px;
-                }}
-            """)
+            old_lbl.setObjectName("diffOldValue")
             inline.addWidget(old_lbl)
             
             # 箭头
             arrow = QtWidgets.QLabel("→")
-            arrow.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 11px;
-            """)
+            arrow.setObjectName("diffArrow")
             inline.addWidget(arrow)
             
             # 新值 (绿框)
             new_lbl = QtWidgets.QLabel(self._truncate(new_str, 30))
             new_lbl.setToolTip(f"新值: {new_str}")
-            new_lbl.setStyleSheet(f"""
-                QLabel {{
-                    color: {self._GREEN_TEXT};
-                    background: {self._GREEN_BG};
-                    border: 1px solid {self._GREEN_BORDER};
-                    border-radius: 3px;
-                    font-size: 11px;
-                    font-family: {CursorTheme.FONT_CODE};
-                    padding: 1px 6px;
-                }}
-            """)
+            new_lbl.setObjectName("diffNewValue")
             inline.addWidget(new_lbl)
             
             root_layout.addLayout(inline)
@@ -1919,23 +1507,15 @@ class ParamDiffWidget(QtWidgets.QWidget):
     
     def _add_block(self, parent_layout, title: str, text: str, is_old: bool):
         """添加旧值/新值整块（用于 difflib 无差异时的 fallback）"""
-        if is_old:
-            bg, fg = self._RED_BG, self._RED_TEXT
-        else:
-            bg, fg = self._GREEN_BG, self._GREEN_TEXT
-        _font = CursorTheme.FONT_CODE
+        diff_type = "del" if is_old else "add"
         header = QtWidgets.QLabel(title)
-        header.setStyleSheet(
-            f"color: {fg}; background: {CursorTheme.BG_TERTIARY}; "
-            + self._LINE_BASE.format(font=_font)
-        )
+        header.setObjectName("diffLine")
+        header.setProperty("diffType", "hunk")
         parent_layout.addWidget(header)
         for line in text.splitlines():
             lbl = QtWidgets.QLabel(line)
-            lbl.setStyleSheet(
-                f"color: {fg}; background: {bg}; "
-                + self._LINE_BASE.format(font=_font)
-            )
+            lbl.setObjectName("diffLine")
+            lbl.setProperty("diffType", diff_type)
             parent_layout.addWidget(lbl)
     
     @staticmethod
@@ -1971,33 +1551,12 @@ class CollapsibleContent(QtWidgets.QWidget):
         self.title_btn.setFlat(True)
         self.title_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.title_btn.clicked.connect(self.toggle)
-        self.title_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-align: left;
-                padding: 2px 0;
-                border: none;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        self.title_btn.setObjectName("collapseContentTitle")
         layout.addWidget(self.title_btn)
         
         self.content_label = QtWidgets.QLabel(content)
         self.content_label.setWordWrap(True)
-        self.content_label.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 14px;
-                font-family: {CursorTheme.FONT_CODE};
-                padding: 4px 0 4px 12px;
-                background: {CursorTheme.BG_TERTIARY};
-            }}
-        """)
+        self.content_label.setObjectName("collapseContentLabel")
         self.content_label.setVisible(False)
         layout.addWidget(self.content_label)
     
@@ -2031,15 +1590,7 @@ class PlanBlock(QtWidgets.QWidget):
         layout.setSpacing(2)
         
         self.title = QtWidgets.QLabel("Plan")
-        self.title.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.ACCENT_BEIGE};
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-                font-weight: bold;
-                padding: 2px 0;
-            }}
-        """)
+        self.title.setObjectName("planTitle")
         layout.addWidget(self.title)
         
         self.steps_layout = QtWidgets.QVBoxLayout()
@@ -2048,21 +1599,12 @@ class PlanBlock(QtWidgets.QWidget):
     
     def add_step(self, text: str, status: str = "pending") -> QtWidgets.QLabel:
         icons = {"pending": "○", "running": "◎", "done": "●", "error": "✗"}
-        colors = {
-            "pending": CursorTheme.TEXT_MUTED,
-            "running": CursorTheme.ACCENT_BLUE,
-            "done": CursorTheme.ACCENT_GREEN,
-            "error": CursorTheme.ACCENT_RED
-        }
         
         label = QtWidgets.QLabel(f"{icons[status]} {text}")
-        label.setStyleSheet(f"""
-            QLabel {{
-                color: {colors[status]};
-                font-size: 16px;
-                padding: 1px 0 1px 8px;
-            }}
-        """)
+        label.setObjectName("planStep")
+        label.setProperty("state", status)
+        label.style().unpolish(label)
+        label.style().polish(label)
         self.steps_layout.addWidget(label)
         self._steps.append((label, text))
         return label
@@ -2071,20 +1613,10 @@ class PlanBlock(QtWidgets.QWidget):
         if 0 <= index < len(self._steps):
             label, text = self._steps[index]
             icons = {"pending": "○", "running": "◎", "done": "●", "error": "✗"}
-            colors = {
-                "pending": CursorTheme.TEXT_MUTED,
-                "running": CursorTheme.ACCENT_BLUE,
-                "done": CursorTheme.ACCENT_GREEN,
-                "error": CursorTheme.ACCENT_RED
-            }
             label.setText(f"{icons[status]} {text}")
-            label.setStyleSheet(f"""
-                QLabel {{
-                    color: {colors[status]};
-                    font-size: 16px;
-                    padding: 1px 0 1px 8px;
-                }}
-            """)
+            label.setProperty("state", status)
+            label.style().unpolish(label)
+            label.style().polish(label)
 
 
 # ============================================================
@@ -2576,6 +2108,8 @@ class _CollapsibleShellOutput(QtWidgets.QWidget):
         self._collapsed = True
         self._full_h = 0
         self._collapsed_h = 0
+        # 根据背景色推断 variant（python / system）
+        self._variant = "system" if bg_color == "#141414" else "python"
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -2585,20 +2119,8 @@ class _CollapsibleShellOutput(QtWidgets.QWidget):
         self._text = QtWidgets.QTextEdit()
         self._text.setReadOnly(True)
         self._text.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
-        self._text.setStyleSheet(f"""
-            QTextEdit {{
-                background: {bg_color};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: none;
-                padding: 6px 8px;
-                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-                font-size: 12px;
-            }}
-            QTextEdit QScrollBar:vertical {{ width:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:vertical {{ background:#3c3c3c; border-radius:2px; }}
-            QTextEdit QScrollBar:horizontal {{ height:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:horizontal {{ background:#3c3c3c; border-radius:2px; }}
-        """)
+        self._text.setObjectName("shellOutput")
+        self._text.setProperty("variant", self._variant)
         self._text.setHtml(
             f'<pre style="margin:0;white-space:pre;font-family:Consolas,Monaco,monospace;'
             f'font-size:12px;">{content_html}</pre>'
@@ -2635,20 +2157,8 @@ class _CollapsibleShellOutput(QtWidgets.QWidget):
                 f"  ▼ 展开 ({remaining} 更多行)"
             )
             self._toggle.setCursor(QtCore.Qt.PointingHandCursor)
-            self._toggle.setStyleSheet(f"""
-                QLabel {{
-                    background: {bg_color};
-                    color: {CursorTheme.ACCENT_BLUE};
-                    font-size: 11px;
-                    padding: 3px 8px;
-                    border-top: 1px solid {CursorTheme.BORDER};
-                    font-family: {CursorTheme.FONT_CODE};
-                }}
-                QLabel:hover {{
-                    color: {CursorTheme.TEXT_PRIMARY};
-                    background: #1e1e3e;
-                }}
-            """)
+            self._toggle.setObjectName("shellToggle")
+            self._toggle.setProperty("variant", self._variant)
             self._toggle.mousePressEvent = lambda e: self._toggle_collapse()
             self._toggle.setFixedHeight(22)
             lay.addWidget(self._toggle)
@@ -2708,14 +2218,7 @@ class PythonShellWidget(QtWidgets.QFrame):
         super().__init__(parent)
         self.setObjectName("PythonShellWidget")
         
-        border_color = CursorTheme.ACCENT_BEIGE if success else CursorTheme.ACCENT_RED
-        self.setStyleSheet(f"""
-            #PythonShellWidget {{
-                background: #1a1a2e;
-                border: 1px solid {CursorTheme.BORDER};
-                border-left: 3px solid {border_color};
-            }}
-        """)
+        self.setProperty("state", "ok" if success else "error")
         
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2723,31 +2226,24 @@ class PythonShellWidget(QtWidgets.QFrame):
         
         # ---- header: Python Shell + 执行时间 ----
         header = QtWidgets.QWidget()
-        header.setStyleSheet("background:#252535;")
+        header.setObjectName("pyShellHeader")
         hl = QtWidgets.QHBoxLayout(header)
         hl.setContentsMargins(8, 4, 8, 4)
         hl.setSpacing(6)
         
         title_lbl = QtWidgets.QLabel("PYTHON SHELL")
-        title_lbl.setStyleSheet(
-            f"color:{CursorTheme.ACCENT_BEIGE};font-size:11px;font-weight:bold;"
-            f"font-family:{CursorTheme.FONT_CODE};"
-        )
+        title_lbl.setObjectName("pyShellTitle")
         hl.addWidget(title_lbl)
         
         hl.addStretch()
         
         if exec_time > 0:
             time_lbl = QtWidgets.QLabel(f"{exec_time:.2f}s")
-            time_lbl.setStyleSheet(f"color:{CursorTheme.TEXT_MUTED};font-size:11px;")
+            time_lbl.setObjectName("shellTimeLbl")
             hl.addWidget(time_lbl)
         
         status_lbl = QtWidgets.QLabel("ok" if success else "err")
-        status_color = CursorTheme.ACCENT_GREEN if success else CursorTheme.ACCENT_RED
-        status_lbl.setStyleSheet(
-            f"color:{status_color};font-size:11px;font-weight:bold;"
-            f"font-family:Consolas,Monaco,monospace;"
-        )
+        status_lbl.setObjectName("shellStatusOk" if success else "shellStatusErr")
         hl.addWidget(status_lbl)
         
         layout.addWidget(header)
@@ -2758,21 +2254,7 @@ class PythonShellWidget(QtWidgets.QFrame):
         code_widget.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
         code_widget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         code_widget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        code_widget.setStyleSheet(f"""
-            QTextEdit {{
-                background: #1e1e3a;
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: none;
-                border-bottom: 1px solid {CursorTheme.BORDER};
-                padding: 6px 8px;
-                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-                font-size: 13px;
-            }}
-            QTextEdit QScrollBar:vertical {{ width:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:vertical {{ background:#3c3c3c; border-radius:2px; }}
-            QTextEdit QScrollBar:horizontal {{ height:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:horizontal {{ background:#3c3c3c; border-radius:2px; }}
-        """)
+        code_widget.setObjectName("shellCodeEdit")
         
         # Python 语法高亮
         highlighted_code = SyntaxHighlighter.highlight_python(code)
@@ -2802,9 +2284,7 @@ class PythonShellWidget(QtWidgets.QFrame):
         
         elif not success:
             err_label = QtWidgets.QLabel("执行失败（无详细信息）")
-            err_label.setStyleSheet(
-                f"color:{CursorTheme.ACCENT_RED};font-size:12px;padding:6px 8px;"
-            )
+            err_label.setObjectName("shellErrFallback")
             layout.addWidget(err_label)
 
 
@@ -2817,14 +2297,7 @@ class SystemShellWidget(QtWidgets.QFrame):
         super().__init__(parent)
         self.setObjectName("SystemShellWidget")
 
-        border_color = CursorTheme.ACCENT_GREEN if success else CursorTheme.ACCENT_RED
-        self.setStyleSheet(f"""
-            #SystemShellWidget {{
-                background: #1a1a1a;
-                border: 1px solid {CursorTheme.BORDER};
-                border-left: 3px solid {border_color};
-            }}
-        """)
+        self.setProperty("state", "ok" if success else "error")
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2832,16 +2305,13 @@ class SystemShellWidget(QtWidgets.QFrame):
 
         # ---- header: SHELL + cwd + 执行时间 + 退出码 ----
         header = QtWidgets.QWidget()
-        header.setStyleSheet("background:#252525;")
+        header.setObjectName("sysShellHeader")
         hl = QtWidgets.QHBoxLayout(header)
         hl.setContentsMargins(8, 4, 8, 4)
         hl.setSpacing(6)
 
         title_lbl = QtWidgets.QLabel("SHELL")
-        title_lbl.setStyleSheet(
-            f"color:{CursorTheme.ACCENT_GREEN};font-size:11px;font-weight:bold;"
-            f"font-family:{CursorTheme.FONT_CODE};"
-        )
+        title_lbl.setObjectName("sysShellTitle")
         hl.addWidget(title_lbl)
 
         if cwd:
@@ -2849,25 +2319,18 @@ class SystemShellWidget(QtWidgets.QFrame):
             parts = cwd.replace('\\', '/').rstrip('/').split('/')
             short_cwd = '/'.join(parts[-2:]) if len(parts) >= 2 else cwd
             cwd_lbl = QtWidgets.QLabel(short_cwd)
-            cwd_lbl.setStyleSheet(
-                f"color:{CursorTheme.TEXT_MUTED};font-size:10px;"
-                f"font-family:{CursorTheme.FONT_CODE};"
-            )
+            cwd_lbl.setObjectName("shellCwdLbl")
             hl.addWidget(cwd_lbl)
 
         hl.addStretch()
 
         if exec_time > 0:
             time_lbl = QtWidgets.QLabel(f"{exec_time:.2f}s")
-            time_lbl.setStyleSheet(f"color:{CursorTheme.TEXT_MUTED};font-size:11px;")
+            time_lbl.setObjectName("shellTimeLbl")
             hl.addWidget(time_lbl)
 
         code_lbl = QtWidgets.QLabel(f"exit {exit_code}")
-        code_color = CursorTheme.ACCENT_GREEN if exit_code == 0 else CursorTheme.ACCENT_RED
-        code_lbl.setStyleSheet(
-            f"color:{code_color};font-size:11px;font-weight:bold;"
-            f"font-family:Consolas,Monaco,monospace;"
-        )
+        code_lbl.setObjectName("shellStatusOk" if exit_code == 0 else "shellStatusErr")
         hl.addWidget(code_lbl)
 
         layout.addWidget(header)
@@ -2878,21 +2341,7 @@ class SystemShellWidget(QtWidgets.QFrame):
         cmd_widget.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
         cmd_widget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         cmd_widget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        cmd_widget.setStyleSheet(f"""
-            QTextEdit {{
-                background: #1e1e1e;
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: none;
-                border-bottom: 1px solid {CursorTheme.BORDER};
-                padding: 6px 8px;
-                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-                font-size: 13px;
-            }}
-            QTextEdit QScrollBar:vertical {{ width:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:vertical {{ background:#3c3c3c; border-radius:2px; }}
-            QTextEdit QScrollBar:horizontal {{ height:5px; background:transparent; }}
-            QTextEdit QScrollBar::handle:horizontal {{ background:#3c3c3c; border-radius:2px; }}
-        """)
+        cmd_widget.setObjectName("shellCmdEdit")
 
         # 命令显示：带 $ 或 > 前缀
         import html as _html
@@ -2927,9 +2376,7 @@ class SystemShellWidget(QtWidgets.QFrame):
 
         elif not success:
             err_label = QtWidgets.QLabel("命令执行失败（无详细信息）")
-            err_label.setStyleSheet(
-                f"color:{CursorTheme.ACCENT_RED};font-size:12px;padding:6px 8px;"
-            )
+            err_label.setObjectName("shellErrFallback")
             layout.addWidget(err_label)
 
 
@@ -2955,12 +2402,6 @@ class CodeBlockWidget(QtWidgets.QFrame):
         self._lang = language.lower()
 
         self.setObjectName("CodeBlockWidget")
-        self.setStyleSheet(f"""
-            #CodeBlockWidget {{
-                background: #1a1a2e;
-                border: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2968,30 +2409,27 @@ class CodeBlockWidget(QtWidgets.QFrame):
 
         # ---- header ----
         header = QtWidgets.QWidget()
-        header.setStyleSheet("background:#252535;")
+        header.setObjectName("codeBlockHeader")
         hl = QtWidgets.QHBoxLayout(header)
         hl.setContentsMargins(8, 3, 4, 3)
         hl.setSpacing(4)
 
         lang_text = self._lang.upper() or ("VEX" if self._is_vex() else "CODE")
         lang_lbl = QtWidgets.QLabel(lang_text)
-        lang_lbl.setStyleSheet(
-            f"color:{CursorTheme.TEXT_MUTED};font-size:11px;font-weight:bold;"
-            f"font-family:Consolas,Monaco,monospace;"
-        )
+        lang_lbl.setObjectName("codeBlockLang")
         hl.addWidget(lang_lbl)
         hl.addStretch()
 
         copy_btn = QtWidgets.QPushButton("复制")
         copy_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        copy_btn.setStyleSheet(self._btn_css())
+        copy_btn.setObjectName("codeBlockBtn")
         copy_btn.clicked.connect(self._on_copy)
         hl.addWidget(copy_btn)
 
         if self._lang in ('vex', 'vfl', '') and self._is_vex():
             wrangle_btn = QtWidgets.QPushButton("创建 Wrangle")
             wrangle_btn.setCursor(QtCore.Qt.PointingHandCursor)
-            wrangle_btn.setStyleSheet(self._btn_css(CursorTheme.ACCENT_GREEN))
+            wrangle_btn.setObjectName("codeBlockBtnGreen")
             wrangle_btn.clicked.connect(lambda: self.createWrangleRequested.emit(self._code))
             hl.addWidget(wrangle_btn)
 
@@ -3003,28 +2441,7 @@ class CodeBlockWidget(QtWidgets.QFrame):
         self._code_edit.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
         self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self._code_edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self._code_edit.setStyleSheet(f"""
-            QTextEdit {{
-                background: #1a1a2e;
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: none;
-                padding: 6px 8px;
-                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-                font-size: 13px;
-            }}
-            QTextEdit QScrollBar:vertical {{
-                width: 6px; background: transparent;
-            }}
-            QTextEdit QScrollBar::handle:vertical {{
-                background: #3c3c3c; border-radius: 3px;
-            }}
-            QTextEdit QScrollBar:horizontal {{
-                height: 6px; background: transparent;
-            }}
-            QTextEdit QScrollBar::handle:horizontal {{
-                background: #3c3c3c; border-radius: 3px;
-            }}
-        """)
+        self._code_edit.setObjectName("codeBlockEdit")
 
         highlighted = self._highlight()
         self._code_edit.setHtml(
@@ -3055,19 +2472,7 @@ class CodeBlockWidget(QtWidgets.QFrame):
             btn.setText("已复制")
             QtCore.QTimer.singleShot(1500, lambda: btn.setText("复制"))
 
-    @staticmethod
-    def _btn_css(color=None):
-        c = color or CursorTheme.TEXT_MUTED
-        return f"""
-            QPushButton {{
-                color: {c}; background: transparent;
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 3px; font-size: 11px; padding: 2px 8px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER}; color: {CursorTheme.TEXT_BRIGHT};
-            }}
-        """
+    # _btn_css removed — styling now via QSS objectName selectors
 
 
 # ============================================================
@@ -3087,20 +2492,7 @@ class RichContentWidget(QtWidgets.QWidget):
     createWrangleRequested = QtCore.Signal(str)
     nodePathClicked = QtCore.Signal(str)  # 节点路径被点击
 
-    # 正文 QLabel 通用样式
-    _TEXT_STYLE = f"""
-        QLabel {{
-            color: {CursorTheme.TEXT_PRIMARY};
-            font-size: 14px;
-            font-family: {CursorTheme.FONT_BODY};
-            line-height: 1.6;
-            padding: 0;
-        }}
-        QLabel a {{
-            color: #4e8fca;
-            text-decoration: none;
-        }}
-    """
+    # _TEXT_STYLE removed — use objectName-based QSS instead
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
@@ -3121,7 +2513,7 @@ class RichContentWidget(QtWidgets.QWidget):
                     | QtCore.Qt.LinksAccessibleByMouse
                 )
                 lbl.setText(seg[1])
-                lbl.setStyleSheet(self._TEXT_STYLE)
+                lbl.setObjectName("richText")
                 lbl.linkActivated.connect(self._on_link)
                 layout.addWidget(lbl)
             elif seg[0] == 'code':
@@ -3151,26 +2543,17 @@ class NodeContextBar(QtWidgets.QFrame):
         super().__init__(parent)
         self.setFixedHeight(28)
         self.setObjectName("NodeContextBar")
-        self.setStyleSheet(f"""
-            #NodeContextBar {{
-                background: {CursorTheme.BG_TERTIARY};
-                border-bottom: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
 
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(10, 0, 6, 0)
         lay.setSpacing(8)
 
         self.path_label = QtWidgets.QLabel("/obj")
-        self.path_label.setStyleSheet(
-            f"color:{CursorTheme.TEXT_MUTED};font-size:12px;"
-            f"font-family:Consolas,Monaco,monospace;"
-        )
+        self.path_label.setObjectName("ctxPathLabel")
         lay.addWidget(self.path_label)
 
         self.sel_label = QtWidgets.QLabel("")
-        self.sel_label.setStyleSheet(f"color:{CursorTheme.ACCENT_BLUE};font-size:12px;")
+        self.sel_label.setObjectName("ctxSelLabel")
         self.sel_label.setVisible(False)
         lay.addWidget(self.sel_label)
 
@@ -3180,7 +2563,7 @@ class NodeContextBar(QtWidgets.QFrame):
         ref_btn.setFixedSize(22, 22)
         ref_btn.setFlat(True)
         ref_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        ref_btn.setStyleSheet("border:none;font-size:12px;")
+        ref_btn.setObjectName("ctxRefreshBtn")
         ref_btn.clicked.connect(self.refreshRequested.emit)
         lay.addWidget(ref_btn)
 
@@ -3208,12 +2591,7 @@ class ToolStatusBar(QtWidgets.QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(22)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: transparent;
-                border: none;
-            }}
-        """)
+        self.setObjectName("toolStatusBar")
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(4, 0, 4, 0)
         lay.setSpacing(4)
@@ -3222,11 +2600,7 @@ class ToolStatusBar(QtWidgets.QFrame):
         lay.addWidget(self._pulse)
 
         self._label = QtWidgets.QLabel("")
-        self._label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_CODE};
-        """)
+        self._label.setObjectName("toolStatusLabel")
         lay.addWidget(self._label)
         lay.addStretch()
 
@@ -3256,12 +2630,7 @@ class VEXPreviewDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"确认执行: {tool_name}")
         self.setMinimumSize(560, 400)
-        self.setStyleSheet(f"""
-            QDialog {{
-                background: {CursorTheme.BG_PRIMARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        self.setObjectName("vexPreviewDlg")
 
         self._accepted = False
         layout = QtWidgets.QVBoxLayout(self)
@@ -3270,7 +2639,7 @@ class VEXPreviewDialog(QtWidgets.QDialog):
 
         # 工具名称
         title = QtWidgets.QLabel(f"工具: {tool_name}")
-        title.setStyleSheet(f"color:{CursorTheme.ACCENT_BEIGE};font-size:14px;font-weight:bold;")
+        title.setObjectName("vexDlgTitle")
         layout.addWidget(title)
 
         # 参数摘要
@@ -3289,7 +2658,7 @@ class VEXPreviewDialog(QtWidgets.QDialog):
             summary_parts.append(f"节点路径: {args['node_path']}")
         if summary_parts:
             info = QtWidgets.QLabel("  |  ".join(summary_parts))
-            info.setStyleSheet(f"color:{CursorTheme.TEXT_SECONDARY};font-size:12px;")
+            info.setObjectName("vexDlgInfo")
             info.setWordWrap(True)
             layout.addWidget(info)
 
@@ -3301,17 +2670,7 @@ class VEXPreviewDialog(QtWidgets.QDialog):
         code_edit = QtWidgets.QPlainTextEdit()
         code_edit.setPlainText(code_text)
         code_edit.setReadOnly(True)
-        code_edit.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_CODE};
-            }}
-        """)
+        code_edit.setObjectName("vexDlgCode")
         layout.addWidget(code_edit, 1)
 
         # 按钮行
@@ -3320,39 +2679,13 @@ class VEXPreviewDialog(QtWidgets.QDialog):
 
         btn_cancel = QtWidgets.QPushButton("取消")
         btn_cancel.setFixedHeight(30)
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                padding: 0 20px;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        btn_cancel.setObjectName("dlgBtnCancel")
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
 
         btn_confirm = QtWidgets.QPushButton("✓ 确认执行")
         btn_confirm.setFixedHeight(30)
-        btn_confirm.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.TEXT_BRIGHT};
-                background: {CursorTheme.ACCENT_GREEN};
-                border: none;
-                border-radius: 4px;
-                padding: 0 20px;
-                font-size: 13px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background: #5fd9c0;
-            }}
-        """)
+        btn_confirm.setObjectName("dlgBtnConfirm")
         btn_confirm.clicked.connect(self.accept)
         btn_row.addWidget(btn_confirm)
 
@@ -3375,28 +2708,7 @@ class NodeCompleterPopup(QtWidgets.QListWidget):
         self._flags_applied = False
         self.setFixedWidth(320)
         self.setMaximumHeight(200)
-        self.setStyleSheet(f"""
-            QListWidget {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER_FOCUS};
-                border-radius: 4px;
-                font-size: 12px;
-                font-family: {CursorTheme.FONT_CODE};
-                padding: 2px;
-            }}
-            QListWidget::item {{
-                padding: 3px 6px;
-                border-radius: 2px;
-            }}
-            QListWidget::item:selected {{
-                background: {CursorTheme.ACCENT_BLUE};
-                color: {CursorTheme.TEXT_BRIGHT};
-            }}
-            QListWidget::item:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        self.setObjectName("nodeCompleter")
         self.itemActivated.connect(self._on_item_activated)
         self.setVisible(False)
         self._all_paths: list = []
@@ -3472,20 +2784,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         # 启用拖拽
         self.setAcceptDrops(True)
-        self.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background-color: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 16px;
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-            QPlainTextEdit:focus {{
-                border-color: {CursorTheme.ACCENT_BEIGE};
-            }}
-        """)
+        self.setObjectName("chatInput")
         self.setMinimumHeight(self._MIN_H)
         self.setMaximumHeight(self._MAX_H)
         # 使用 textChanged，并延迟到下一事件循环执行（确保布局先完成）
@@ -3768,20 +3067,7 @@ class StopButton(QtWidgets.QPushButton):
     
     def __init__(self, parent=None):
         super().__init__("Stop", parent)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {CursorTheme.ACCENT_RED};
-                color: {CursorTheme.TEXT_BRIGHT};
-                border: none;
-                border-radius: 4px;
-                font-size: 17px;
-                padding: 8px 20px;
-                min-height: 32px;
-            }}
-            QPushButton:hover {{
-                background-color: #ff6b6b;
-            }}
-        """)
+        self.setObjectName("btnStop")
 
 
 # ============================================================
@@ -3793,24 +3079,7 @@ class SendButton(QtWidgets.QPushButton):
     
     def __init__(self, parent=None):
         super().__init__("Send", parent)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {CursorTheme.ACCENT_BLUE};
-                color: {CursorTheme.TEXT_BRIGHT};
-                border: none;
-                border-radius: 4px;
-                font-size: 17px;
-                padding: 8px 20px;
-                min-height: 32px;
-            }}
-            QPushButton:hover {{
-                background-color: #1a8cff;
-            }}
-            QPushButton:disabled {{
-                background-color: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_MUTED};
-            }}
-        """)
+        self.setObjectName("btnSend")
 
 
 # ============================================================
@@ -3849,32 +3118,19 @@ class TodoItem(QtWidgets.QWidget):
             "done": "●",
             "error": "✗"
         }
-        colors = {
-            "pending": CursorTheme.TEXT_MUTED,
-            "in_progress": CursorTheme.ACCENT_BLUE,
-            "done": CursorTheme.ACCENT_GREEN,
-            "error": CursorTheme.ACCENT_RED
-        }
         
-        color = colors.get(self.status, CursorTheme.TEXT_MUTED)
         icon = icons.get(self.status, "○")
         
         self.status_label.setText(icon)
-        self.status_label.setStyleSheet(f"color: {color}; font-size: 12px; font-family: {CursorTheme.FONT_BODY};")
+        self.status_label.setObjectName("todoStatusIcon")
+        self.status_label.setProperty("state", self.status)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         
-        if self.status == "done":
-            self.text_label.setStyleSheet(f"""
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_BODY};
-                text-decoration: line-through;
-            """)
-        else:
-            self.text_label.setStyleSheet(f"""
-                color: {color};
-                font-size: 13px;
-                font-family: {CursorTheme.FONT_BODY};
-            """)
+        self.text_label.setObjectName("todoText")
+        self.text_label.setProperty("state", self.status)
+        self.text_label.style().unpolish(self.text_label)
+        self.text_label.style().polish(self.text_label)
     
     def set_status(self, status: str):
         self.status = status
@@ -3896,13 +3152,6 @@ class TodoList(QtWidgets.QWidget):
         
         # 卡片容器
         self._card = QtWidgets.QFrame(self)
-        self._card.setStyleSheet(f"""
-            QFrame#todoCard {{
-                background: {CursorTheme.BG_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 6px;
-            }}
-        """)
         self._card.setObjectName("todoCard")
         card_layout = QtWidgets.QVBoxLayout(self._card)
         card_layout.setContentsMargins(10, 8, 10, 8)
@@ -3913,20 +3162,11 @@ class TodoList(QtWidgets.QWidget):
         header.setSpacing(6)
         
         self.title_label = QtWidgets.QLabel("Todo")
-        self.title_label.setStyleSheet(f"""
-            color: {CursorTheme.ACCENT_PURPLE};
-            font-size: 14px;
-            font-weight: bold;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self.title_label.setObjectName("todoTitle")
         header.addWidget(self.title_label)
         
         self.count_label = QtWidgets.QLabel("0/0")
-        self.count_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_MUTED};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_BODY};
-        """)
+        self.count_label.setObjectName("todoCount")
         header.addWidget(self.count_label)
         
         header.addStretch()
@@ -3934,19 +3174,7 @@ class TodoList(QtWidgets.QWidget):
         self.clear_btn = QtWidgets.QPushButton("Clear")
         self.clear_btn.setFixedHeight(20)
         self.clear_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self.clear_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {CursorTheme.TEXT_MUTED};
-                border: none;
-                font-size: 11px;
-                padding: 2px 6px;
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
+        self.clear_btn.setObjectName("todoClearBtn")
         self.clear_btn.clicked.connect(self.clear_all)
         header.addWidget(self.clear_btn)
         
@@ -3955,7 +3183,7 @@ class TodoList(QtWidgets.QWidget):
         # 分隔线
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.HLine)
-        sep.setStyleSheet(f"color: {CursorTheme.BORDER}; max-height: 1px;")
+        sep.setObjectName("todoSeparator")
         card_layout.addWidget(sep)
         
         # 任务列表
@@ -4113,13 +3341,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         self.setWindowTitle("Token 使用分析")
         self.setMinimumSize(920, 560)
         self.resize(1020, 640)
-        self.setStyleSheet(f"""
-            QDialog {{
-                background: {CursorTheme.BG_PRIMARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                font-family: {CursorTheme.FONT_BODY};
-            }}
-        """)
+        self.setObjectName("tokenPanel")
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
@@ -4138,38 +3360,14 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
 
         reset_btn = QtWidgets.QPushButton("重置统计")
         reset_btn.setFixedWidth(82)
-        reset_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {CursorTheme.ACCENT_ORANGE};
-                border: 1px solid {CursorTheme.ACCENT_ORANGE};
-                border-radius: 4px;
-                padding: 5px 0;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background: rgba(255,150,50,0.12);
-            }}
-        """)
+        reset_btn.setObjectName("tokenResetBtn")
         reset_btn.clicked.connect(self._on_reset)
         foot.addWidget(reset_btn)
 
         foot.addStretch()
         close_btn = QtWidgets.QPushButton("关闭")
         close_btn.setFixedWidth(72)
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-                padding: 5px 0;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        close_btn.setObjectName("tokenCloseBtn")
         close_btn.clicked.connect(self.accept)
         foot.addWidget(close_btn)
         root.addLayout(foot)
@@ -4182,13 +3380,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
     # -------- 摘要区 --------
     def _build_summary(self, records, stats) -> QtWidgets.QWidget:
         card = QtWidgets.QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background: {CursorTheme.BG_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 6px;
-            }}
-        """)
+        card.setObjectName("tokenSummaryCard")
         grid = QtWidgets.QGridLayout(card)
         grid.setContentsMargins(16, 12, 16, 12)
         grid.setHorizontalSpacing(24)
@@ -4229,13 +3421,14 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         ]
         for col, (label, value, color) in enumerate(metrics):
             lbl = QtWidgets.QLabel(label)
-            lbl.setStyleSheet(f"color:{CursorTheme.TEXT_MUTED};font-size:10px;border:none;")
+            lbl.setObjectName("tokenMetricLabel")
             lbl.setAlignment(QtCore.Qt.AlignCenter)
             grid.addWidget(lbl, 0, col)
 
             val = QtWidgets.QLabel(value)
-            fs = "16px" if col < 6 else "15px"
-            val.setStyleSheet(f"color:{color};font-size:{fs};font-weight:bold;font-family:'Consolas','Monaco',monospace;border:none;")
+            val.setObjectName("tokenMetricValue")
+            # Per-metric dynamic color via inline (unique per column)
+            val.setStyleSheet(f"color:{color};")
             val.setAlignment(QtCore.Qt.AlignCenter)
             grid.addWidget(val, 1, col)
 
@@ -4256,31 +3449,19 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
     # -------- 明细表 --------
     def _build_table(self, records) -> QtWidgets.QWidget:
         container = QtWidgets.QFrame()
-        container.setStyleSheet(f"""
-            QFrame {{
-                background: {CursorTheme.BG_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 6px;
-            }}
-        """)
+        container.setObjectName("tokenTableCard")
         vbox = QtWidgets.QVBoxLayout(container)
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(0)
 
         # 标题
         title_lbl = QtWidgets.QLabel(f"  调用明细 ({len(records)} calls)")
-        title_lbl.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_PRIMARY};
-            font-size: 13px;
-            font-weight: bold;
-            padding: 8px 12px 4px 12px;
-            border: none;
-        """)
+        title_lbl.setObjectName("tokenTableTitle")
         vbox.addWidget(title_lbl)
 
         if not records:
             empty = QtWidgets.QLabel("  暂无 API 调用记录")
-            empty.setStyleSheet(f"color:{CursorTheme.TEXT_MUTED};font-size:12px;padding:16px;border:none;")
+            empty.setObjectName("tokenTableEmpty")
             vbox.addWidget(empty)
             return container
 
@@ -4288,25 +3469,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                border: none;
-                background: transparent;
-            }}
-            QScrollBar:vertical {{
-                background: {CursorTheme.BG_PRIMARY};
-                width: 6px;
-                border-radius: 3px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {CursorTheme.BORDER};
-                border-radius: 3px;
-                min-height: 20px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-        """)
+        scroll.setObjectName("chatScrollArea")
 
         table_widget = QtWidgets.QWidget()
         table_layout = QtWidgets.QVBoxLayout(table_widget)
@@ -4352,7 +3515,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
 
         for i, text in enumerate(cells):
             lbl = QtWidgets.QLabel(str(text))
-            lbl.setStyleSheet(f"color:{fg};font-size:{font_size};font-weight:{weight};{font_family}border:none;padding:0 1px;")
+            lbl.setObjectName("tokenHeaderCell" if is_header else "tokenDataCell")
             if i < len(widths) and widths[i] > 0:
                 lbl.setFixedWidth(widths[i])
             # 数字列右对齐
@@ -4363,19 +3526,14 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
                 row_h.addWidget(lbl)
 
         if is_header:
-            row_w.setStyleSheet(f"border-bottom:1px solid {CursorTheme.BORDER};")
+            row_w.setObjectName("tokenHeaderRow")
 
         return row_w
 
     def _make_record_row(self, idx: int, rec: dict, max_total: float) -> QtWidgets.QWidget:
         """构建单条记录行"""
         row_w = QtWidgets.QWidget()
-        row_w.setStyleSheet(f"""
-            QWidget:hover {{
-                background: {CursorTheme.BG_HOVER};
-                border-radius: 3px;
-            }}
-        """)
+        row_w.setObjectName("tokenDataRow")
         row_h = QtWidgets.QHBoxLayout(row_w)
         row_h.setContentsMargins(4, 2, 4, 2)
         row_h.setSpacing(2)
@@ -4442,16 +3600,14 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         ]
         for i, text in enumerate(cells):
             lbl = QtWidgets.QLabel(text)
+            lbl.setObjectName("tokenDataCell")
             if i < len(widths):
                 lbl.setFixedWidth(widths[i])
             align = QtCore.Qt.AlignRight if i >= 3 else QtCore.Qt.AlignLeft
             lbl.setAlignment(align)
             c = colors[i] if i < len(colors) else CursorTheme.TEXT_PRIMARY
-            lbl.setStyleSheet(
-                f"color:{c};font-size:11px;"
-                f"font-family:'Consolas','Monaco',monospace;"
-                f"border:none;padding:0 1px;"
-            )
+            # Per-column unique color via inline
+            lbl.setStyleSheet(f"color:{c};")
             row_h.addWidget(lbl)
 
         # 迷你柱状图

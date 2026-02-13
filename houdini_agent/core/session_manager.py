@@ -11,10 +11,7 @@ Session Manager — 多会话管理和缓存
 import uuid
 from houdini_agent.qt_compat import QtWidgets, QtCore
 
-from ..ui.cursor_widgets import (
-    CursorTheme,
-    TodoList,
-)
+from ..ui.cursor_widgets import TodoList
 
 
 class SessionManagerMixin:
@@ -23,70 +20,27 @@ class SessionManagerMixin:
     def _build_session_tabs(self) -> QtWidgets.QWidget:
         """会话标签栏 - 支持多个对话窗口"""
         container = QtWidgets.QFrame()
-        container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CursorTheme.BG_SECONDARY};
-                border-bottom: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
+        container.setObjectName("sessionBar")
         
         hl = QtWidgets.QHBoxLayout(container)
         hl.setContentsMargins(4, 2, 4, 2)
         hl.setSpacing(0)
         
         self.session_tabs = QtWidgets.QTabBar()
+        self.session_tabs.setObjectName("sessionTabs")
         self.session_tabs.setTabsClosable(False)
         self.session_tabs.setMovable(False)
         self.session_tabs.setExpanding(False)
         self.session_tabs.setDrawBase(False)
         self.session_tabs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.session_tabs.customContextMenuRequested.connect(self._on_tab_context_menu)
-        self.session_tabs.setStyleSheet(f"""
-            QTabBar {{
-                background: transparent;
-            }}
-            QTabBar::tab {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_MUTED};
-                border: 1px solid {CursorTheme.BORDER};
-                border-bottom: none;
-                padding: 5px 12px;
-                margin-right: 2px;
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                min-width: 60px;
-                max-width: 200px;
-            }}
-            QTabBar::tab:selected {{
-                background: {CursorTheme.BG_PRIMARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border-bottom: 2px solid {CursorTheme.ACCENT_BEIGE};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_SECONDARY};
-            }}
-        """)
         hl.addWidget(self.session_tabs, 1)
         
         # "+" 新建对话按钮
         self.btn_new_session = QtWidgets.QPushButton("+")
+        self.btn_new_session.setObjectName("btnNewSession")
         self.btn_new_session.setFixedSize(22, 22)
         self.btn_new_session.setToolTip("新建对话")
-        self.btn_new_session.setStyleSheet(f"""
-            QPushButton {{
-                background: {CursorTheme.BG_TERTIARY};
-                color: {CursorTheme.TEXT_SECONDARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 3px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background: {CursorTheme.BG_HOVER};
-                color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
         hl.addWidget(self.btn_new_session)
         
         return container
@@ -97,22 +51,7 @@ class SessionManagerMixin:
         if tab_index < 0:
             return
         menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {CursorTheme.BG_SECONDARY};
-                color: {CursorTheme.TEXT_PRIMARY};
-                border: 1px solid {CursorTheme.BORDER};
-                font-size: 12px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 4px 0px;
-            }}
-            QMenu::item {{
-                padding: 4px 20px;
-            }}
-            QMenu::item:selected {{
-                background: {CursorTheme.BG_HOVER};
-            }}
-        """)
+        # QMenu 样式由全局 QSS 控制
         close_action = menu.addAction("关闭此对话")
         close_others = menu.addAction("关闭其他对话")
         if self.session_tabs.count() <= 1:
@@ -133,7 +72,7 @@ class SessionManagerMixin:
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
-        scroll_area.setStyleSheet(f"QScrollArea {{ border: none; }}")
+        scroll_area.setObjectName("chatScrollArea")
         
         chat_container = QtWidgets.QWidget()
         chat_layout = QtWidgets.QVBoxLayout(chat_container)

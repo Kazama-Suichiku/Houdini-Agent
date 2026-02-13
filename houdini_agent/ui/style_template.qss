@@ -1,0 +1,1497 @@
+/* ============================================================
+   Houdini Agent — Global QSS Theme (Cursor/VSCode Dark)
+   
+   Design Tokens (reference):
+     BG_PRIMARY   #1e1e1e    BG_SECONDARY  #252526
+     BG_TERTIARY  #2d2d30    BG_HOVER      #3c3c3c
+     BORDER       #3c3c3c    BORDER_FOCUS  #007acc
+     TEXT_PRIMARY  #cccccc   TEXT_SECONDARY #858585
+     TEXT_MUTED    #6a6a6a   TEXT_BRIGHT    #ffffff
+     ACCENT_BLUE   #007acc   ACCENT_GREEN  #4ec9b0
+     ACCENT_ORANGE #ce9178   ACCENT_RED    #f14c4c
+     ACCENT_PURPLE #c586c0   ACCENT_YELLOW #dcdcaa
+     ACCENT_BEIGE  #c8a882
+   
+   Font Size Placeholders (replaced by ThemeEngine):
+     {FS_MICRO}=10  {FS_XS}=11  {FS_SM}=12  {FS_BODY}=13
+     {FS_MD}=14     {FS_LG}=16  {FS_XL}=17
+   ============================================================ */
+
+
+/* ============================================================
+   1. GLOBAL BASE
+   ============================================================ */
+
+QWidget#aiTab {
+    background-color: #1e1e1e;
+    color: #cccccc;
+    font-family: 'Microsoft YaHei', 'SimSun', 'Segoe UI', sans-serif;
+    font-size: {FS_BODY}px;
+}
+
+QToolTip {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    padding: 4px 8px;
+    font-size: {FS_SM}px;
+}
+
+
+/* ============================================================
+   2. SCROLLBARS (global, ultra-thin)
+   ============================================================ */
+
+QScrollBar:vertical {
+    background: #252526;
+    width: 8px;
+    margin: 0;
+    border: none;
+}
+QScrollBar::handle:vertical {
+    background: #3c3c3c;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #555555;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 6px;
+    margin: 0;
+    border: none;
+}
+QScrollBar::handle:horizontal {
+    background: #3c3c3c;
+    border-radius: 3px;
+    min-width: 24px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #555555;
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+
+/* ============================================================
+   3. HEADER
+   ============================================================ */
+
+QFrame#headerFrame {
+    background-color: #252526;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+/* --- ComboBox (Provider / Model) --- */
+QComboBox#providerCombo,
+QComboBox#modelCombo {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: {FS_SM}px;
+    min-height: 24px;
+}
+QComboBox#providerCombo::drop-down,
+QComboBox#modelCombo::drop-down {
+    border: none;
+    width: 16px;
+}
+QComboBox#providerCombo:hover,
+QComboBox#modelCombo:hover {
+    border-color: #007acc;
+}
+QComboBox#providerCombo QAbstractItemView,
+QComboBox#modelCombo QAbstractItemView {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    selection-background-color: rgba(0,122,204,77);
+    selection-color: #ffffff;
+    font-size: {FS_SM}px;
+    outline: none;
+}
+
+/* --- Checkboxes (Web / Think / Agent / Ask / Confirm) --- */
+QCheckBox#chkWeb,
+QCheckBox#chkThink {
+    color: #858585;
+    font-size: {FS_SM}px;
+    spacing: 4px;
+}
+QCheckBox#chkWeb::indicator,
+QCheckBox#chkThink::indicator {
+    width: 12px;
+    height: 12px;
+}
+QCheckBox#chkWeb:hover,
+QCheckBox#chkThink:hover {
+    color: #cccccc;
+}
+
+/* --- Radio-style checkboxes (Agent / Ask / Confirm) --- */
+QCheckBox#chkAgent,
+QCheckBox#chkAsk,
+QCheckBox#chkConfirm {
+    color: #858585;
+    font-size: {FS_SM}px;
+    spacing: 4px;
+}
+QCheckBox#chkAgent::indicator,
+QCheckBox#chkAsk::indicator,
+QCheckBox#chkConfirm::indicator {
+    width: 13px;
+    height: 13px;
+    border-radius: 7px;
+    border: 1.5px solid #6a6a6a;
+    background: transparent;
+}
+QCheckBox#chkAgent::indicator:hover,
+QCheckBox#chkAsk::indicator:hover,
+QCheckBox#chkConfirm::indicator:hover {
+    border-color: #cccccc;
+}
+QCheckBox#chkAgent:hover,
+QCheckBox#chkAsk:hover,
+QCheckBox#chkConfirm:hover {
+    color: #cccccc;
+}
+
+/* Agent checked = grey */
+QCheckBox#chkAgent::indicator:checked {
+    background: #858585;
+    border-color: #858585;
+}
+/* Ask checked = green */
+QCheckBox#chkAsk::indicator:checked {
+    background: #4ec9b0;
+    border-color: #4ec9b0;
+}
+/* Confirm checked = orange */
+QCheckBox#chkConfirm::indicator:checked {
+    background: #ce9178;
+    border-color: #ce9178;
+}
+
+/* --- Key Status --- */
+QLabel#keyStatus {
+    color: #6a6a6a;
+    font-size: {FS_MICRO}px;
+}
+QLabel#keyStatus[state="ok"] {
+    color: #4ec9b0;
+}
+QLabel#keyStatus[state="error"] {
+    color: #f14c4c;
+}
+QLabel#keyStatus[state="warning"] {
+    color: #ce9178;
+}
+
+/* --- Small Buttons (header & input toolbar) --- */
+QPushButton#btnSmall {
+    background: #2d2d30;
+    color: #858585;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    font-size: {FS_XS}px;
+    padding: 2px 8px;
+    min-height: 22px;
+}
+QPushButton#btnSmall:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+    border-color: #007acc;
+}
+
+/* --- Optimize button (with dynamic warning state) --- */
+QPushButton#btnOptimize {
+    background: #2d2d30;
+    color: #858585;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    font-size: {FS_XS}px;
+    padding: 2px 8px;
+    min-height: 22px;
+}
+QPushButton#btnOptimize:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+    border-color: #007acc;
+}
+QPushButton#btnOptimize[state="warning"] {
+    background: #ce9178;
+    color: #ffffff;
+    border-color: #ce9178;
+}
+
+/* --- Update button --- */
+QPushButton#btnUpdate {
+    background: #2d2d30;
+    color: #dcdcaa;
+    border: 1px solid #dcdcaa;
+    border-radius: 4px;
+    font-size: {FS_XS}px;
+    padding: 2px 8px;
+    min-height: 22px;
+}
+QPushButton#btnUpdate:hover {
+    background: #dcdcaa;
+    color: #1e1e1e;
+}
+QPushButton#btnUpdate[state="available"] {
+    background: #4ec9b0;
+    color: #1e1e1e;
+    border-color: #4ec9b0;
+    font-weight: bold;
+}
+
+/* --- Font scale button --- */
+QPushButton#btnFontScale {
+    background: #2d2d30;
+    color: #858585;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    font-size: {FS_SM}px;
+    padding: 2px 6px;
+    min-height: 22px;
+    font-weight: bold;
+}
+QPushButton#btnFontScale:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+    border-color: #007acc;
+}
+
+
+/* ============================================================
+   4. SESSION TABS
+   ============================================================ */
+
+QFrame#sessionBar {
+    background-color: #252526;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+QTabBar#sessionTabs {
+    background: transparent;
+}
+QTabBar#sessionTabs::tab {
+    background: #2d2d30;
+    color: #6a6a6a;
+    border: 1px solid #3c3c3c;
+    border-bottom: none;
+    padding: 5px 12px;
+    margin-right: 2px;
+    font-size: {FS_XS}px;
+    min-width: 60px;
+    max-width: 200px;
+}
+QTabBar#sessionTabs::tab:selected {
+    background: #1e1e1e;
+    color: #cccccc;
+    border-bottom: 2px solid #c8a882;
+}
+QTabBar#sessionTabs::tab:hover:!selected {
+    background: #3c3c3c;
+    color: #858585;
+}
+
+QPushButton#btnNewSession {
+    background: #2d2d30;
+    color: #858585;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+QPushButton#btnNewSession:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+}
+
+/* Chat scroll area */
+QScrollArea#chatScrollArea {
+    border: none;
+    background: transparent;
+}
+
+
+/* ============================================================
+   5. NODE CONTEXT BAR
+   ============================================================ */
+
+QFrame#NodeContextBar {
+    background: #2d2d30;
+    border-bottom: 1px solid #3c3c3c;
+}
+QLabel#ctxPathLabel {
+    color: #6a6a6a;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#ctxSelLabel {
+    color: #007acc;
+    font-size: {FS_SM}px;
+}
+QPushButton#ctxRefreshBtn {
+    border: none;
+    font-size: {FS_SM}px;
+    background: transparent;
+    color: #858585;
+}
+QPushButton#ctxRefreshBtn:hover {
+    color: #cccccc;
+}
+
+
+/* ============================================================
+   6. CHAT AREA - User Messages
+   ============================================================ */
+
+QWidget#userMsgContainer {
+    background: #2d2d30;
+    border-left: 3px solid #555555;
+}
+QLabel#userMsgText {
+    color: #ffffff;
+    font-size: {FS_LG}px;
+    background: transparent;
+}
+QPushButton#userMsgToggle {
+    color: #6a6a6a;
+    font-size: {FS_SM}px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 0;
+}
+QPushButton#userMsgToggle:hover {
+    color: #007acc;
+}
+
+
+/* ============================================================
+   7. CHAT AREA - AI Response
+   ============================================================ */
+
+QFrame#aiSummary {
+    background: #252526;
+    border-left: 3px solid #a0a0a0;
+}
+QLabel#aiStatusLabel {
+    color: #6a6a6a;
+    font-size: {FS_BODY}px;
+}
+QPushButton#aiCopyBtn {
+    color: #858585;
+    background: transparent;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    font-size: {FS_SM}px;
+    padding: 0 8px;
+}
+QPushButton#aiCopyBtn:hover {
+    color: #cccccc;
+    background: #3c3c3c;
+    border-color: #007acc;
+}
+QPushButton#aiCopyBtn[state="copied"] {
+    color: #4ec9b0;
+    border-color: #4ec9b0;
+}
+
+QPlainTextEdit#aiContentLabel {
+    color: #cccccc;
+    background: transparent;
+    border: none;
+    padding: 0px;
+    font-size: {FS_MD}px;
+}
+QPlainTextEdit#aiContentLabel[state="empty"] {
+    color: #6a6a6a;
+    font-size: {FS_BODY}px;
+}
+
+/* Status line */
+QLabel#statusLine {
+    color: #6a6a6a;
+    font-size: {FS_LG}px;
+    padding: 1px 0;
+}
+
+
+/* ============================================================
+   8. CHAT AREA - Collapsible Sections
+   ============================================================ */
+
+/* Default collapsible header */
+QPushButton#collapseHeader {
+    color: #6a6a6a;
+    font-size: {FS_LG}px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    background: #2d2d30;
+}
+QPushButton#collapseHeader:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+}
+
+QWidget#collapseContent {
+    background: #2d2d30;
+}
+
+/* Collapsible section text labels */
+QLabel#collapseText {
+    font-size: {FS_MD}px;
+    padding: 2px 0;
+}
+QLabel#collapseText[textStyle="normal"] { color: #858585; }
+QLabel#collapseText[textStyle="muted"]  { color: #6a6a6a; }
+QLabel#collapseText[textStyle="success"]{ color: #4ec9b0; }
+QLabel#collapseText[textStyle="error"]  { color: #f14c4c; }
+
+/* CollapsibleContent title */
+QPushButton#collapseContentTitle {
+    color: #6a6a6a;
+    font-size: {FS_LG}px;
+    text-align: left;
+    padding: 2px 0;
+    border: none;
+    background: transparent;
+}
+QPushButton#collapseContentTitle:hover {
+    color: #cccccc;
+}
+
+QLabel#collapseContentLabel {
+    color: #858585;
+    font-size: {FS_MD}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 4px 0 4px 12px;
+    background: #2d2d30;
+}
+
+
+/* ============================================================
+   9. THINKING SECTION
+   ============================================================ */
+
+QPushButton#thinkHeader {
+    color: #c586c0;
+    font-size: {FS_LG}px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    background: #2d2d30;
+}
+QPushButton#thinkHeader:hover {
+    background: #3c3c3c;
+}
+
+QPlainTextEdit#thinkLabel {
+    color: #6a6a6a;
+    background: transparent;
+    border: none;
+    padding: 4px;
+    font-size: {FS_BODY}px;
+}
+
+
+/* ============================================================
+   10. EXECUTION SECTION
+   ============================================================ */
+
+QPushButton#execHeader {
+    color: #c8a882;
+    font-size: {FS_LG}px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    background: #2d2d30;
+}
+QPushButton#execHeader:hover {
+    background: #3c3c3c;
+}
+
+
+/* ============================================================
+   11. TOOL CALL ITEMS
+   ============================================================ */
+
+QPushButton#toolCallHeader {
+    color: #6a6a6a;
+    font-size: {FS_BODY}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    text-align: left;
+    padding: 3px 8px;
+    border: none;
+    background: transparent;
+}
+QPushButton#toolCallHeader:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+}
+QPushButton#toolCallHeader[state="failed"] {
+    color: #ffffff;
+}
+
+QProgressBar#toolProgress {
+    background: #2d2d30;
+    border: none;
+    max-height: 2px;
+}
+QProgressBar#toolProgress::chunk {
+    background: #c8a882;
+}
+
+QLabel#toolResultLabel {
+    color: #6a6a6a;
+    font-size: {FS_SM}px;
+    padding: 2px 4px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#toolResultLabel[state="failed"] {
+    color: #ffffff;
+}
+
+
+/* ============================================================
+   12. SHELL SECTIONS
+   ============================================================ */
+
+QPushButton#shellHeaderPython {
+    color: #dcdcaa;
+    font-size: {FS_MD}px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    background: #2d2d30;
+}
+QPushButton#shellHeaderPython:hover {
+    background: #3c3c3c;
+}
+
+QPushButton#shellHeaderSystem {
+    color: #4ec9b0;
+    font-size: {FS_MD}px;
+    text-align: left;
+    padding: 4px 8px;
+    border: none;
+    background: #2d2d30;
+}
+QPushButton#shellHeaderSystem:hover {
+    background: #3c3c3c;
+}
+
+
+/* ============================================================
+   13. CODE BLOCKS
+   ============================================================ */
+
+QFrame#CodeBlockWidget {
+    background: #1a1a2e;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+QWidget#codeBlockHeader {
+    background: #252535;
+}
+QLabel#codeBlockLang {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+QPushButton#codeBlockBtn {
+    color: #6a6a6a;
+    background: transparent;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    font-size: {FS_XS}px;
+    padding: 2px 8px;
+}
+QPushButton#codeBlockBtn:hover {
+    background: #3c3c3c;
+    color: #ffffff;
+}
+QPushButton#codeBlockBtnGreen {
+    color: #4ec9b0;
+    background: transparent;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    font-size: {FS_XS}px;
+    padding: 2px 8px;
+}
+QPushButton#codeBlockBtnGreen:hover {
+    background: #3c3c3c;
+    color: #ffffff;
+}
+QTextEdit#codeBlockEdit {
+    background: #1a1a2e;
+    color: #cccccc;
+    border: none;
+    padding: 6px 8px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: {FS_BODY}px;
+}
+
+
+/* ============================================================
+   14. PYTHON / SYSTEM SHELL WIDGETS
+   ============================================================ */
+
+QFrame#PythonShellWidget {
+    background: #1a1a2e;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+QFrame#PythonShellWidget[state="error"] {
+    border-left: 3px solid #f14c4c;
+}
+QFrame#PythonShellWidget[state="ok"] {
+    border-left: 3px solid #c8a882;
+}
+
+QWidget#pyShellHeader {
+    background: #252535;
+}
+QLabel#pyShellTitle {
+    color: #c8a882;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+QFrame#SystemShellWidget {
+    background: #1a1a1a;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+QFrame#SystemShellWidget[state="error"] {
+    border-left: 3px solid #f14c4c;
+}
+QFrame#SystemShellWidget[state="ok"] {
+    border-left: 3px solid #4ec9b0;
+}
+
+QWidget#sysShellHeader {
+    background: #252525;
+}
+QLabel#sysShellTitle {
+    color: #4ec9b0;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* Shared shell small labels */
+QLabel#shellTimeLbl {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+}
+QLabel#shellStatusOk {
+    color: #4ec9b0;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+QLabel#shellStatusErr {
+    color: #f14c4c;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+QLabel#shellCwdLbl {
+    color: #6a6a6a;
+    font-size: {FS_MICRO}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#shellErrFallback {
+    color: #f14c4c;
+    font-size: {FS_SM}px;
+    padding: 6px 8px;
+}
+
+/* Shell code / command area */
+QTextEdit#shellCodeEdit {
+    background: #1e1e3a;
+    color: #cccccc;
+    border: none;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 6px 8px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: {FS_BODY}px;
+}
+QTextEdit#shellCmdEdit {
+    background: #1e1e1e;
+    color: #cccccc;
+    border: none;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 6px 8px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: {FS_BODY}px;
+}
+
+/* Collapsible shell output */
+QTextEdit#shellOutput {
+    color: #cccccc;
+    border: none;
+    padding: 6px 8px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: {FS_SM}px;
+}
+QTextEdit#shellOutput[variant="python"] { background: #141428; }
+QTextEdit#shellOutput[variant="system"] { background: #141414; }
+
+QLabel#shellToggle {
+    color: #007acc;
+    font-size: {FS_XS}px;
+    padding: 3px 8px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#shellToggle:hover {
+    color: #cccccc;
+    background: #1e1e3e;
+}
+QLabel#shellToggle[variant="python"] {
+    background: #141428;
+    border-top: 1px solid #3c3c3c;
+}
+QLabel#shellToggle[variant="system"] {
+    background: #141414;
+    border-top: 1px solid #3c3c3c;
+}
+
+
+/* ============================================================
+   15. INPUT AREA
+   ============================================================ */
+
+QFrame#inputArea {
+    background-color: #252526;
+    border-top: 1px solid #3c3c3c;
+}
+
+/* Batch undo/keep bar */
+QFrame#batchBar {
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+QLabel#batchCountLabel {
+    color: #858585;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QPushButton#btnUndoAll {
+    color: #f14c4c;
+    font-size: {FS_XS}px;
+    padding: 2px 10px;
+    border: 1px solid #f14c4c;
+    border-radius: 3px;
+    background: transparent;
+}
+QPushButton#btnUndoAll:hover {
+    background: #3d1f1f;
+}
+QPushButton#btnKeepAll {
+    color: #4ec9b0;
+    font-size: {FS_XS}px;
+    padding: 2px 10px;
+    border: 1px solid #4ec9b0;
+    border-radius: 3px;
+    background: transparent;
+}
+QPushButton#btnKeepAll:hover {
+    background: #1f3d1f;
+}
+
+/* Chat input */
+QPlainTextEdit#chatInput {
+    background-color: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: {FS_LG}px;
+}
+QPlainTextEdit#chatInput:focus {
+    border-color: #c8a882;
+}
+
+/* Token stats button */
+QPushButton#tokenStats {
+    background: transparent;
+    color: #6a6a6a;
+    border: none;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    padding: 2px 6px;
+}
+QPushButton#tokenStats:hover {
+    color: #cccccc;
+    background: #3c3c3c;
+    border-radius: 3px;
+}
+
+/* Context label */
+QLabel#contextLabel {
+    color: #6a6a6a;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    padding: 0 4px;
+}
+QLabel#contextLabel[state="normal"] {
+    color: #4ec9b0;
+}
+QLabel#contextLabel[state="warning"] {
+    color: #ce9178;
+}
+QLabel#contextLabel[state="critical"] {
+    color: #f14c4c;
+}
+
+/* Send button */
+QPushButton#btnSend {
+    background-color: #007acc;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    font-size: {FS_XL}px;
+    padding: 8px 20px;
+    min-height: 32px;
+}
+QPushButton#btnSend:hover {
+    background-color: #1a8cff;
+}
+QPushButton#btnSend:disabled {
+    background-color: #2d2d30;
+    color: #6a6a6a;
+}
+
+/* Stop button */
+QPushButton#btnStop {
+    background-color: #f14c4c;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    font-size: {FS_XL}px;
+    padding: 8px 20px;
+    min-height: 32px;
+}
+QPushButton#btnStop:hover {
+    background-color: #ff6b6b;
+}
+
+
+/* ============================================================
+   16. TOOL STATUS BAR
+   ============================================================ */
+
+QFrame#toolStatusBar {
+    background: transparent;
+    border: none;
+}
+QLabel#toolStatusLabel {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+
+/* ============================================================
+   17. TODO
+   ============================================================ */
+
+QFrame#todoCard {
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+QLabel#todoTitle {
+    color: #c586c0;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+QLabel#todoCount {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+}
+QPushButton#todoClearBtn {
+    background: transparent;
+    color: #6a6a6a;
+    border: none;
+    font-size: {FS_XS}px;
+    padding: 2px 6px;
+}
+QPushButton#todoClearBtn:hover {
+    color: #cccccc;
+}
+QFrame#todoSeparator {
+    color: #3c3c3c;
+    max-height: 1px;
+}
+
+/* Todo items — dynamic state */
+QLabel#todoStatusIcon {
+    font-size: {FS_SM}px;
+}
+QLabel#todoStatusIcon[state="pending"]     { color: #6a6a6a; }
+QLabel#todoStatusIcon[state="in_progress"] { color: #007acc; }
+QLabel#todoStatusIcon[state="done"]        { color: #4ec9b0; }
+QLabel#todoStatusIcon[state="error"]       { color: #f14c4c; }
+
+QLabel#todoText {
+    font-size: {FS_BODY}px;
+}
+QLabel#todoText[state="pending"]     { color: #6a6a6a; }
+QLabel#todoText[state="in_progress"] { color: #007acc; }
+QLabel#todoText[state="done"]        { color: #6a6a6a; text-decoration: line-through; }
+QLabel#todoText[state="error"]       { color: #f14c4c; }
+
+
+/* ============================================================
+   18. PLAN BLOCK
+   ============================================================ */
+
+QLabel#planTitle {
+    color: #c8a882;
+    font-size: {FS_LG}px;
+    font-weight: bold;
+    padding: 2px 0;
+}
+QLabel#planStep {
+    font-size: {FS_LG}px;
+    padding: 1px 0 1px 8px;
+}
+QLabel#planStep[state="pending"] { color: #6a6a6a; }
+QLabel#planStep[state="running"] { color: #007acc; }
+QLabel#planStep[state="done"]    { color: #4ec9b0; }
+QLabel#planStep[state="error"]   { color: #f14c4c; }
+
+
+/* ============================================================
+   19. NODE OPERATION LABELS
+   ============================================================ */
+
+QPushButton#nodePathBtn {
+    color: #c8a882;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 1px 4px;
+    border: 1px solid transparent;
+    text-decoration: underline;
+    background: transparent;
+}
+QPushButton#nodePathBtn:hover {
+    color: #ffffff;
+    background: #3c3c3c;
+    border-color: #3c3c3c;
+}
+
+QPushButton#btnUndoOp {
+    font-size: {FS_XS}px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: transparent;
+    color: #f14c4c;
+    border: 1px solid #f14c4c;
+}
+QPushButton#btnUndoOp:hover {
+    background: #3c3c3c;
+}
+QPushButton#btnUndoOp:disabled {
+    color: #6a6a6a;
+    border-color: transparent;
+}
+
+QPushButton#btnKeepOp {
+    font-size: {FS_XS}px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: transparent;
+    color: #4ec9b0;
+    border: 1px solid #4ec9b0;
+}
+QPushButton#btnKeepOp:hover {
+    background: #3c3c3c;
+}
+QPushButton#btnKeepOp:disabled {
+    color: #6a6a6a;
+    border-color: transparent;
+}
+
+QLabel#nodeOpStatus {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+}
+QLabel#nodeOpStatus[state="undone"] {
+    color: #f14c4c;
+}
+
+QLabel#nodeOpCount {
+    font-size: {FS_BODY}px;
+    font-weight: bold;
+    padding: 2px 6px;
+    background: #2d2d30;
+    border-radius: 3px;
+}
+QLabel#nodeOpCount[op="create"] { color: #4ec9b0; }
+QLabel#nodeOpCount[op="modify"] { color: #dcdcaa; }
+QLabel#nodeOpCount[op="delete"] { color: #f14c4c; }
+
+QLabel#nodeOpMore {
+    color: #6a6a6a;
+    font-size: {FS_MICRO}px;
+}
+QLabel#nodeOpDetail {
+    color: #858585;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+
+/* ============================================================
+   20. VEX PREVIEW (INLINE + DIALOG)
+   ============================================================ */
+
+/* Inline preview card */
+QFrame#vexPreviewInline {
+    background: #2d2d30;
+    border: 1.5px solid #c8a882;
+    border-radius: 6px;
+}
+QLabel#vexPreviewTitle {
+    color: #c8a882;
+    font-size: {FS_BODY}px;
+    font-weight: bold;
+}
+QLabel#vexInlineSummary {
+    color: #cccccc;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    background: transparent;
+    padding: 2px 4px;
+}
+
+QPushButton#btnCancel {
+    color: #858585;
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 0 12px;
+    font-size: {FS_SM}px;
+}
+QPushButton#btnCancel:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+}
+QPushButton#btnConfirmGreen {
+    color: #ffffff;
+    background: #4ec9b0;
+    border: none;
+    border-radius: 4px;
+    padding: 0 14px;
+    font-size: {FS_SM}px;
+    font-weight: bold;
+}
+QPushButton#btnConfirmGreen:hover {
+    background: #5fd9c0;
+}
+
+/* VEX inline status (decided) */
+QLabel#vexPreviewStatus {
+    font-size: {FS_BODY}px;
+    font-weight: bold;
+    padding: 4px 8px;
+}
+QLabel#vexPreviewStatus[state="confirmed"] {
+    color: #4ec9b0;
+}
+QLabel#vexPreviewStatus[state="cancelled"] {
+    color: #858585;
+}
+
+/* VEX Dialog */
+QDialog#vexPreviewDlg {
+    background: #1e1e1e;
+    color: #cccccc;
+}
+QLabel#vexDlgTitle {
+    color: #c8a882;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+QPlainTextEdit#vexDlgCode {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: {FS_BODY}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QPushButton#dlgBtnCancel {
+    color: #858585;
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 0 20px;
+    font-size: {FS_BODY}px;
+}
+QPushButton#dlgBtnCancel:hover {
+    background: #3c3c3c;
+    color: #cccccc;
+}
+QPushButton#dlgBtnConfirm {
+    color: #ffffff;
+    background: #4ec9b0;
+    border: none;
+    border-radius: 4px;
+    padding: 0 20px;
+    font-size: {FS_BODY}px;
+    font-weight: bold;
+}
+QPushButton#dlgBtnConfirm:hover {
+    background: #5fd9c0;
+}
+QLabel#vexDlgInfo {
+    color: #858585;
+    font-size: {FS_SM}px;
+}
+
+
+/* ============================================================
+   21. NODE COMPLETER POPUP
+   ============================================================ */
+
+QListWidget#nodeCompleter {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #007acc;
+    border-radius: 4px;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 2px;
+}
+QListWidget#nodeCompleter::item {
+    padding: 3px 6px;
+    border-radius: 2px;
+}
+QListWidget#nodeCompleter::item:selected {
+    background: #007acc;
+    color: #ffffff;
+}
+QListWidget#nodeCompleter::item:hover {
+    background: #3c3c3c;
+}
+
+
+/* ============================================================
+   22. IMAGE PREVIEW DIALOG
+   ============================================================ */
+
+QDialog#imgPreviewDlg {
+    background: #1e1e1e;
+}
+QLabel#imgInfoLabel {
+    color: #858585;
+    font-size: {FS_SM}px;
+}
+QPushButton#imgCloseBtn {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 4px 16px;
+    font-size: {FS_BODY}px;
+}
+QPushButton#imgCloseBtn:hover {
+    background: #3c3c3c;
+}
+
+/* Image thumbnail in chat */
+QLabel#imgThumb {
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+}
+QPushButton#imgRemoveBtn {
+    background: #f14c4c;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: {FS_MICRO}px;
+}
+QPushButton#imgRemoveBtn:hover {
+    background: #ff6b6b;
+}
+
+
+/* ============================================================
+   23. TOKEN ANALYTICS DIALOG
+   ============================================================ */
+
+QDialog#tokenPanel {
+    background: #1e1e1e;
+    color: #cccccc;
+}
+
+QPushButton#tokenResetBtn {
+    background: transparent;
+    color: #ce9178;
+    border: 1px solid #ce9178;
+    border-radius: 4px;
+    padding: 5px 0;
+    font-size: {FS_BODY}px;
+}
+QPushButton#tokenResetBtn:hover {
+    background: rgba(255,150,50,30);
+}
+
+QPushButton#tokenCloseBtn {
+    background: #2d2d30;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 5px 0;
+    font-size: {FS_BODY}px;
+}
+QPushButton#tokenCloseBtn:hover {
+    background: #3c3c3c;
+}
+
+QFrame#tokenSummaryCard {
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+QFrame#tokenTableCard {
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+
+/* Token summary metric labels */
+QLabel#tokenMetricLabel {
+    color: #858585;
+    font-size: {FS_SM}px;
+}
+QLabel#tokenMetricValue {
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+
+/* Token table */
+QLabel#tokenTableTitle {
+    color: #cccccc;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+QLabel#tokenTableEmpty {
+    color: #6a6a6a;
+    font-size: {FS_SM}px;
+    padding: 12px;
+}
+QWidget#tokenHeaderRow {
+    background: #2d2d30;
+    border-bottom: 1px solid #3c3c3c;
+}
+QWidget#tokenDataRow {
+    border-bottom: 1px solid rgba(60,60,60,60);
+}
+QLabel#tokenHeaderCell {
+    color: #858585;
+    font-size: {FS_XS}px;
+    font-weight: bold;
+}
+QLabel#tokenDataCell {
+    color: #cccccc;
+    font-size: {FS_XS}px;
+}
+
+
+/* ============================================================
+   24. RICH TEXT (MARKDOWN RENDERED)
+   ============================================================ */
+
+QLabel#richText {
+    color: #cccccc;
+    font-size: {FS_MD}px;
+    line-height: 1.6;
+    padding: 0;
+}
+
+
+/* ============================================================
+   25. PARAM DIFF
+   ============================================================ */
+
+QPushButton#diffToggle {
+    color: #dcdcaa;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    text-align: left;
+    padding: 1px 4px;
+    border: none;
+    background: transparent;
+}
+QPushButton#diffToggle:hover {
+    color: #ffffff;
+}
+
+QFrame#diffFrame {
+    background: #1e1e1e;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+}
+
+/* Inline diff components */
+QLabel#diffParamName {
+    color: #858585;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#diffOldValue {
+    color: #f48771;
+    background: #3d1f1f;
+    border: 1px solid #6e3030;
+    border-radius: 3px;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 1px 6px;
+}
+QLabel#diffNewValue {
+    color: #89d185;
+    background: #1f3d1f;
+    border: 1px solid #2e6e30;
+    border-radius: 3px;
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 1px 6px;
+}
+QLabel#diffArrow {
+    color: #6a6a6a;
+    font-size: {FS_XS}px;
+}
+
+/* Unified diff lines */
+QLabel#diffLine {
+    font-size: {FS_XS}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    padding: 0 4px;
+}
+QLabel#diffLine[diffType="hunk"] {
+    color: #007acc;
+    background: rgba(0,122,204,20);
+}
+QLabel#diffLine[diffType="del"] {
+    color: #f48771;
+    background: #3d1f1f;
+}
+QLabel#diffLine[diffType="add"] {
+    color: #89d185;
+    background: #1f3d1f;
+}
+QLabel#diffLine[diffType="ctx"] {
+    color: #6a6a6a;
+}
+
+
+/* ============================================================
+   26. CONTEXT MENU
+   ============================================================ */
+
+QMenu {
+    background: #252526;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    font-size: {FS_SM}px;
+    padding: 4px 0px;
+}
+QMenu::item {
+    padding: 4px 20px;
+}
+QMenu::item:selected {
+    background: #3c3c3c;
+}
+QMenu::separator {
+    height: 1px;
+    background: #3c3c3c;
+    margin: 4px 0;
+}
+
+
+/* ============================================================
+   27. PROGRESS DIALOG
+   ============================================================ */
+
+QProgressDialog {
+    background: #252526;
+    color: #cccccc;
+}
+QProgressBar {
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    text-align: center;
+    color: #cccccc;
+    font-size: {FS_SM}px;
+}
+QProgressBar::chunk {
+    background: #007acc;
+    border-radius: 2px;
+}
+
+
+/* ============================================================
+   28. FONT SETTINGS DIALOG
+   ============================================================ */
+
+QDialog#fontSettingsDlg {
+    background: #252526;
+    color: #cccccc;
+}
+QSlider#fontScaleSlider::groove:horizontal {
+    background: #3c3c3c;
+    height: 4px;
+    border-radius: 2px;
+}
+QSlider#fontScaleSlider::handle:horizontal {
+    background: #007acc;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+QSlider#fontScaleSlider::handle:horizontal:hover {
+    background: #1a8cff;
+}
+QLabel#fontScaleLabel {
+    color: #cccccc;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+
+/* ============================================================
+   END
+   ============================================================ */

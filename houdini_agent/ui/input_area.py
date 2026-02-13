@@ -3,6 +3,7 @@
 Input Area UI 构建 — 输入区域和模式切换
 
 从 ai_tab.py 中拆分出的 Mixin，所有方法通过 self 访问 AITab 实例状态。
+样式由全局 style_template.qss 通过 objectName 选择器控制。
 """
 
 from houdini_agent.qt_compat import QtWidgets, QtCore
@@ -23,12 +24,7 @@ class InputAreaMixin:
     def _build_input_area(self) -> QtWidgets.QWidget:
         """输入区域"""
         container = QtWidgets.QFrame()
-        container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {CursorTheme.BG_SECONDARY};
-                border-top: 1px solid {CursorTheme.BORDER};
-            }}
-        """)
+        container.setObjectName("inputArea")
         
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -36,62 +32,26 @@ class InputAreaMixin:
         
         # -------- Undo All / Keep All 批量操作栏（默认隐藏）--------
         self._batch_bar = QtWidgets.QFrame()
+        self._batch_bar.setObjectName("batchBar")
         self._batch_bar.setVisible(False)
-        self._batch_bar.setStyleSheet(f"""
-            QFrame {{
-                background: {CursorTheme.BG_TERTIARY};
-                border: 1px solid {CursorTheme.BORDER};
-                border-radius: 4px;
-            }}
-        """)
         batch_layout = QtWidgets.QHBoxLayout(self._batch_bar)
         batch_layout.setContentsMargins(8, 3, 8, 3)
         batch_layout.setSpacing(6)
         
         self._batch_count_label = QtWidgets.QLabel("")
-        self._batch_count_label.setStyleSheet(f"""
-            color: {CursorTheme.TEXT_SECONDARY};
-            font-size: 11px;
-            font-family: {CursorTheme.FONT_CODE};
-        """)
+        self._batch_count_label.setObjectName("batchCountLabel")
         batch_layout.addWidget(self._batch_count_label)
         batch_layout.addStretch()
         
         self._btn_undo_all = QtWidgets.QPushButton("Undo All")
+        self._btn_undo_all.setObjectName("btnUndoAll")
         self._btn_undo_all.setCursor(QtCore.Qt.PointingHandCursor)
-        self._btn_undo_all.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_RED};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 2px 10px;
-                border: 1px solid {CursorTheme.ACCENT_RED};
-                border-radius: 3px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: #3d1f1f;
-            }}
-        """)
         self._btn_undo_all.clicked.connect(self._undo_all_ops)
         batch_layout.addWidget(self._btn_undo_all)
         
         self._btn_keep_all = QtWidgets.QPushButton("Keep All")
+        self._btn_keep_all.setObjectName("btnKeepAll")
         self._btn_keep_all.setCursor(QtCore.Qt.PointingHandCursor)
-        self._btn_keep_all.setStyleSheet(f"""
-            QPushButton {{
-                color: {CursorTheme.ACCENT_GREEN};
-                font-size: 11px;
-                font-family: {CursorTheme.FONT_BODY};
-                padding: 2px 10px;
-                border: 1px solid {CursorTheme.ACCENT_GREEN};
-                border-radius: 3px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: #1f3d1f;
-            }}
-        """)
         self._btn_keep_all.clicked.connect(self._keep_all_ops)
         batch_layout.addWidget(self._btn_keep_all)
         
@@ -133,22 +93,22 @@ class InputAreaMixin:
         
         # 图片附件按钮
         self.btn_attach_image = QtWidgets.QPushButton("Img")
-        self.btn_attach_image.setStyleSheet(self._small_btn_style())
+        self.btn_attach_image.setObjectName("btnSmall")
         self.btn_attach_image.setToolTip("添加图片附件（支持 PNG/JPG/GIF/WebP，也可直接粘贴/拖拽图片到输入框）")
         btn_layout.addWidget(self.btn_attach_image)
         
         # 快捷操作
         self.btn_network = QtWidgets.QPushButton("Read Network")
-        self.btn_network.setStyleSheet(self._small_btn_style())
+        self.btn_network.setObjectName("btnSmall")
         btn_layout.addWidget(self.btn_network)
         
         self.btn_selection = QtWidgets.QPushButton("Read Selection")
-        self.btn_selection.setStyleSheet(self._small_btn_style())
+        self.btn_selection.setObjectName("btnSmall")
         btn_layout.addWidget(self.btn_selection)
         
         # 导出训练数据按钮
         self.btn_export_train = QtWidgets.QPushButton("Train")
-        self.btn_export_train.setStyleSheet(self._small_btn_style())
+        self.btn_export_train.setObjectName("btnSmall")
         self.btn_export_train.setToolTip("导出当前对话为训练数据（用于大模型微调）")
         btn_layout.addWidget(self.btn_export_train)
         
@@ -156,35 +116,14 @@ class InputAreaMixin:
         
         # Token 统计按钮（可点击查看详情）
         self.token_stats_btn = QtWidgets.QPushButton("0")
-        self.token_stats_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {CursorTheme.TEXT_MUTED};
-                border: none;
-                font-size: 12px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                padding: 2px 6px;
-            }}
-            QPushButton:hover {{
-                color: {CursorTheme.TEXT_PRIMARY};
-                background: {CursorTheme.BG_HOVER};
-                border-radius: 3px;
-            }}
-        """)
+        self.token_stats_btn.setObjectName("tokenStats")
         self.token_stats_btn.setToolTip("点击查看详细 Token 统计")
         self.token_stats_btn.clicked.connect(self._show_token_stats_dialog)
         btn_layout.addWidget(self.token_stats_btn)
         
         # 上下文统计
         self.context_label = QtWidgets.QLabel("0K / 64K")
-        self.context_label.setStyleSheet(f"""
-            QLabel {{
-                color: {CursorTheme.TEXT_MUTED};
-                font-size: 12px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                padding: 0 4px;
-            }}
-        """)
+        self.context_label.setObjectName("contextLabel")
         btn_layout.addWidget(self.context_label)
         
         # 停止/发送
@@ -208,88 +147,28 @@ class InputAreaMixin:
         
         # Agent 复选框 — 灰色圆形指示器
         self.chk_mode_agent = QtWidgets.QCheckBox("Agent")
+        self.chk_mode_agent.setObjectName("chkAgent")
         self.chk_mode_agent.setChecked(True)
         self.chk_mode_agent.setCursor(QtCore.Qt.PointingHandCursor)
         self.chk_mode_agent.setToolTip("Agent 模式：AI 可以自主创建、修改、删除节点，执行完整操作")
-        self.chk_mode_agent.setStyleSheet(f"""
-            QCheckBox {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 12px;
-                spacing: 4px;
-            }}
-            QCheckBox::indicator {{
-                width: 13px; height: 13px;
-                border-radius: 7px;
-                border: 1.5px solid {CursorTheme.TEXT_MUTED};
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background: {CursorTheme.TEXT_SECONDARY};
-                border-color: {CursorTheme.TEXT_SECONDARY};
-                image: none;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {CursorTheme.TEXT_PRIMARY};
-            }}
-        """)
         self.chk_mode_agent.toggled.connect(self._on_agent_toggled)
         mode_layout.addWidget(self.chk_mode_agent)
         
         # Ask 复选框 — 绿色圆形指示器
         self.chk_mode_ask = QtWidgets.QCheckBox("Ask")
+        self.chk_mode_ask.setObjectName("chkAsk")
         self.chk_mode_ask.setChecked(False)
         self.chk_mode_ask.setCursor(QtCore.Qt.PointingHandCursor)
         self.chk_mode_ask.setToolTip("Ask 模式：AI 只能查询和分析，不会修改场景（只读）")
-        self.chk_mode_ask.setStyleSheet(f"""
-            QCheckBox {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 12px;
-                spacing: 4px;
-            }}
-            QCheckBox::indicator {{
-                width: 13px; height: 13px;
-                border-radius: 7px;
-                border: 1.5px solid {CursorTheme.TEXT_MUTED};
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background: {CursorTheme.ACCENT_GREEN};
-                border-color: {CursorTheme.ACCENT_GREEN};
-                image: none;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {CursorTheme.ACCENT_GREEN};
-            }}
-        """)
         self.chk_mode_ask.toggled.connect(self._on_ask_toggled)
         mode_layout.addWidget(self.chk_mode_ask)
         
         # 确认模式开关 — 橙色
         self.chk_confirm_mode = QtWidgets.QCheckBox("确认")
+        self.chk_confirm_mode.setObjectName("chkConfirm")
         self.chk_confirm_mode.setChecked(False)
         self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
         self.chk_confirm_mode.setToolTip("确认模式：创建节点/VEX 前先预览确认，而非自动执行")
-        self.chk_confirm_mode.setStyleSheet(f"""
-            QCheckBox {{
-                color: {CursorTheme.TEXT_SECONDARY};
-                font-size: 12px;
-                spacing: 4px;
-            }}
-            QCheckBox::indicator {{
-                width: 13px; height: 13px;
-                border-radius: 7px;
-                border: 1.5px solid {CursorTheme.TEXT_MUTED};
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background: {CursorTheme.ACCENT_ORANGE};
-                border-color: {CursorTheme.ACCENT_ORANGE};
-                image: none;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: {CursorTheme.ACCENT_ORANGE};
-            }}
-        """)
         self._confirm_mode = False
         self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
         mode_layout.addWidget(self.chk_confirm_mode)

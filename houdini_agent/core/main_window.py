@@ -11,7 +11,6 @@ import hou
 from pathlib import Path
 from houdini_agent.qt_compat import QtWidgets, QtGui, QtCore
 from houdini_agent.ui.ai_tab import AITab
-from houdini_agent.ui.cursor_widgets import CursorTheme
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -37,12 +36,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # 不使用 WindowStaysOnTopHint，让窗口与 Houdini 同层级
         self.setWindowFlags(QtCore.Qt.Window)
         
-        # 设置深色主题
-        self.setStyleSheet(f"""
-            QMainWindow {{
-                background-color: {CursorTheme.BG_PRIMARY};
-            }}
-        """)
+        # 深色背景由 AITab 的全局 QSS 级联覆盖
+        self.setStyleSheet("QMainWindow { background-color: #1e1e1e; }")
         
         central_widget = QtWidgets.QWidget()
         self.setCentralWidget(central_widget)

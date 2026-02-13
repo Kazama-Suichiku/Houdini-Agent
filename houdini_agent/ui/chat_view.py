@@ -10,7 +10,6 @@ Chat View — 对话显示和滚动逻辑
 
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .cursor_widgets import (
-    CursorTheme,
     UserMessage,
     AIResponse,
     StatusLine,
@@ -35,7 +34,7 @@ class ChatViewMixin:
                 full_pixmap.loadFromData(__import__('base64').b64decode(b64_data))
                 thumb_scaled = thumb.scaled(48, 48, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
                 lbl = ClickableImageLabel(thumb_scaled, full_pixmap)
-                lbl.setStyleSheet(f"border: 1px solid {CursorTheme.BORDER}; border-radius: 3px; padding: 1px;")
+                lbl.setObjectName("imgThumb")
                 img_row.addWidget(lbl)
             img_row.addStretch()
             msg.layout().addLayout(img_row)
