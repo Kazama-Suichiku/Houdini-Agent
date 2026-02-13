@@ -75,17 +75,55 @@ class InputAreaMixin:
         self.image_preview_layout.addStretch()
         layout.addWidget(self.image_preview_container)
         
+        # -------- 输入行：模式下拉 + 输入框 --------
+        input_row = QtWidgets.QHBoxLayout()
+        input_row.setSpacing(6)
+        
+        # 模式下拉框（Agent / Ask）— 放在输入框左侧
+        self._agent_mode = True  # True=Agent, False=Ask
+        self._confirm_mode = False
+        
+        # 左侧垂直容器：模式下拉 + 确认开关
+        left_col = QtWidgets.QVBoxLayout()
+        left_col.setSpacing(4)
+        left_col.setContentsMargins(0, 0, 0, 0)
+        
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.setObjectName("modeCombo")
+        self.mode_combo.addItem("Agent")
+        self.mode_combo.addItem("Ask")
+        self.mode_combo.setCurrentIndex(0)
+        self.mode_combo.setProperty("mode", "agent")
+        self.mode_combo.setCursor(QtCore.Qt.PointingHandCursor)
+        self.mode_combo.setToolTip("Agent: AI 自主操作节点\nAsk: 只读查询分析")
+        self.mode_combo.setFixedWidth(100)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        left_col.addWidget(self.mode_combo)
+        
+        # 确认模式开关
+        self.chk_confirm_mode = QtWidgets.QCheckBox("确认")
+        self.chk_confirm_mode.setObjectName("chkConfirm")
+        self.chk_confirm_mode.setChecked(False)
+        self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
+        self.chk_confirm_mode.setToolTip("确认模式：创建节点/VEX 前先预览确认")
+        self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
+        left_col.addWidget(self.chk_confirm_mode)
+        
+        input_row.addLayout(left_col)
+        
         # 输入框（自适应高度）
         self.input_edit = ChatInput()
         self.input_edit.imageDropped.connect(self._on_image_dropped)
         self.input_edit.atTriggered.connect(self._on_at_triggered)
-        layout.addWidget(self.input_edit)
+        input_row.addWidget(self.input_edit, 1)  # stretch=1 让输入框占满
         
         # 节点路径补全弹出框（传入 parent 防止创建时短暂闪烁）
         self._node_completer = NodeCompleterPopup(parent=self.input_edit)
         self._node_completer.pathSelected.connect(self._on_node_path_selected)
         # ★ 让输入框持有弹出框引用，支持键盘导航和自动关闭
         self.input_edit.set_completer_popup(self._node_completer)
+        
+        layout.addLayout(input_row)
         
         # 按钮行
         btn_layout = QtWidgets.QHBoxLayout()
@@ -138,44 +176,6 @@ class InputAreaMixin:
         
         layout.addLayout(btn_layout)
         
-        # -------- 模式切换行：Agent / Ask（互斥 radio 风格复选框）--------
-        mode_layout = QtWidgets.QHBoxLayout()
-        mode_layout.setContentsMargins(0, 2, 0, 0)
-        mode_layout.setSpacing(8)
-        
-        self._agent_mode = True  # True=Agent, False=Ask
-        
-        # Agent 复选框 — 灰色圆形指示器
-        self.chk_mode_agent = QtWidgets.QCheckBox("Agent")
-        self.chk_mode_agent.setObjectName("chkAgent")
-        self.chk_mode_agent.setChecked(True)
-        self.chk_mode_agent.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_mode_agent.setToolTip("Agent 模式：AI 可以自主创建、修改、删除节点，执行完整操作")
-        self.chk_mode_agent.toggled.connect(self._on_agent_toggled)
-        mode_layout.addWidget(self.chk_mode_agent)
-        
-        # Ask 复选框 — 绿色圆形指示器
-        self.chk_mode_ask = QtWidgets.QCheckBox("Ask")
-        self.chk_mode_ask.setObjectName("chkAsk")
-        self.chk_mode_ask.setChecked(False)
-        self.chk_mode_ask.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_mode_ask.setToolTip("Ask 模式：AI 只能查询和分析，不会修改场景（只读）")
-        self.chk_mode_ask.toggled.connect(self._on_ask_toggled)
-        mode_layout.addWidget(self.chk_mode_ask)
-        
-        # 确认模式开关 — 橙色
-        self.chk_confirm_mode = QtWidgets.QCheckBox("确认")
-        self.chk_confirm_mode.setObjectName("chkConfirm")
-        self.chk_confirm_mode.setChecked(False)
-        self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_confirm_mode.setToolTip("确认模式：创建节点/VEX 前先预览确认，而非自动执行")
-        self._confirm_mode = False
-        self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
-        mode_layout.addWidget(self.chk_confirm_mode)
-        
-        mode_layout.addStretch()
-        layout.addLayout(mode_layout)
-        
         return container
 
     # ---------- 确认模式切换 ----------
@@ -183,38 +183,20 @@ class InputAreaMixin:
     def _on_confirm_mode_toggled(self, checked: bool):
         self._confirm_mode = checked
 
-    # ---------- Agent / Ask 模式互斥切换 ----------
+    # ---------- Agent / Ask 模式切换（下拉框）----------
 
-    def _on_agent_toggled(self, checked: bool):
-        """Agent 复选框状态改变"""
-        if self._agent_mode == checked:
-            # 防止取消勾选自己（至少保持一个选中）
-            if not checked:
-                self.chk_mode_agent.blockSignals(True)
-                self.chk_mode_agent.setChecked(True)
-                self.chk_mode_agent.blockSignals(False)
-            return
-        self._agent_mode = checked
-        # 互斥：勾选 Agent → 取消 Ask
-        self.chk_mode_ask.blockSignals(True)
-        self.chk_mode_ask.setChecked(not checked)
-        self.chk_mode_ask.blockSignals(False)
-
-    def _on_ask_toggled(self, checked: bool):
-        """Ask 复选框状态改变"""
-        is_agent = not checked
-        if self._agent_mode == is_agent:
-            # 防止取消勾选自己
-            if not checked:
-                self.chk_mode_ask.blockSignals(True)
-                self.chk_mode_ask.setChecked(True)
-                self.chk_mode_ask.blockSignals(False)
-            return
-        self._agent_mode = is_agent
-        # 互斥：勾选 Ask → 取消 Agent
-        self.chk_mode_agent.blockSignals(True)
-        self.chk_mode_agent.setChecked(not checked)
-        self.chk_mode_agent.blockSignals(False)
+    def _on_mode_changed(self, index: int):
+        """模式下拉框切换：0=Agent, 1=Ask"""
+        self._agent_mode = (index == 0)
+        mode = "agent" if self._agent_mode else "ask"
+        # 更新下拉框颜色
+        self.mode_combo.setProperty("mode", mode)
+        self.mode_combo.style().unpolish(self.mode_combo)
+        self.mode_combo.style().polish(self.mode_combo)
+        # 更新发送按钮颜色
+        self.btn_send.setProperty("mode", mode)
+        self.btn_send.style().unpolish(self.btn_send)
+        self.btn_send.style().polish(self.btn_send)
 
     # ---------- @提及节点自动补全 ----------
 

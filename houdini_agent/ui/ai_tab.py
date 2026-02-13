@@ -12,6 +12,7 @@ Agent loop, multi-turn tool calling, streaming UI
 """
 
 import json
+import math
 import os
 import threading
 import time
@@ -477,6 +478,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
         # 顶部设置栏
         header = self._build_header()
+        # ★ 玻璃面板投影（header 底部柔和阴影）
+        header_shadow = QtWidgets.QGraphicsDropShadowEffect(header)
+        header_shadow.setColor(QtGui.QColor(0, 0, 0, 60))
+        header_shadow.setBlurRadius(16)
+        header_shadow.setOffset(0, 3)
+        header.setGraphicsEffect(header_shadow)
         layout.addWidget(header)
         
         # 会话标签栏（多会话切换）
@@ -497,6 +504,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
         # 输入区域
         input_area = self._build_input_area()
+        # ★ 玻璃面板投影（input 顶部柔和阴影）
+        input_shadow = QtWidgets.QGraphicsDropShadowEffect(input_area)
+        input_shadow.setColor(QtGui.QColor(0, 0, 0, 60))
+        input_shadow.setBlurRadius(16)
+        input_shadow.setOffset(0, -3)
+        input_area.setGraphicsEffect(input_shadow)
         layout.addWidget(input_area)
 
     # ===================================================================
@@ -879,6 +892,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._thinking_timer = QtCore.QTimer(self)
             self._thinking_timer.timeout.connect(lambda: self._updateThinkingTime.emit())
             self._thinking_timer.start(1000)
+            
+            # ★ 启动输入框呼吸光晕
+            self._start_input_glow()
         else:
             # 将完成后的状态写回 session 字典
             if self._agent_session_id and self._agent_session_id in self._sessions:
@@ -902,10 +918,68 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if self._thinking_timer:
                 self._thinking_timer.stop()
                 self._thinking_timer = None
+            
+            # ★ 停止输入框呼吸光晕 + 停止活跃 response 的流光
+            self._stop_input_glow()
+            self._stop_active_aurora()
         
         # 按当前显示的 session 更新按钮状态
         self._update_run_buttons()
     
+    # ===== 动效：输入框呼吸光晕 + AIResponse 流光边框 =====
+
+    def _start_input_glow(self):
+        """启动输入框边框呼吸光晕（AI 运行期间）"""
+        self._glow_phase = 0.0
+        if not hasattr(self, '_glow_timer') or self._glow_timer is None:
+            self._glow_timer = QtCore.QTimer(self)
+            self._glow_timer.setInterval(50)
+            self._glow_timer.timeout.connect(self._update_input_glow)
+        self._glow_timer.start()
+
+    def _stop_input_glow(self):
+        """停止输入框呼吸光晕，恢复默认边框"""
+        if hasattr(self, '_glow_timer') and self._glow_timer is not None:
+            self._glow_timer.stop()
+        try:
+            self.input_edit.setStyleSheet("")  # 清除覆盖，恢复全局 QSS
+        except RuntimeError:
+            pass
+
+    def _update_input_glow(self):
+        """定时器回调：正弦波驱动边框亮度在银灰/亮白之间柔和呼吸"""
+        self._glow_phase += 0.04
+        t = (math.sin(self._glow_phase) + 1.0) / 2.0  # 0~1
+        # 暗银 → 亮银白 插值（简洁单色系）
+        r = int(100 + (200 - 100) * t)
+        g = int(116 + (210 - 116) * t)
+        b = int(139 + (220 - 139) * t)
+        a = int(60 + 70 * t)
+        try:
+            self.input_edit.setStyleSheet(
+                f"QPlainTextEdit#chatInput {{ border: 1.5px solid rgba({r},{g},{b},{a}); }}"
+            )
+        except RuntimeError:
+            pass
+
+    def _start_active_aurora(self):
+        """启动当前活跃 AIResponse 的流光边框"""
+        try:
+            resp = self._agent_response or self._current_response
+            if resp and hasattr(resp, 'aurora_bar'):
+                resp.start_aurora()
+        except RuntimeError:
+            pass
+
+    def _stop_active_aurora(self):
+        """停止当前活跃 AIResponse 的流光边框"""
+        try:
+            resp = self._agent_response or self._current_response
+            if resp and hasattr(resp, 'aurora_bar'):
+                resp.stop_aurora()
+        except RuntimeError:
+            pass
+
     _TAB_RUNNING_PREFIX = "\u25cf "  # ● 前缀表示正在运行
     
     def _update_run_buttons(self):
@@ -2246,6 +2320,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._add_ai_response()
         # 同步 agent 锚点到刚创建的 response widget
         self._agent_response = self._current_response
+        # ★ 启动流光边框动画
+        self._start_active_aurora()
         
         # ⚠️ 在主线程中获取所有 Qt 控件的值（后台线程不能直接访问）
         agent_params = {

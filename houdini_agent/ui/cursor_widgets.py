@@ -32,7 +32,7 @@ _NODE_PATH_RE = re.compile(
     r'(?!["\w/])'                           # 不在引号、字母或 / 之前
 )
 
-_NODE_LINK_STYLE = "color:#4ec9b0;text-decoration:none;font-family:Consolas,Monaco,monospace;"
+_NODE_LINK_STYLE = "color:#10b981;text-decoration:none;font-family:Consolas,Monaco,monospace;"
 
 
 def _linkify_node_paths(text: str) -> str:
@@ -56,39 +56,128 @@ def _linkify_node_paths_plain(text: str) -> str:
 
 
 # ============================================================
+# 流光边框 — AI 响应活跃时在左侧显示流动渐变光带
+# ============================================================
+
+class AuroraBar(QtWidgets.QWidget):
+    """流动渐变光带 — 放在 AIResponse 左侧，AI 回复期间持续流动。
+
+    宽度仅 3px，银白单色系。通过在固定等距停靠点上采样
+    一条虚拟循环色带（带相位偏移），保证停靠点始终递增，
+    消除跳变伪影。停止后凝固为极淡银灰色。
+    """
+
+    _NUM_STOPS = 10  # 渐变采样点数量，越多越平滑
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(3)
+        self._phase = 0.0
+        self._active = False
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(30)  # ~33 fps
+        self._timer.timeout.connect(self._tick)
+        # 循环色带关键色（首尾相同 → 无缝衔接）
+        self._key_colors = [
+            QtGui.QColor(226, 232, 240, 200),  # 亮银白
+            QtGui.QColor(100, 116, 139, 100),   # 暗银
+            QtGui.QColor(226, 232, 240, 200),   # 亮银白（循环闭合）
+        ]
+
+    # -- public API --------------------------------------------------
+
+    def start(self):
+        """启动流光动画"""
+        self._active = True
+        self._phase = 0.0
+        self.setVisible(True)
+        self._timer.start()
+        self.update()
+
+    def stop(self):
+        """停止流光动画，凝固为极淡银灰色"""
+        self._active = False
+        self._timer.stop()
+        self.update()
+
+    @property
+    def running(self) -> bool:
+        return self._active
+
+    # -- internal ----------------------------------------------------
+
+    def _tick(self):
+        self._phase += 0.006
+        if self._phase >= 1.0:
+            self._phase -= 1.0
+        self.update()
+
+    def _sample(self, t: float) -> QtGui.QColor:
+        """在虚拟循环色带上采样，t ∈ [0, 1]，平滑插值。"""
+        keys = self._key_colors
+        n = len(keys) - 1  # 段数（首尾同色 → n 段覆盖一整圈）
+        scaled = (t % 1.0) * n
+        idx = int(scaled)
+        frac = scaled - idx
+        c1 = keys[idx]
+        c2 = keys[min(idx + 1, n)]
+        return QtGui.QColor(
+            int(c1.red()   + (c2.red()   - c1.red())   * frac),
+            int(c1.green() + (c2.green() - c1.green()) * frac),
+            int(c1.blue()  + (c2.blue()  - c1.blue())  * frac),
+            int(c1.alpha() + (c2.alpha() - c1.alpha()) * frac),
+        )
+
+    def paintEvent(self, event):  # noqa: N802
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        rect = self.rect()
+        if self._active:
+            grad = QtGui.QLinearGradient(0, 0, 0, rect.height())
+            for i in range(self._NUM_STOPS + 1):
+                pos = i / self._NUM_STOPS          # 固定递增 0.0 → 1.0
+                color = self._sample(pos + self._phase)  # 相位偏移
+                grad.setColorAt(pos, color)
+            p.fillRect(rect, grad)
+        else:
+            p.fillRect(rect, QtGui.QColor(148, 163, 184, 50))
+        p.end()
+
+
+# ============================================================
 # 颜色主题 (深色主题)
 # ============================================================
 
 class CursorTheme:
-    """Cursor 风格深色主题"""
-    # 背景色
-    BG_PRIMARY = "#1e1e1e"
-    BG_SECONDARY = "#252526"
-    BG_TERTIARY = "#2d2d30"
-    BG_HOVER = "#3c3c3c"
+    """Glassmorphism 深色主题 — 蓝紫底色 + 玻璃质感"""
+    # 背景色（深邃蓝黑）
+    BG_PRIMARY = "#0f1019"
+    BG_SECONDARY = "#0c0e19"
+    BG_TERTIARY = "#101224"
+    BG_HOVER = "#1c1e36"
     
-    # 边框色
-    BORDER = "#3c3c3c"
-    BORDER_FOCUS = "#007acc"
+    # 边框色（玻璃边缘）
+    BORDER = "rgba(255,255,255,12)"
+    BORDER_FOCUS = "#3b82f6"
     
-    # 文字色
-    TEXT_PRIMARY = "#cccccc"
-    TEXT_SECONDARY = "#858585"
-    TEXT_MUTED = "#6a6a6a"
+    # 文字色（更明亮）
+    TEXT_PRIMARY = "#e2e8f0"
+    TEXT_SECONDARY = "#94a3b8"
+    TEXT_MUTED = "#64748b"
     TEXT_BRIGHT = "#ffffff"
     
-    # 强调色
-    ACCENT_BLUE = "#007acc"
-    ACCENT_GREEN = "#4ec9b0"
-    ACCENT_ORANGE = "#ce9178"
-    ACCENT_RED = "#f14c4c"
-    ACCENT_PURPLE = "#c586c0"
-    ACCENT_YELLOW = "#dcdcaa"
-    ACCENT_BEIGE = "#c8a882"       # 米色 — 工具调用/折叠区
+    # 强调色（更鲜艳）
+    ACCENT_BLUE = "#3b82f6"
+    ACCENT_GREEN = "#10b981"
+    ACCENT_ORANGE = "#f59e0b"
+    ACCENT_RED = "#ef4444"
+    ACCENT_PURPLE = "#a78bfa"
+    ACCENT_YELLOW = "#fbbf24"
+    ACCENT_BEIGE = "#d4a574"       # 暖色 — 工具调用/折叠区
     
     # 消息左边界
-    BORDER_USER = "#555555"        # 用户消息 — 浅灰
-    BORDER_AI = "#a0a0a0"          # AI 回复 — 适中亮度白
+    BORDER_USER = "rgba(148,163,184,120)"   # 用户消息 — 柔和银灰
+    BORDER_AI = "rgba(167,139,250,100)"     # AI 回复 — 淡紫光晕
     
     # 字体
     FONT_BODY = "'Microsoft YaHei', 'SimSun', 'Segoe UI', sans-serif"
@@ -883,9 +972,23 @@ class AIResponse(QtWidgets.QWidget):
         self._has_execution = False
         self._shell_count = 0  # Python Shell 执行计数
         
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 8)
-        layout.setSpacing(4)
+        # ★ 顶层水平布局：AuroraBar（左）+ 内容（右）
+        outer = QtWidgets.QHBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 8)
+        outer.setSpacing(0)
+        
+        # 流光边框（AI 响应活跃时流动）
+        self.aurora_bar = AuroraBar(self)
+        outer.addWidget(self.aurora_bar)
+        
+        # 内容列
+        content_col = QtWidgets.QVBoxLayout()
+        content_col.setContentsMargins(0, 0, 0, 0)
+        content_col.setSpacing(4)
+        outer.addLayout(content_col, 1)
+        
+        # 供外部引用（原来直接用 layout 的地方）
+        layout = content_col
         
         # === 思考过程区块 ===
         self.thinking_section = ThinkingSection(self)
@@ -1098,8 +1201,19 @@ class AIResponse(QtWidgets.QWidget):
         except RuntimeError:
             pass  # widget 已销毁
     
+    def start_aurora(self):
+        """启动左侧流光边框动画"""
+        self.aurora_bar.start()
+
+    def stop_aurora(self):
+        """停止左侧流光边框动画"""
+        self.aurora_bar.stop()
+
     def finalize(self):
         """完成回复 - 提取最终总结"""
+        # ★ 停止流光边框
+        self.aurora_bar.stop()
+        
         elapsed = time.time() - self._start_time
         
         # 完成思考区块
@@ -1388,7 +1502,7 @@ class ParamDiffWidget(QtWidgets.QWidget):
     _GREEN_BG = "#1f3d1f"     # 新增行背景
     _GREEN_BORDER = "#2e6e30" # 新增行边框
     _GREEN_TEXT = "#89d185"   # 新增行文字
-    _GREY_TEXT = "#6a6a6a"    # 上下文行文字
+    _GREY_TEXT = "#64748b"    # 上下文行文字
     
     # 行级通用样式（紧凑无间隙，像一个完整代码块）
     _LINE_BASE = (
@@ -1705,8 +1819,8 @@ class SimpleMarkdown:
                 q_html = '<br>'.join(cls._inline(q) for q in quote_buf)
                 out.append(
                     f'<div style="border-left:3px solid {CursorTheme.ACCENT_BEIGE};padding:6px 12px;'
-                    f'margin:6px 0;background:#2a2520;'
-                    f'color:#b0a090;font-style:italic;">{q_html}</div>'
+                    f'margin:6px 0;background:rgba(20,16,12,200);'
+                    f'color:#d4a574;font-style:italic;">{q_html}</div>'
                 )
                 quote_buf = []
 
@@ -1726,7 +1840,7 @@ class SimpleMarkdown:
                 _flush_quote()
                 _flush_list()
                 out.append(
-                    '<hr style="border:none;border-top:1px solid #3c3c3c;margin:10px 0;">'
+                    '<hr style="border:none;border-top:1px solid rgba(255,255,255,10);margin:10px 0;">'
                 )
                 i += 1
                 continue
@@ -1750,10 +1864,10 @@ class SimpleMarkdown:
                 content = header_match.group(2)
                 # 层级样式
                 styles = {
-                    1: ('18px', '#e0e0ff', '600', '14px 0 6px 0', f'border-bottom:1px solid #3c3c3c;padding-bottom:6px;'),
-                    2: ('16px', '#c8d8e8', '600', '12px 0 4px 0', ''),
-                    3: ('14px', '#b0c0d0', '600', '10px 0 3px 0', ''),
-                    4: ('13px', '#98a8b8', '500', '8px 0 2px 0', ''),
+                    1: ('18px', '#e2e8f0', '600', '14px 0 6px 0', f'border-bottom:1px solid rgba(255,255,255,10);padding-bottom:6px;'),
+                    2: ('16px', '#cbd5e1', '600', '12px 0 4px 0', ''),
+                    3: ('14px', '#94a3b8', '600', '10px 0 3px 0', ''),
+                    4: ('13px', '#94a3b8', '500', '8px 0 2px 0', ''),
                 }
                 sz, clr, wt, mg, extra = styles[lvl]
                 out.append(
@@ -1789,11 +1903,11 @@ class SimpleMarkdown:
                     in_list, tag = True, 'ul'
                 checked = task_match.group(1) in ('x', 'X')
                 box = (
-                    '<span style="color:#4ec9b0;font-weight:bold;margin-right:4px;">[x]</span>'
+                    '<span style="color:#10b981;font-weight:bold;margin-right:4px;">[x]</span>'
                     if checked else
-                    '<span style="color:#6a6a6a;margin-right:4px;">[ ]</span>'
+                    '<span style="color:#64748b;margin-right:4px;">[ ]</span>'
                 )
-                text_style = 'color:#6a6a6a;text-decoration:line-through;' if checked else ''
+                text_style = 'color:#64748b;text-decoration:line-through;' if checked else ''
                 out.append(
                     f'<li style="margin:2px 0;{text_style}">'
                     f'{box}{cls._inline(task_match.group(2))}</li>'
@@ -1807,7 +1921,7 @@ class SimpleMarkdown:
                     _flush_list()
                     out.append(
                         '<ul style="margin:4px 0;padding-left:20px;'
-                        'list-style-type:disc;color:#858585;">'
+                        'list-style-type:disc;color:#94a3b8;">'
                     )
                     in_list, tag = True, 'ul'
                 out.append(
@@ -1823,7 +1937,7 @@ class SimpleMarkdown:
                 if not in_list or tag != 'ol':
                     _flush_list()
                     out.append(
-                        '<ol style="margin:4px 0;padding-left:20px;color:#858585;">'
+                        '<ol style="margin:4px 0;padding-left:20px;color:#94a3b8;">'
                     )
                     in_list, tag = True, 'ol'
                 out.append(
@@ -1899,20 +2013,20 @@ class SimpleMarkdown:
         for ci, h in enumerate(headers):
             align = aligns[ci] if ci < len(aligns) else 'left'
             tbl.append(
-                f'<th style="border:1px solid #3c3c3c;padding:6px 10px;'
-                f'background:#2a2a3a;color:#c8d8e8;font-weight:600;'
+                f'<th style="border:1px solid rgba(255,255,255,8);padding:6px 10px;'
+                f'background:rgba(18,20,38,230);color:#cbd5e1;font-weight:600;'
                 f'text-align:{align};">{cls._inline(h)}</th>'
             )
         tbl.append('</tr>')
 
         # tbody
         for ri, row in enumerate(rows):
-            bg = '#1e1e2e' if ri % 2 == 0 else '#252535'
+            bg = 'rgba(12,14,25,200)' if ri % 2 == 0 else 'rgba(18,20,38,180)'
             tbl.append('<tr>')
             for ci, cell in enumerate(row):
                 align = aligns[ci] if ci < len(aligns) else 'left'
                 tbl.append(
-                    f'<td style="border:1px solid #3c3c3c;padding:5px 10px;'
+                    f'<td style="border:1px solid rgba(255,255,255,6);padding:5px 10px;'
                     f'background:{bg};color:{CursorTheme.TEXT_PRIMARY};'
                     f'text-align:{align};">{cls._inline(cell)}</td>'
                 )
@@ -1930,21 +2044,21 @@ class SimpleMarkdown:
         # 链接 [text](url)
         text = re.sub(
             r'\[([^\]]+?)\]\(([^)]+?)\)',
-            r'<a href="\2" style="color:#4e8fca;text-decoration:none;">\1</a>',
+            r'<a href="\2" style="color:#60a5fa;text-decoration:none;">\1</a>',
             text,
         )
         # 粗体
-        text = re.sub(r'\*\*(.+?)\*\*', r'<b style="color:#e0e0e0;">\1</b>', text)
+        text = re.sub(r'\*\*(.+?)\*\*', r'<b style="color:#f1f5f9;">\1</b>', text)
         # 删除线
-        text = re.sub(r'~~(.+?)~~', r'<s style="color:#6a6a6a;">\1</s>', text)
+        text = re.sub(r'~~(.+?)~~', r'<s style="color:#64748b;">\1</s>', text)
         # 斜体
-        text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i style="color:#b8c8d8;">\1</i>', text)
+        text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i style="color:#cbd5e1;">\1</i>', text)
         # 行内代码
         text = re.sub(
             r'`([^`]+?)`',
-            r'<code style="background:#2a2a3a;padding:2px 6px;border-radius:3px;'
-            r'font-family:Consolas,Monaco,monospace;color:#ce9178;'
-            r'font-size:0.9em;border:1px solid #3a3a4a;">\1</code>',
+            r'<code style="background:rgba(18,20,38,230);padding:2px 6px;border-radius:4px;'
+            r'font-family:Consolas,Monaco,monospace;color:#fbbf24;'
+            r'font-size:0.9em;border:1px solid rgba(255,255,255,10);">\1</code>',
             text,
         )
         # Houdini 节点路径 → 可点击链接
@@ -3414,8 +3528,8 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
             ("Input",          self._fmt_k(total_in),    CursorTheme.ACCENT_PURPLE),
             ("Output",         self._fmt_k(total_out),   CursorTheme.ACCENT_GREEN),
             ("Reasoning",      self._fmt_k(reasoning),   CursorTheme.ACCENT_YELLOW),
-            ("Cache Hit",      self._fmt_k(cache_r),     "#4ec9b0"),
-            ("Hit Rate",       f"{hit_rate:.1f}%",       "#4ec9b0"),
+            ("Cache Hit",      self._fmt_k(cache_r),     "#10b981"),
+            ("Hit Rate",       f"{hit_rate:.1f}%",       "#10b981"),
             ("Avg Latency",    f"{avg_latency:.1f}s",    CursorTheme.TEXT_SECONDARY),
             ("Est. Cost",      cost_str,                 CursorTheme.ACCENT_BLUE),
         ]
@@ -3435,7 +3549,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         # 进度条: input vs output vs cache
         if total > 0:
             bar = _BarWidget([
-                (cache_r, "#4ec9b0"),
+                (cache_r, "#10b981"),
                 (cache_w, CursorTheme.ACCENT_ORANGE),
                 (max(total_in - cache_r - cache_w, 0), CursorTheme.ACCENT_PURPLE),
                 (reasoning, CursorTheme.ACCENT_YELLOW),
@@ -3590,7 +3704,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
             CursorTheme.TEXT_MUTED,       # 时间
             CursorTheme.TEXT_PRIMARY,     # 模型
             CursorTheme.ACCENT_PURPLE,    # Input
-            "#4ec9b0",                    # Cache Hit
+            "#10b981",                    # Cache Hit
             CursorTheme.ACCENT_ORANGE,    # Cache Write
             CursorTheme.ACCENT_GREEN,     # Output
             CursorTheme.ACCENT_YELLOW,    # Reasoning
@@ -3612,7 +3726,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
 
         # 迷你柱状图
         bar = _BarWidget([
-            (c_hit, "#4ec9b0"),
+            (c_hit, "#10b981"),
             (c_miss, CursorTheme.ACCENT_ORANGE),
             (max(inp - c_hit - c_miss, 0), CursorTheme.ACCENT_PURPLE),
             (reasoning, CursorTheme.ACCENT_YELLOW),

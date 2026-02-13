@@ -36,8 +36,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # 不使用 WindowStaysOnTopHint，让窗口与 Houdini 同层级
         self.setWindowFlags(QtCore.Qt.Window)
         
-        # 深色背景由 AITab 的全局 QSS 级联覆盖
-        self.setStyleSheet("QMainWindow { background-color: #1e1e1e; }")
+        # 深邃蓝黑背景（与 aiTab glassmorphism 主题匹配）
+        self.setStyleSheet("QMainWindow { background-color: #0a0a12; }")
         
         central_widget = QtWidgets.QWidget()
         self.setCentralWidget(central_widget)
