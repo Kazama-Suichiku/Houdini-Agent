@@ -12,6 +12,8 @@ import html
 import re
 import time
 
+from .i18n import tr
+
 
 def _fmt_duration(seconds: float) -> str:
     """格式化时长: <60s -> '18s', >=60s -> '1m43s'"""
@@ -326,7 +328,7 @@ class ThinkingSection(CollapsibleSection):
     def __init__(self, parent=None):
         # ★ 默认展开（用户要求不自动折叠）；section 整体初始 setVisible(False)，
         #   首次收到思考内容时 setVisible(True) 即可，内容区已处于展开状态。
-        super().__init__("思考中...", icon="", collapsed=False, parent=parent)
+        super().__init__(tr('thinking.init'), icon="", collapsed=False, parent=parent)
         # ★ 防止被父布局拉伸 —— 内容多大就多大
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding,
@@ -402,7 +404,7 @@ class ThinkingSection(CollapsibleSection):
     def update_time(self):
         if self._finalized:
             return
-        self.set_title(f"思考中... ({_fmt_duration(self._total_elapsed())})")
+        self.set_title(tr('thinking.progress', _fmt_duration(self._total_elapsed())))
     
     @property
     def _finalized(self):
@@ -412,10 +414,10 @@ class ThinkingSection(CollapsibleSection):
         self._is_finalized = False
         self._round_start = time.time()
         self._round_count += 1
-        self._thinking_text += f"\n--- 第 {self._round_count + 1} 轮思考 ---\n"
+        self._thinking_text += f"\n{tr('thinking.round', self._round_count + 1)}\n"
         self.thinking_label.setPlainText(self._thinking_text)
         QtCore.QTimer.singleShot(0, self._update_height)
-        self.set_title(f"思考中... ({_fmt_duration(self._total_elapsed())})")
+        self.set_title(tr('thinking.progress', _fmt_duration(self._total_elapsed())))
         # ★ 始终确保展开
         self.expand()
     
@@ -425,7 +427,7 @@ class ThinkingSection(CollapsibleSection):
         self._is_finalized = True
         self._accumulated_seconds += (time.time() - self._round_start)
         total = self._accumulated_seconds
-        self.set_title(f"思考过程 ({_fmt_duration(total)})")
+        self.set_title(tr('thinking.done', _fmt_duration(total)))
         # ★ 防御性展开：确保思考区块在任何情况下都保持展开
         self.expand()
 
@@ -484,7 +486,7 @@ class ThinkingBar(QtWidgets.QWidget):
 
         s = int(self._elapsed)
         time_str = f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s"
-        display = f"  ✦ 思考中... ({time_str})"
+        display = f"  ✦ {tr('thinking.progress', time_str)}"
 
         font = QtGui.QFont(CursorTheme.FONT_BODY, 9)
         p.setFont(font)
@@ -539,7 +541,7 @@ class VEXPreviewInline(QtWidgets.QFrame):
         layout.setSpacing(3)
 
         # 标题行
-        title = QtWidgets.QLabel(f"确认执行: {tool_name}")
+        title = QtWidgets.QLabel(tr('confirm.title', tool_name))
         title.setObjectName("vexPreviewTitle")
         title.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(title)
@@ -554,7 +556,7 @@ class VEXPreviewInline(QtWidgets.QFrame):
         if summary_lines:
             summary_text = "\n".join(summary_lines[:6])
             if len(summary_lines) > 6:
-                summary_text += f"\n  ... 共 {len(summary_lines)} 个参数"
+                summary_text += f"\n  {tr('confirm.params_more', len(summary_lines))}"
             summary_lbl = QtWidgets.QLabel(summary_text)
             summary_lbl.setWordWrap(True)
             summary_lbl.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -570,14 +572,14 @@ class VEXPreviewInline(QtWidgets.QFrame):
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.addStretch()
 
-        btn_cancel = QtWidgets.QPushButton("✕ 取消")
+        btn_cancel = QtWidgets.QPushButton(tr('confirm.cancel'))
         btn_cancel.setCursor(QtCore.Qt.PointingHandCursor)
         btn_cancel.setFixedHeight(24)
         btn_cancel.setObjectName("btnCancel")
         btn_cancel.clicked.connect(self._on_cancel)
         btn_row.addWidget(btn_cancel)
 
-        btn_confirm = QtWidgets.QPushButton("↵ 确认执行")
+        btn_confirm = QtWidgets.QPushButton(tr('confirm.execute'))
         btn_confirm.setCursor(QtCore.Qt.PointingHandCursor)
         btn_confirm.setFixedHeight(24)
         btn_confirm.setObjectName("btnConfirmGreen")
@@ -711,7 +713,7 @@ class ExecutionSection(CollapsibleSection):
     nodePathClicked = QtCore.Signal(str)  # 从子 ToolCallItem 冒泡上来
 
     def __init__(self, parent=None):
-        super().__init__("执行中...", icon="", collapsed=True, parent=parent)
+        super().__init__(tr('exec.running'), icon="", collapsed=True, parent=parent)
         self._tool_calls: List[ToolCallItem] = []
         self._start_time = time.time()
         
@@ -741,10 +743,10 @@ class ExecutionSection(CollapsibleSection):
         total = len(self._tool_calls)
         done = sum(1 for item in self._tool_calls if item._result is not None)
         if done < total:
-            self.set_title(f"执行中... ({done}/{total})")
+            self.set_title(tr('exec.progress', done, total))
         else:
             elapsed = time.time() - self._start_time
-            self.set_title(f"执行完成 ({total}个操作, {_fmt_duration(elapsed)})")
+            self.set_title(tr('exec.done', total, _fmt_duration(elapsed)))
     
     def finalize(self):
         """完成执行"""
@@ -764,9 +766,9 @@ class ExecutionSection(CollapsibleSection):
         failed = total - success
         
         if failed > 0:
-            self.set_title(f"执行完成 ({success} ok, {failed} err, {_fmt_duration(elapsed)})")
+            self.set_title(tr('exec.done_err', success, failed, _fmt_duration(elapsed)))
         else:
-            self.set_title(f"执行完成 ({total}个操作, {_fmt_duration(elapsed)})")
+            self.set_title(tr('exec.done', total, _fmt_duration(elapsed)))
 
 
 # ============================================================
@@ -778,7 +780,7 @@ class ImagePreviewDialog(QtWidgets.QDialog):
 
     def __init__(self, pixmap: QtGui.QPixmap, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("图片预览")
+        self.setWindowTitle(tr('img.preview'))
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowMaximizeButtonHint)
         self._pixmap = pixmap
 
@@ -817,7 +819,7 @@ class ImagePreviewDialog(QtWidgets.QDialog):
         info.setObjectName("imgInfoLabel")
         bar.addWidget(info)
         bar.addStretch()
-        close_btn = QtWidgets.QPushButton("关闭")
+        close_btn = QtWidgets.QPushButton(tr('btn.close'))
         close_btn.setObjectName("imgCloseBtn")
         close_btn.clicked.connect(self.close)
         bar.addWidget(close_btn)
@@ -855,7 +857,7 @@ class ClickableImageLabel(QtWidgets.QLabel):
         self._full_pixmap = full_pixmap
         self.setPixmap(thumb_pixmap)
         self.setCursor(QtCore.Qt.PointingHandCursor)
-        self.setToolTip("点击放大查看")
+        self.setToolTip(tr('img.click_zoom'))
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
@@ -933,12 +935,12 @@ class UserMessage(QtWidgets.QWidget):
             preview += ' …'
         self.content.setText(preview)
         remaining = len(lines) - self._COLLAPSED_MAX_LINES
-        self._toggle_btn.setText(f"▶ 展开 ({remaining} 行更多)")
+        self._toggle_btn.setText(tr('msg.expand', remaining))
 
     def _apply_expanded(self):
         """应用展开状态：显示完整文本"""
         self.content.setText(self._full_text)
-        self._toggle_btn.setText("▼ 收起")
+        self._toggle_btn.setText(tr('msg.collapse'))
 
     def _toggle_collapse(self):
         self._collapsed = not self._collapsed
@@ -1026,13 +1028,13 @@ class AIResponse(QtWidgets.QWidget):
         status_row.setContentsMargins(0, 0, 0, 0)
         status_row.setSpacing(8)
         
-        self.status_label = QtWidgets.QLabel("思考中...")
+        self.status_label = QtWidgets.QLabel(tr('thinking.init'))
         self.status_label.setObjectName("aiStatusLabel")
         status_row.addWidget(self.status_label)
         status_row.addStretch()
         
         # 复制全部按钮（完成后才显示）
-        self._copy_btn = QtWidgets.QPushButton("复制")
+        self._copy_btn = QtWidgets.QPushButton(tr('btn.copy'))
         self._copy_btn.setVisible(False)
         self._copy_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._copy_btn.setFixedHeight(22)
@@ -1088,7 +1090,7 @@ class AIResponse(QtWidgets.QWidget):
                 return  # 思考已结束，不再更新
             self.thinking_section.update_time()
             total = self.thinking_section._total_elapsed()
-            self.status_label.setText(f"思考中... ({_fmt_duration(total)})")
+            self.status_label.setText(tr('thinking.progress', _fmt_duration(total)))
     
     def add_shell_widget(self, widget: 'PythonShellWidget'):
         """将 PythonShellWidget 添加到 Python Shell 折叠区块"""
@@ -1120,11 +1122,11 @@ class AIResponse(QtWidgets.QWidget):
             self._has_execution = True
             self.execution_section.setVisible(True)
         self.execution_section.add_tool_call(tool_name)
-        self.status_label.setText(f"执行: {tool_name}")
+        self.status_label.setText(tr('exec.tool', tool_name))
     
     def add_tool_result(self, tool_name: str, result: str):
         """添加工具结果"""
-        success = not result.startswith("[err]") and not result.startswith("错误")
+        success = not result.startswith("[err]") and not result.startswith("错误") and not result.startswith("Error")
         clean_result = result.removeprefix("[ok] ").removeprefix("[err] ")
         self.execution_section.set_tool_result(tool_name, clean_result, success)
     
@@ -1199,7 +1201,7 @@ class AIResponse(QtWidgets.QWidget):
         if content:
             QtWidgets.QApplication.clipboard().setText(content)
             # 临时反馈
-            self._copy_btn.setText("已复制")
+            self._copy_btn.setText(tr('btn.copied'))
             self._copy_btn.setProperty("state", "copied")
             self._copy_btn.style().unpolish(self._copy_btn)
             self._copy_btn.style().polish(self._copy_btn)
@@ -1208,7 +1210,7 @@ class AIResponse(QtWidgets.QWidget):
     def _reset_copy_btn(self):
         """恢复复制按钮样式"""
         try:
-            self._copy_btn.setText("复制")
+            self._copy_btn.setText(tr('btn.copy'))
             self._copy_btn.setProperty("state", "")
             self._copy_btn.style().unpolish(self._copy_btn)
             self._copy_btn.style().polish(self._copy_btn)
@@ -1241,12 +1243,12 @@ class AIResponse(QtWidgets.QWidget):
         # 更新状态
         parts = []
         if self._has_thinking:
-            parts.append("思考")
+            parts.append(tr('status.thinking'))
         if self._has_execution:
             tool_count = len(self.execution_section._tool_calls)
-            parts.append(f"{tool_count}次调用")
+            parts.append(tr('status.calls', tool_count))
         
-        status_text = f"完成 ({_fmt_duration(elapsed)})"
+        status_text = tr('status.done', _fmt_duration(elapsed))
         if parts:
             status_text += f" | {', '.join(parts)}"
         
@@ -1261,9 +1263,9 @@ class AIResponse(QtWidgets.QWidget):
         
         if not content:
             if self._has_execution:
-                self.content_label.setPlainText("执行完成，详见上方执行过程。")
+                self.content_label.setPlainText(tr('status.exec_done_see_above'))
             else:
-                self.content_label.setPlainText("（无回复内容）")
+                self.content_label.setPlainText(tr('status.no_reply'))
             self.content_label.setProperty("state", "empty")
             self.content_label.style().unpolish(self.content_label)
             self.content_label.style().polish(self.content_label)
@@ -1366,7 +1368,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
             btn = QtWidgets.QPushButton(short_name)
             btn.setFlat(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setToolTip(f"点击跳转: {path}")
+            btn.setToolTip(tr('node.click_jump', path))
             btn.setObjectName("nodePathBtn")
             btn.clicked.connect(lambda checked=False, p=path: self.nodeClicked.emit(p))
             layout.addWidget(btn)
@@ -1386,14 +1388,14 @@ class NodeOperationLabel(QtWidgets.QWidget):
         layout.addStretch()
         
         # ── Undo / Keep 按钮 ──
-        self._undo_btn = QtWidgets.QPushButton("undo")
+        self._undo_btn = QtWidgets.QPushButton(tr('btn.undo'))
         self._undo_btn.setFixedHeight(20)
         self._undo_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._undo_btn.setObjectName("btnUndoOp")
         self._undo_btn.clicked.connect(self._on_undo)
         layout.addWidget(self._undo_btn)
         
-        self._keep_btn = QtWidgets.QPushButton("keep")
+        self._keep_btn = QtWidgets.QPushButton(tr('btn.keep'))
         self._keep_btn.setFixedHeight(20)
         self._keep_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._keep_btn.setObjectName("btnKeepOp")
@@ -1432,21 +1434,21 @@ class NodeOperationLabel(QtWidgets.QWidget):
             btn = QtWidgets.QPushButton(short_name)
             btn.setFlat(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setToolTip(f"点击跳转: {path}")
+            btn.setToolTip(tr('node.click_jump', path))
             btn.setObjectName("nodePathBtn")
             btn.clicked.connect(lambda checked=False, p=path: self.nodeClicked.emit(p))
             header.addWidget(btn)
         
         header.addStretch()
         
-        self._undo_btn = QtWidgets.QPushButton("undo")
+        self._undo_btn = QtWidgets.QPushButton(tr('btn.undo'))
         self._undo_btn.setFixedHeight(20)
         self._undo_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._undo_btn.setObjectName("btnUndoOp")
         self._undo_btn.clicked.connect(self._on_undo)
         header.addWidget(self._undo_btn)
         
-        self._keep_btn = QtWidgets.QPushButton("keep")
+        self._keep_btn = QtWidgets.QPushButton(tr('btn.keep'))
         self._keep_btn.setFixedHeight(20)
         self._keep_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self._keep_btn.setObjectName("btnKeepOp")
@@ -1479,7 +1481,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
         self._decided = True
         self._undo_btn.setVisible(False)
         self._keep_btn.setVisible(False)
-        self._status_label.setText("已撤销")
+        self._status_label.setText(tr('status.undone'))
         self._status_label.setProperty("state", "undone")
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
@@ -1493,7 +1495,7 @@ class NodeOperationLabel(QtWidgets.QWidget):
         self._decided = True
         self._undo_btn.setVisible(False)
         self._keep_btn.setVisible(False)
-        self._status_label.setText("已保留")
+        self._status_label.setText(tr('status.kept'))
         self._status_label.setVisible(True)
         self.decided.emit()
 
@@ -1625,8 +1627,8 @@ class ParamDiffWidget(QtWidgets.QWidget):
             
             if not diff_body:
                 # 没有实际差异（或 difflib 无法处理）→ 并排显示
-                self._add_block(diff_layout, "旧值", old_str, is_old=True)
-                self._add_block(diff_layout, "新值", new_str, is_old=False)
+                self._add_block(diff_layout, tr('diff.old'), old_str, is_old=True)
+                self._add_block(diff_layout, tr('diff.new'), new_str, is_old=False)
             else:
                 for line in diff_body:
                     line_stripped = line.rstrip('\n')
@@ -1669,7 +1671,7 @@ class ParamDiffWidget(QtWidgets.QWidget):
             
             # 旧值 (红框)
             old_lbl = QtWidgets.QLabel(self._truncate(old_str, 30))
-            old_lbl.setToolTip(f"旧值: {old_str}")
+            old_lbl.setToolTip(f"{tr('diff.old')}: {old_str}")
             old_lbl.setObjectName("diffOldValue")
             inline.addWidget(old_lbl)
             
@@ -1680,7 +1682,7 @@ class ParamDiffWidget(QtWidgets.QWidget):
             
             # 新值 (绿框)
             new_lbl = QtWidgets.QLabel(self._truncate(new_str, 30))
-            new_lbl.setToolTip(f"新值: {new_str}")
+            new_lbl.setToolTip(f"{tr('diff.new')}: {new_str}")
             new_lbl.setObjectName("diffNewValue")
             inline.addWidget(new_lbl)
             
@@ -2974,7 +2976,7 @@ class ChatInput(QtWidgets.QPlainTextEdit):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("输入消息... (Enter 发送, Shift+Enter 换行, @提及节点)")
+        self.setPlaceholderText(tr('placeholder'))
         # 确保自动换行
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
         self.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)

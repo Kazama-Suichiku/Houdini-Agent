@@ -24,6 +24,7 @@ from typing import List, Dict, Any, Optional
 
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui, QSettings, invoke_on_main
 
+from .i18n import tr, get_language
 from ..utils.ai_client import AIClient, HOUDINI_TOOLS
 from ..utils.mcp import HoudiniMCP
 from ..utils.token_optimizer import TokenOptimizer, TokenBudget, CompressionStrategy
@@ -233,6 +234,35 @@ class AITab(
         
         # ★ 启动时静默检查更新（延迟 5 秒，不阻塞初始化）
         QtCore.QTimer.singleShot(5000, self._silent_update_check)
+        
+        # ★ 语言切换时重建系统提示词 + 重新翻译 UI
+        from .i18n import language_changed
+        language_changed.changed.connect(self._rebuild_system_prompts)
+        language_changed.changed.connect(self._retranslateUi)
+
+    def _rebuild_system_prompts(self, _lang: str = ''):
+        """语言切换后重建系统提示词（含 Ask/Agent 模式强制语言规则）"""
+        self._system_prompt_think = self._build_system_prompt(with_thinking=True)
+        self._system_prompt_no_think = self._build_system_prompt(with_thinking=False)
+        self._cached_prompt_think = self.token_optimizer.optimize_system_prompt(
+            self._system_prompt_think, max_length=1800
+        )
+        self._cached_prompt_no_think = self.token_optimizer.optimize_system_prompt(
+            self._system_prompt_no_think, max_length=1800
+        )
+        self._system_prompt = self._system_prompt_think
+        self._cached_optimized_system_prompt = self._cached_prompt_think
+        print(f"[i18n] System prompts rebuilt for language: {_lang or get_language()}")
+
+    def _retranslateUi(self, _lang: str = ''):
+        """语言切换后重新翻译所有静态 UI 文本"""
+        # Header 区域
+        self._retranslate_header()
+        # 输入区域
+        self._retranslate_input_area()
+        # 会话标签栏
+        self._retranslate_session_tabs()
+        print(f"[i18n] UI retranslated for language: {_lang or get_language()}")
 
     def _build_system_prompt(self, with_thinking: bool = True) -> str:
         """构建系统提示
@@ -240,12 +270,18 @@ class AITab(
         Args:
             with_thinking: 是否包含 <think> 标签思考指令
         """
-        base_prompt = """You are a Houdini assistant, expert at solving problems with nodes and VEX.
-CRITICAL: You MUST reply in Simplified Chinese (zh-CN) for all user-facing text. Only internal thinking tags may use any language.
+        # Language enforcement based on UI setting
+        if get_language() == 'en':
+            lang_rule = "CRITICAL: You MUST reply in English for ALL user-facing text. No exceptions. Even if the user writes in another language, your reply MUST be in English."
+        else:
+            lang_rule = "CRITICAL: You MUST reply in the SAME language the user uses. If the user writes in Chinese, reply in Chinese. If in English, reply in English. Match the user's language exactly."
+        
+        base_prompt = f"""You are a Houdini assistant, expert at solving problems with nodes and VEX.
+{lang_rule}
 Never use emoji or icon symbols in replies unless the user explicitly requests them. Use plain text only.
 """
         if with_thinking:
-            base_prompt += """
+            base_prompt += f"""
 Output Format (highest priority rule — violation = failure):
 Every single reply (regardless of round number or whether tools were called) MUST begin with a <think>...</think> block. No exceptions.
 Even brief confirmations or status updates must start with <think> before the main text.
@@ -273,7 +309,7 @@ Collaboration Rules When Encountering Obstacles (critical — never abandon the 
 -If a step is easier for the user via UI interaction (drag files, click buttons, select objects in viewport), prefer asking the user rather than simulating it with code.
 -Before pausing, summarize what you have completed and explain what the user needs to do, so you can resume seamlessly afterward.
 
-Content outside think tags is the formal reply shown to the user — keep it concise, direct, action-oriented. MUST be in Simplified Chinese.
+Content outside think tags is the formal reply shown to the user — keep it concise, direct, action-oriented. {lang_rule}
 
 Example (deep thinking + plain text reply):
 <think>
@@ -286,7 +322,7 @@ B: grid -> wrangle(VEX rand to manually generate points) + copytopoints — more
 [Plan] 1. create_node box as scatter base 2. create_node scatter connected to box 3. create_node sphere as copy template 4. create_node copytopoints connecting scatter(input1) and sphere(input0) 5. verify_and_summarize
 [Risk] copytopoints input order is easy to mix up (0=template, 1=target points). Must verify connections carefully.
 </think>
-已创建 box->scatter->copytopoints 流程，500 个点，球体半径 0.05。
+Created box->scatter->copytopoints pipeline, 500 points, sphere radius 0.05.
 
 Example (follow-up reply after tool execution, MUST still have think tag):
 <think>
@@ -297,7 +333,7 @@ Example (follow-up reply after tool execution, MUST still have think tag):
 """
         else:
             base_prompt += """
-Output format: Concise, direct, action-oriented. MUST reply in Simplified Chinese.
+Output format: Concise, direct, action-oriented. MUST reply in the same language the user uses.
 """
 
         base_prompt += """
@@ -781,21 +817,16 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         hit_rate_display = f"{(cache_read / cache_total * 100):.1f}%" if cache_total > 0 else "N/A"
         
         reasoning = self._token_stats.get('reasoning_tokens', 0)
-        reasoning_line = f"推理 Token: {reasoning:,}\n" if reasoning > 0 else ""
+        reasoning_line = tr('token.reasoning_line', reasoning) if reasoning > 0 else ""
         
         self.token_stats_btn.setToolTip(
-            f"累计统计 ({self._token_stats['requests']} 次请求)\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"输入: {self._token_stats['input_tokens']:,}\n"
-            f"输出: {self._token_stats['output_tokens']:,}\n"
-            f"{reasoning_line}"
-            f"Cache 读取: {cache_read:,}\n"
-            f"Cache 写入: {cache_write:,}\n"
-            f"Cache 命中率: {hit_rate_display}\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"总计: {total:,}\n"
-            f"预估费用: {cost_display or '$0.00'}\n"
-            f"点击查看详情"
+            tr('token.summary',
+               self._token_stats['requests'],
+               self._token_stats['input_tokens'],
+               self._token_stats['output_tokens'],
+               reasoning_line,
+               cache_read, cache_write, hit_rate_display,
+               total, cost_display or '$0.00')
         )
     
     def _show_token_stats_dialog(self):
@@ -824,7 +855,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 显示提示
         if self._current_response:
-            self._current_response.add_status("统计已重置")
+            self._current_response.add_status(tr('status.stats_reset'))
 
     # ===== UI 辅助 =====
     
@@ -1180,8 +1211,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if self._output_buffer:
                 self._appendContent.emit(self._output_buffer)
                 self._output_buffer = ""
-            self._appendContent.emit("\n\n[输出已达到 token 限制，已停止]")
-            self._addStatus.emit("输出达到 token 限制，已停止")
+            self._appendContent.emit(tr('ai.token_limit'))
+            self._addStatus.emit(tr('ai.token_limit_status'))
             self.client.request_stop()
             return
 
@@ -1200,19 +1231,19 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         if should_flush and self._output_buffer:
             # 实时过滤伪造的工具调用行
             buf = self._output_buffer
-            if '[ok]' in buf or '[err]' in buf or '[工具执行结果]' in buf:
+            if '[ok]' in buf or '[err]' in buf or '[工具执行结果]' in buf or '[Tool Result]' in buf:
                 lines = buf.split('\n')
                 filtered = []
                 has_fake = False
                 for ln in lines:
                     s = ln.strip()
-                    if s == '[工具执行结果]' or self._FAKE_TOOL_PATTERNS.match(s):
+                    if s == '[工具执行结果]' or s == '[Tool Result]' or self._FAKE_TOOL_PATTERNS.match(s):
                         has_fake = True
                         continue
                     filtered.append(ln)
                 buf = '\n'.join(filtered)
                 if has_fake and not getattr(self, '_fake_warned', False):
-                    self._addStatus.emit("检测到AI伪造工具调用，已自动过滤")
+                    self._addStatus.emit(tr('ai.fake_tool'))
                     self._fake_warned = True
             if buf.strip():
                 self._appendContent.emit(buf)
@@ -1232,7 +1263,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             remaining = self._max_output_tokens - self._current_output_tokens
             if remaining < 400:
                 self._addStatus.emit(
-                    f"输出接近限制: {self._current_output_tokens}/{self._max_output_tokens} tokens")
+                    tr('ai.approaching_limit', self._current_output_tokens, self._max_output_tokens))
         return True
 
     def _on_thinking_chunk(self, text: str):
@@ -1361,7 +1392,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 确保历史以 assistant 消息结尾（维持 user→assistant 交替）
         need_final = clean_content or new_messages or (not new_messages and not clean_content)
         if need_final:
-            final_msg = {'role': 'assistant', 'content': clean_content or '(任务完成)'}
+            final_msg = {'role': 'assistant', 'content': clean_content or tr('ai.no_content')}
             if thinking_text:
                 final_msg['thinking'] = thinking_text
             # 提取 shell 执行记录，供历史恢复时重建 Shell 折叠面板
@@ -1540,7 +1571,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         if not self._agent_mode and tool_name not in self._ASK_MODE_TOOLS:
             return {
                 "success": False,
-                "error": f"[Ask 模式] 工具 '{tool_name}' 不可用。当前为只读模式，无法执行修改操作。请切换到 Agent 模式。"
+                "error": tr('ask.restricted', tool_name)
             }
         
         # ★ 确认模式：对关键节点操作弹出预览确认
@@ -1549,7 +1580,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if not confirmed:
                 return {
                     "success": False,
-                    "error": f"用户取消了 {tool_name} 操作。请根据用户意图调整方案或询问用户。"
+                    "error": tr('ask.user_cancel', tool_name)
                 }
         
         # ★ 显示工具执行状态
@@ -1592,7 +1623,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             return self.mcp.execute_tool(tool_name, kwargs)
         except Exception as e:
             import traceback
-            return {"success": False, "error": f"后台执行异常: {e}\n{traceback.format_exc()[:300]}"}
+            return {"success": False, "error": tr('ai.bg_exec_err', f"{e}\n{traceback.format_exc()[:300]}")}
     
     def _execute_tool_in_main_thread(self, tool_name: str, kwargs: dict) -> dict:
         """在主线程执行工具（线程安全）
@@ -1620,7 +1651,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 result = self._tool_result_queue.get(timeout=30.0)
                 return result
             except queue.Empty:
-                return {"success": False, "error": "工具执行超时（30秒）"}
+                return {"success": False, "error": tr('ai.main_exec_timeout')}
     
     # 已自带 checkpoint 追踪的工具（在 _on_add_node_operation 中有专用分支）
     _SELF_TRACKING_TOOLS = frozenset({
@@ -1752,7 +1783,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         所有修改操作包裹在 undo group 中，支持一键撤销整个 Agent 操作。
         ★ 对于未自带 checkpoint 的修改工具，会在执行前后快照网络子节点以检测变更。
         """
-        result = {"success": False, "error": "未知错误"}
+        result = {"success": False, "error": tr('ai.unknown_err')}
         
         # 判断是否为修改操作（需要 undo group）
         _MUTATING_TOOLS = {
@@ -1817,38 +1848,38 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         node_name = node.get('name', '')
                         # 检测错误节点
                         if node.get('has_errors'):
-                            issues.append(f"错误节点:{node_name}")
+                            issues.append(tr('ai.err_issues', node_name))
                         # 检测孤立节点（非输出节点且未连接）
                         if node_name not in connected_nodes:
                             node_type = node.get('type', '').lower()
                             # 排除输出节点和根节点
                             if not any(x in node_type for x in ['output', 'null', 'out', 'merge']):
                                 if not any(x in node_name.lower() for x in ['out', 'output', 'result']):
-                                    issues.append(f"孤立节点:{node_name}")
+                                    issues.append(f"orphan:{node_name}")
                     
                     # 检查是否有显示的输出节点
                     has_displayed = any(node.get('is_displayed') for node in nodes)
                     if not has_displayed and nodes:
-                        issues.append("无显示节点")
+                        issues.append(tr('ai.no_display'))
                 
                 # 生成验证结果
                 if issues:
                     issues_str = ' | '.join(issues[:5])  # 最多显示5个问题
                     result = {
                         "success": True,
-                        "result": f"发现问题需修复: {issues_str}"
+                        "result": tr('ai.check_fail', issues_str)
                     }
                 else:
-                    check_items_str = ', '.join(str(item) for item in check_items[:3]) if check_items else "无"
+                    check_items_str = ', '.join(str(item) for item in check_items[:3]) if check_items else tr('ai.check_none')
                     result = {
                         "success": True,
-                        "result": f"检查通过 | 节点连接正常,无错误 | 期望:{expected[:30] if expected else '完成'}"
+                        "result": tr('ai.check_pass', expected[:30] if expected else 'done')
                     }
             else:
                 # 其他工具交给 MCP 处理
                 result = self.mcp.execute_tool(tool_name, kwargs)
         except Exception as e:
-            result = {"success": False, "error": f"工具执行异常: {str(e)}"}
+            result = {"success": False, "error": tr('ai.tool_exec_err', str(e))}
         finally:
             # ★ 执行后快照 & diff，检测节点变更
             if should_snapshot and result.get("success"):
@@ -1905,7 +1936,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         压缩工具部分、保留回复部分。
         """
         # 查找工具结果段落结尾
-        if '[工具执行结果]' not in content and '[工具结果]' not in content:
+        if '[工具执行结果]' not in content and '[工具结果]' not in content and '[Tool Result]' not in content:
             # 没有工具摘要，直接截断
             return content[:max_reply] + ('...' if len(content) > max_reply else '')
         
@@ -1925,7 +1956,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 压缩工具部分
         tool_lines = tool_text.strip().split('\n')
         if len(tool_lines) > 6:
-            tool_text = '\n'.join(tool_lines[:1] + tool_lines[-4:]) + f'\n... 共 {len(tool_lines)-1} 次调用'
+            tool_text = '\n'.join(tool_lines[:1] + tool_lines[-4:]) + f'\n... {len(tool_lines)-1} calls'
         elif len(tool_text) > 500:
             tool_text = tool_text[:500] + '...'
         
@@ -2037,13 +2068,13 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             return text
         
         # 检测 [工具执行结果] 头部（这是系统自动生成的格式，AI 不应输出）
-        if text.lstrip().startswith('[工具执行结果]'):
+        if text.lstrip().startswith('[工具执行结果]') or text.lstrip().startswith('[Tool Result]'):
             # 整段就是伪造的工具摘要，移除头部和 [ok]/[err] 行
             lines = text.split('\n')
             real_lines = []
             for line in lines:
                 stripped = line.strip()
-                if stripped == '[工具执行结果]':
+                if stripped in ('[工具执行结果]', '[Tool Result]'):
                     continue
                 if self._FAKE_TOOL_PATTERNS.match(stripped):
                     continue
@@ -2083,8 +2114,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         should_compress, reason = self.token_optimizer.should_compress(current_tokens, context_limit)
         
         if not (should_compress and self._auto_optimize):
-            if reason and '警告' in reason:
-                self._addStatus.emit(f"注意: {reason}")
+            if reason and ('警告' in reason or 'warning' in reason.lower()):
+                self._addStatus.emit(f"Note: {reason}")
             return
         
         old_tokens = current_tokens
@@ -2111,7 +2142,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 if m.get('role') == 'tool':
                     c = m.get('content') or ''
                     if len(c) > 200:
-                        m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[摘要]'
+                        m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[summary]'
         
         # 重新计算
         compressed = [m for rnd in rounds for m in rnd]
@@ -2124,7 +2155,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             saved = old_tokens - new_tokens
             if saved > 0:
                 pct = saved / old_tokens * 100 if old_tokens else 0
-                self._addStatus.emit(f"上下文优化: 压缩 tool 结果，节省 {pct:.0f}% ({saved:,} tokens)")
+                self._addStatus.emit(tr('opt.auto_status', saved))
             return
         
         # --- 第二遍：删除最早的完整轮次，直到低于阈值 ---
@@ -2140,7 +2171,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 在头部插入摘要提示
         summary_note = {
             'role': 'system',
-            'content': f'[上下文管理] 已裁剪 {n_rounds - len(rounds)} 个早期对话轮次以节省空间。请继续当前任务。'
+            'content': tr('ai.old_rounds', n_rounds - len(rounds))
         }
         
         history.clear()
@@ -2149,8 +2180,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         saved = old_tokens - self.token_optimizer.calculate_message_tokens(history)
         if saved > 0:
-            pct = saved / old_tokens * 100 if old_tokens else 0
-            self._addStatus.emit(f"上下文优化: 裁剪旧轮次，节省 {pct:.0f}% ({saved:,} tokens)")
+            self._addStatus.emit(tr('opt.auto_status', saved))
             self._render_conversation_history()
     
     def _compress_context(self):
@@ -2188,9 +2218,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 极简格式：用户请求 | 完成项
         if user_requests:
-            summary_parts.append(f"请求: {', '.join(user_requests[:3])}")  # 最多3个
+            summary_parts.append(f"Requests: {', '.join(user_requests[:3])}")
         if completed_tasks:
-            summary_parts.append(f"完成: {', '.join(completed_tasks[:3])}")  # 最多3个
+            summary_parts.append(f"Done: {', '.join(completed_tasks[:3])}")
         
         # 生成上下文摘要（极简）
         if summary_parts:
@@ -2209,18 +2239,18 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 添加压缩的历史摘要（极简）
         if self._context_summary:
-            parts.append(f"[上下文缓存] {self._context_summary}")
+            parts.append(f"[Context Cache] {self._context_summary}")
         
         # 添加当前 Todo 状态（极简）
         todo_summary = self._get_todo_summary_safe()
         if todo_summary:
             # 只保留未完成的 todo
             if "0/" in todo_summary or "pending" in todo_summary.lower():
-                parts.append(f"[待办] {todo_summary.split(':', 1)[-1] if ':' in todo_summary else todo_summary}")
+                parts.append(f"[TODO] {todo_summary.split(':', 1)[-1] if ':' in todo_summary else todo_summary}")
         
         # 提醒复用上下文（极简）
         if len(self._conversation_history) > 2:
-            parts.append(f"[已有{len(self._conversation_history)}条消息，优先复用上文信息]")
+            parts.append(f"[{len(self._conversation_history)} messages in context, reuse prior info]")
         
         return " | ".join(parts) if parts else ""
 
@@ -2291,7 +2321,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 如果包含 URL，添加提示
         url_list = "\n".join(f"  - {url}" for url in urls)
-        hint = f"\n\n[检测到 URL，请使用 fetch_webpage 获取内容：\n{url_list}]"
+        hint = tr('ai.detected_url', url_list)
         
         return text + hint
 
@@ -2399,22 +2429,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             
             # ★ Ask 模式：追加只读约束
             if not use_agent:
-                ask_constraint = (
-                    "\n\n【当前为 Ask 模式（只读）】\n"
-                    "你只能查询、分析和回答问题。严禁执行以下操作：\n"
-                    "- 创建节点（create_node, create_wrangle_node, create_nodes_batch, copy_node）\n"
-                    "- 删除节点（delete_node）\n"
-                    "- 修改参数（set_node_parameter, batch_set_parameters）\n"
-                    "- 修改连接（connect_nodes）\n"
-                    "- 修改显示（set_display_flag）\n"
-                    "- 保存文件（save_hip）\n"
-                    "- 撤销/重做（undo_redo）\n"
-                    "如果用户请求修改操作，请礼貌说明当前处于 Ask（只读）模式，"
-                    "建议用户切换到 Agent 模式来执行修改。\n"
-                    "你可以使用查询工具（如 get_network_structure, get_node_parameters, "
-                    "read_selection 等）来分析场景并提供建议。"
-                )
-                sys_prompt = sys_prompt + ask_constraint
+                sys_prompt = sys_prompt + tr('ai.ask_mode_prompt')
             
             messages = [{'role': 'system', 'content': sys_prompt}]
             
@@ -2458,7 +2473,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         content = msg.get('content', '')
                         history_to_send.append({
                             'role': 'assistant',
-                            'content': f"[工具结果] {tool_name}: {content[:500]}"
+                            'content': tr('ai.tool_result', tool_name, content[:500])
                         })
                 
                 elif role == 'assistant':
@@ -2493,7 +2508,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                             text_only = '\n'.join(t for t in text_parts if t)
                             history_to_send.append({
                                 'role': 'user',
-                                'content': text_only or '[图片消息]'
+                                'content': text_only or tr('ai.image_msg')
                             })
                     else:
                         # 纯文本消息：原样保留
@@ -2536,7 +2551,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             context_reminder = self._get_context_reminder()
             if context_reminder:
                 # 将上下文提醒作为系统消息添加到末尾
-                messages.append({'role': 'system', 'content': f"[上下文] {context_reminder}"})
+                messages.append({'role': 'system', 'content': f"[Context] {context_reminder}"})
             
             # Cursor 风格预发送压缩：只压缩 tool 结果，保留 user/assistant 完整
             if self._auto_optimize:
@@ -2547,7 +2562,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     old_tokens = current_tokens
                     # 分离系统提示和上下文提醒
                     first_system = messages[0] if messages and messages[0].get('role') == 'system' else None
-                    last_context = messages[-1] if messages and '[上下文]' in messages[-1].get('content', '') else None
+                    last_context = messages[-1] if messages and ('[上下文]' in messages[-1].get('content', '') or '[Context]' in messages[-1].get('content', '')) else None
                     start_idx = 1 if first_system else 0
                     end_idx = -1 if last_context else len(messages)
                     body = messages[start_idx:end_idx] if end_idx != len(messages) else messages[start_idx:]
@@ -2571,7 +2586,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                             if m.get('role') == 'tool':
                                 c = m.get('content') or ''
                                 if len(c) > 200:
-                                    m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[摘要]'
+                                    m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[summary]'
                     
                     compressed_body = [m for rnd in rounds for m in rnd]
                     
@@ -2593,7 +2608,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     if n_rounds - len(rounds) > 0:
                         messages.append({
                             'role': 'system',
-                            'content': f'[上下文管理] 已裁剪 {n_rounds - len(rounds)} 个早期轮次。'
+                            'content': tr('ai.old_rounds', n_rounds - len(rounds))
                         })
                     messages.extend(compressed_body)
                     if last_context:
@@ -2602,7 +2617,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     new_tokens = self.token_optimizer.calculate_message_tokens(messages)
                     saved = old_tokens - new_tokens
                     if saved > 0:
-                        self._addStatus.emit(f"请求前优化: 节省 {saved:,} tokens (Cursor 风格)")
+                        self._addStatus.emit(tr('opt.auto_status', saved))
             
             # ⚠️ 使用从主线程传入的参数（不直接访问 Qt 控件）
             # provider, model, use_web, use_agent 已在方法开头从 agent_params 获取
@@ -3147,7 +3162,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             import hou
             node = hou.node(node_path)
             if node is None:
-                self._show_toast(f"节点不存在或已被删除: {node_path}")
+                self._show_toast(tr('toast.node_not_exist', node_path))
                 return
             
             # 选中节点
@@ -3169,9 +3184,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._refresh_node_context()
             
         except ImportError:
-            self._show_toast("Houdini 环境不可用")
+            self._show_toast(tr('toast.houdini_unavailable'))
         except Exception as e:
-            self._show_toast(f"跳转失败: {e}")
+            self._show_toast(tr('toast.jump_failed', e))
     
     def _undo_node_operation(self, op_type: str = 'create',
                               node_paths: list = None,
@@ -3185,7 +3200,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         try:
             import hou
         except ImportError:
-            self._show_toast("Houdini 环境不可用")
+            self._show_toast(tr('toast.houdini_unavailable'))
             return
         
         try:
@@ -3198,19 +3213,19 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 
                 node = hou.node(node_path)
                 if node is None:
-                    self._show_toast(f"节点不存在: {node_path}")
+                    self._show_toast(tr('toast.node_not_found', node_path))
                     return
                 
                 if is_tuple:
                     parm_tuple = node.parmTuple(param_name)
                     if parm_tuple is None:
-                        self._show_toast(f"参数不存在: {param_name}")
+                        self._show_toast(tr('toast.param_not_found', param_name))
                         return
                     parm_tuple.set(old_value)
                 else:
                     parm = node.parm(param_name)
                     if parm is None:
-                        self._show_toast(f"参数不存在: {param_name}")
+                        self._show_toast(tr('toast.param_not_found', param_name))
                         return
                     if isinstance(old_value, dict) and "expr" in old_value:
                         lang_str = old_value.get("lang", "Hscript")
@@ -3221,12 +3236,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     else:
                         parm.set(old_value)
                 
-                self._show_toast(f"已恢复参数 {param_name} 为旧值")
+                self._show_toast(tr('toast.param_restored', param_name))
             
             elif op_type == 'create':
                 # ---- 撤销创建 = 删除节点 ----
                 if not node_paths:
-                    self._show_toast("缺少节点路径，无法撤销")
+                    self._show_toast(tr('toast.missing_path'))
                     return
                 deleted = 0
                 for p in node_paths:
@@ -3235,9 +3250,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         node.destroy()
                         deleted += 1
                 if deleted:
-                    self._show_toast(f"已撤销创建（删除 {deleted} 个节点）")
+                    self._show_toast(tr('toast.undo_create', deleted))
                 else:
-                    self._show_toast("节点已不存在，无需撤销")
+                    self._show_toast(tr('toast.node_gone'))
             
             elif op_type == 'delete' and undo_snapshot:
                 # ---- 撤销删除 = 从快照重建 ----
@@ -3247,7 +3262,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 
                 parent = hou.node(parent_path)
                 if parent is None:
-                    self._show_toast(f"父节点不存在: {parent_path}")
+                    self._show_toast(tr('toast.parent_not_found', parent_path))
                     return
                 
                 # 创建节点
@@ -3303,17 +3318,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 except Exception:
                     pass
                 
-                self._show_toast(f"已恢复节点: {new_node.path()}")
+                self._show_toast(tr('toast.node_restored', new_node.path()))
             
             else:
                 # 回退：使用 Houdini 原生 undo
                 hou.undos.performUndo()
-                self._show_toast("已撤销")
+                self._show_toast(tr('toast.undone'))
             
             self._refresh_node_context()
         
         except Exception as e:
-            self._show_toast(f"撤销失败: {e}")
+            self._show_toast(tr('toast.undo_failed', e))
 
     # ---------- Undo All / Keep All 批量操作 ----------
 

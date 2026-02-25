@@ -7,6 +7,7 @@ Input Area UI 构建 — 输入区域和模式切换
 """
 
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from .i18n import tr
 from .cursor_widgets import (
     CursorTheme,
     ChatInput,
@@ -95,17 +96,17 @@ class InputAreaMixin:
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setProperty("mode", "agent")
         self.mode_combo.setCursor(QtCore.Qt.PointingHandCursor)
-        self.mode_combo.setToolTip("Agent: AI 自主操作节点\nAsk: 只读查询分析")
+        self.mode_combo.setToolTip(tr('mode.tooltip'))
         self.mode_combo.setFixedWidth(100)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         left_col.addWidget(self.mode_combo)
         
         # 确认模式开关
-        self.chk_confirm_mode = QtWidgets.QCheckBox("确认")
+        self.chk_confirm_mode = QtWidgets.QCheckBox(tr('confirm'))
         self.chk_confirm_mode.setObjectName("chkConfirm")
         self.chk_confirm_mode.setChecked(False)
         self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
-        self.chk_confirm_mode.setToolTip("确认模式：创建节点/VEX 前先预览确认")
+        self.chk_confirm_mode.setToolTip(tr('confirm.tooltip'))
         self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
         left_col.addWidget(self.chk_confirm_mode)
         
@@ -132,7 +133,7 @@ class InputAreaMixin:
         # 图片附件按钮
         self.btn_attach_image = QtWidgets.QPushButton("Img")
         self.btn_attach_image.setObjectName("btnSmall")
-        self.btn_attach_image.setToolTip("添加图片附件（支持 PNG/JPG/GIF/WebP，也可直接粘贴/拖拽图片到输入框）")
+        self.btn_attach_image.setToolTip(tr('attach_image.tooltip'))
         btn_layout.addWidget(self.btn_attach_image)
         
         # 快捷操作
@@ -147,7 +148,7 @@ class InputAreaMixin:
         # 导出训练数据按钮
         self.btn_export_train = QtWidgets.QPushButton("Train")
         self.btn_export_train.setObjectName("btnSmall")
-        self.btn_export_train.setToolTip("导出当前对话为训练数据（用于大模型微调）")
+        self.btn_export_train.setToolTip(tr('train.tooltip'))
         btn_layout.addWidget(self.btn_export_train)
         
         btn_layout.addStretch()
@@ -155,7 +156,7 @@ class InputAreaMixin:
         # Token 统计按钮（可点击查看详情）
         self.token_stats_btn = QtWidgets.QPushButton("0")
         self.token_stats_btn.setObjectName("tokenStats")
-        self.token_stats_btn.setToolTip("点击查看详细 Token 统计")
+        self.token_stats_btn.setToolTip(tr('header.token_stats.tooltip'))
         self.token_stats_btn.clicked.connect(self._show_token_stats_dialog)
         btn_layout.addWidget(self.token_stats_btn)
         
@@ -250,3 +251,13 @@ class InputAreaMixin:
             self.tool_status_bar.hide_tool()
         except RuntimeError:
             pass
+
+    def _retranslate_input_area(self):
+        """语言切换后更新输入区域所有翻译文本"""
+        self.mode_combo.setToolTip(tr('mode.tooltip'))
+        self.chk_confirm_mode.setText(tr('confirm'))
+        self.chk_confirm_mode.setToolTip(tr('confirm.tooltip'))
+        self.input_edit.setPlaceholderText(tr('placeholder'))
+        self.btn_attach_image.setToolTip(tr('attach_image.tooltip'))
+        self.btn_export_train.setToolTip(tr('train.tooltip'))
+        self.token_stats_btn.setToolTip(tr('header.token_stats.tooltip'))

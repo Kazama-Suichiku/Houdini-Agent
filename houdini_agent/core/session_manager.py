@@ -11,6 +11,7 @@ Session Manager — 多会话管理和缓存
 import uuid
 from houdini_agent.qt_compat import QtWidgets, QtCore
 
+from ..ui.i18n import tr
 from ..ui.cursor_widgets import TodoList
 
 
@@ -40,7 +41,7 @@ class SessionManagerMixin:
         self.btn_new_session = QtWidgets.QPushButton("+")
         self.btn_new_session.setObjectName("btnNewSession")
         self.btn_new_session.setFixedSize(22, 22)
-        self.btn_new_session.setToolTip("新建对话")
+        self.btn_new_session.setToolTip(tr('session.new'))
         hl.addWidget(self.btn_new_session)
         
         return container
@@ -52,8 +53,8 @@ class SessionManagerMixin:
             return
         menu = QtWidgets.QMenu(self)
         # QMenu 样式由全局 QSS 控制
-        close_action = menu.addAction("关闭此对话")
-        close_others = menu.addAction("关闭其他对话")
+        close_action = menu.addAction(tr('session.close'))
+        close_others = menu.addAction(tr('session.close_others'))
         if self.session_tabs.count() <= 1:
             close_others.setEnabled(False)
 
@@ -302,3 +303,7 @@ class SessionManagerMixin:
                         short += "..."
                     self.session_tabs.setTabText(i, short)
                 break
+
+    def _retranslate_session_tabs(self):
+        """语言切换后更新会话标签栏翻译文本"""
+        self.btn_new_session.setToolTip(tr('session.new'))

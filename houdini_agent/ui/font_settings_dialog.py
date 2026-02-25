@@ -6,6 +6,7 @@ Font Settings Dialog — 字号缩放设置面板
 """
 
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from .i18n import tr
 
 
 class FontSettingsDialog(QtWidgets.QDialog):
@@ -16,7 +17,7 @@ class FontSettingsDialog(QtWidgets.QDialog):
     def __init__(self, current_scale: float = 1.0, parent=None):
         super().__init__(parent)
         self.setObjectName("fontSettingsDlg")
-        self.setWindowTitle("字体大小")
+        self.setWindowTitle(tr('font.title'))
         self.setFixedSize(280, 120)
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint)
 
@@ -28,7 +29,7 @@ class FontSettingsDialog(QtWidgets.QDialog):
 
         # 标题 + 百分比
         top = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("字体缩放")
+        title = QtWidgets.QLabel(tr('font.scale'))
         title.setObjectName("fontScaleLabel")
         top.addWidget(title)
         top.addStretch()
@@ -50,13 +51,13 @@ class FontSettingsDialog(QtWidgets.QDialog):
 
         # 底部：重置 + 关闭
         btns = QtWidgets.QHBoxLayout()
-        reset_btn = QtWidgets.QPushButton("重置 100%")
+        reset_btn = QtWidgets.QPushButton(tr('font.reset'))
         reset_btn.setObjectName("btnSmall")
         reset_btn.clicked.connect(self._reset)
         btns.addWidget(reset_btn)
         btns.addStretch()
 
-        close_btn = QtWidgets.QPushButton("关闭")
+        close_btn = QtWidgets.QPushButton(tr('font.close'))
         close_btn.setObjectName("btnSmall")
         close_btn.clicked.connect(self.accept)
         btns.addWidget(close_btn)

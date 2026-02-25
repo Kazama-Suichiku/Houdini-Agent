@@ -7,6 +7,7 @@ Header UI 构建 — 顶部设置栏（模型选择、Provider、Web/Think 开�
 """
 
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from .i18n import tr, get_language, set_language, language_changed
 
 
 class HeaderMixin:
@@ -118,7 +119,7 @@ class HeaderMixin:
         self.think_check = QtWidgets.QCheckBox("Think")
         self.think_check.setObjectName("chkThink")
         self.think_check.setChecked(True)
-        self.think_check.setToolTip("启用思考模式：AI 会先分析再回答，并显示思考过程")
+        self.think_check.setToolTip(tr('header.think.tooltip'))
         row1.addWidget(self.think_check)
         
         outer.addLayout(row1)
@@ -146,29 +147,62 @@ class HeaderMixin:
         self.btn_cache = QtWidgets.QPushButton("Cache")
         self.btn_cache.setObjectName("btnSmall")
         self.btn_cache.setFixedHeight(24)
-        self.btn_cache.setToolTip("缓存管理：保存/加载对话历史")
+        self.btn_cache.setToolTip(tr('header.cache.tooltip'))
         row2.addWidget(self.btn_cache)
         
         self.btn_optimize = QtWidgets.QPushButton("Opt")
         self.btn_optimize.setObjectName("btnOptimize")
         self.btn_optimize.setFixedHeight(24)
-        self.btn_optimize.setToolTip("Token 优化：自动压缩和优化")
+        self.btn_optimize.setToolTip(tr('header.optimize.tooltip'))
         row2.addWidget(self.btn_optimize)
         
         # ★ 更新按钮（黄色醒目）
         self.btn_update = QtWidgets.QPushButton("Update")
         self.btn_update.setObjectName("btnUpdate")
         self.btn_update.setFixedHeight(24)
-        self.btn_update.setToolTip("检查并更新到最新版本")
+        self.btn_update.setToolTip(tr('header.update.tooltip'))
         row2.addWidget(self.btn_update)
         
         # Aa 字号缩放按钮
         self.btn_font_scale = QtWidgets.QPushButton("Aa")
         self.btn_font_scale.setObjectName("btnFontScale")
         self.btn_font_scale.setFixedHeight(24)
-        self.btn_font_scale.setToolTip("字体大小 (Ctrl+/Ctrl-)")
+        self.btn_font_scale.setToolTip(tr('header.font.tooltip'))
         row2.addWidget(self.btn_font_scale)
+        
+        # 语言切换下拉框
+        self.lang_combo = QtWidgets.QComboBox()
+        self.lang_combo.setObjectName("langCombo")
+        self.lang_combo.setFixedHeight(24)
+        self.lang_combo.setFixedWidth(58)
+        self.lang_combo.addItem("中文", "zh")
+        self.lang_combo.addItem("EN", "en")
+        # 根据当前语言设置选中项
+        self.lang_combo.setCurrentIndex(0 if get_language() == 'zh' else 1)
+        self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
+        row2.addWidget(self.lang_combo)
         
         outer.addLayout(row2)
         
         return header
+
+    def _on_language_changed(self, index: int):
+        """语言下拉框切换"""
+        lang = self.lang_combo.itemData(index)
+        if lang and lang != get_language():
+            set_language(lang)
+
+    def _retranslate_header(self):
+        """语言切换后更新 Header 区域所有翻译文本"""
+        self.think_check.setToolTip(tr('header.think.tooltip'))
+        self.btn_cache.setToolTip(tr('header.cache.tooltip'))
+        self.btn_optimize.setToolTip(tr('header.optimize.tooltip'))
+        self.btn_update.setToolTip(tr('header.update.tooltip'))
+        self.btn_font_scale.setToolTip(tr('header.font.tooltip'))
+        # 同步下拉框选中项（防止外部调用 set_language 后不同步）
+        lang = get_language()
+        expected_idx = 0 if lang == 'zh' else 1
+        if self.lang_combo.currentIndex() != expected_idx:
+            self.lang_combo.blockSignals(True)
+            self.lang_combo.setCurrentIndex(expected_idx)
+            self.lang_combo.blockSignals(False)

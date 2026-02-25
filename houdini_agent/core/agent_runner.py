@@ -11,6 +11,7 @@ Agent Runner — Agent 循环辅助：标题生成、确认模式、工具调度
 import threading
 import queue
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from ..ui.i18n import tr, get_language
 from ..ui.cursor_widgets import VEXPreviewInline
 
 
@@ -135,9 +136,10 @@ class AgentRunnerMixin:
     def _generate_short_title(self, user_msg: str, assistant_msg: str) -> str:
         """调用 LLM 生成 ≤10 字的对话标题"""
         # 截取前 200 字作为上下文
-        ctx = f"用户: {user_msg[:200]}\nAI: {assistant_msg[:200]}"
+        ctx = tr('title_gen.ctx', user_msg[:200], assistant_msg[:200])
+        sys_key = 'title_gen.system_zh' if get_language() == 'zh' else 'title_gen.system_en'
         messages = [
-            {'role': 'system', 'content': '你是一个标题生成器。根据对话内容生成一个简短的中文标题（≤10个字），只输出标题本身，不要引号、句号或其他多余内容。'},
+            {'role': 'system', 'content': tr(sys_key)},
             {'role': 'user', 'content': ctx}
         ]
         try:
