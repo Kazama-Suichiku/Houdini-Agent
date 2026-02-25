@@ -92,16 +92,14 @@ class AuroraBar(QtWidgets.QWidget):
         """启动流光动画"""
         self._active = True
         self._phase = 0.0
-        self.setFixedWidth(3)
         self.setVisible(True)
         self._timer.start()
         self.update()
 
     def stop(self):
-        """停止流光动画，收缩为零宽度以保持卡片干净"""
+        """停止流光动画，凝固为极淡银灰色"""
         self._active = False
         self._timer.stop()
-        self.setFixedWidth(0)
         self.update()
 
     @property
@@ -976,13 +974,6 @@ class AIResponse(QtWidgets.QWidget):
         self._has_execution = False
         self._shell_count = 0  # Python Shell 执行计数
         
-        # ★ 增量渲染状态
-        self._frozen_segments: list = []    # 已冻结的富文本段落
-        self._pending_text = ""             # 尚未冻结的尾部文本
-        self._in_code_fence = False         # 是否在代码块内
-        self._code_fence_lang = ""          # 代码块语言
-        self._incremental_enabled = True    # 是否启用增量渲染
-        
         # ★ 顶层水平布局：AuroraBar（左）+ 内容（右）
         outer = QtWidgets.QHBoxLayout(self)
         outer.setContentsMargins(0, 4, 0, 8)
@@ -1028,9 +1019,9 @@ class AIResponse(QtWidgets.QWidget):
         # === 总结/回复区域 ===
         self.summary_frame = QtWidgets.QFrame()
         self.summary_frame.setObjectName("aiSummary")
-        self._summary_layout = QtWidgets.QVBoxLayout(self.summary_frame)
-        self._summary_layout.setContentsMargins(8, 8, 6, 8)
-        self._summary_layout.setSpacing(4)
+        summary_layout = QtWidgets.QVBoxLayout(self.summary_frame)
+        summary_layout.setContentsMargins(8, 8, 6, 8)
+        summary_layout.setSpacing(4)
         
         # 状态行（水平布局：状态文字 + 复制按钮）
         status_row = QtWidgets.QHBoxLayout()
@@ -1051,20 +1042,12 @@ class AIResponse(QtWidgets.QWidget):
         self._copy_btn.clicked.connect(self._copy_content)
         status_row.addWidget(self._copy_btn)
         
-        self._summary_layout.addLayout(status_row)
-        
-        # ★ 已冻结段落容器 — 增量渲染时冻结的富文本/代码块放在这里
-        self._frozen_container = QtWidgets.QWidget()
-        self._frozen_layout = QtWidgets.QVBoxLayout(self._frozen_container)
-        self._frozen_layout.setContentsMargins(0, 0, 0, 0)
-        self._frozen_layout.setSpacing(0)  # 段落间距由 HTML margin 控制
-        self._frozen_container.setVisible(False)
-        self._summary_layout.addWidget(self._frozen_container)
+        summary_layout.addLayout(status_row)
         
         # 内容区域 —— 流式阶段使用 QPlainTextEdit（增量追加 O(1)），
         # finalize 时按需替换为 RichContentWidget（Markdown 渲染）。
-        # ★ 关键：流式阶段的字体和间距必须与渲染后的 richText QLabel 一致，
-        #   以避免 finalize 时产生"跳变"感。
+        # QPlainTextEdit 的 insertPlainText 只做光标处插入，不会像 QLabel.setText
+        # 那样每次重算全文 word-wrap，解决长回复流式卡顿问题。
         self.content_label = QtWidgets.QPlainTextEdit()
         self.content_label.setReadOnly(True)
         self.content_label.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -1076,22 +1059,13 @@ class AIResponse(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
         )
         self.content_label.setObjectName("aiContentLabel")
-        # ★ 显式设置字体，确保流式和渲染后使用同一字体族和大小
-        _stream_font = QtGui.QFont()
-        _stream_font.setFamilies(['Microsoft YaHei', 'SimSun', 'Segoe UI'])
-        _stream_font.setPixelSize(14)  # 与 {FS_MD}=14 一致
-        self.content_label.setFont(_stream_font)
-        self.content_label.document().setDefaultFont(_stream_font)
-        # ★ 设置行间距为 1.6 倍，与 HTML 中的 line-height:1.6 保持一致
-        self.content_label.document().setDocumentMargin(0)
-        self._apply_line_spacing(160)  # 160% 行间距
         # 初始高度紧凑，流式输入时自动增长
-        # 使用与 line-height 一致的行高计算
-        fm = QtGui.QFontMetrics(_stream_font)
-        self._content_line_h = int(fm.height() * 1.6)
-        self.content_label.setFixedHeight(self._content_line_h + 4)
+        self._content_line_h = QtGui.QFontMetrics(
+            self.content_label.document().defaultFont()
+        ).lineSpacing()
+        self.content_label.setFixedHeight(self._content_line_h + 8)
         self.content_label.document().contentsChanged.connect(self._auto_resize_content)
-        self._summary_layout.addWidget(self.content_label)
+        summary_layout.addWidget(self.content_label)
         
         layout.addWidget(self.summary_frame)
         
@@ -1156,45 +1130,37 @@ class AIResponse(QtWidgets.QWidget):
         clean_result = result.removeprefix("[ok] ").removeprefix("[err] ")
         self.execution_section.set_tool_result(tool_name, clean_result, success)
     
-    def _apply_line_spacing(self, percent: int = 160):
-        """为 QPlainTextEdit 设置 proportional 行间距。
-        
-        Qt 的 QPlainTextEdit 不直接支持 CSS line-height，
-        需要通过 QTextBlockFormat.setLineHeight 来实现。
-        percent: 160 = 1.6 倍行间距。
-        """
-        doc = self.content_label.document()
-        cursor = QtGui.QTextCursor(doc)
-        cursor.select(QtGui.QTextCursor.Document)
-        fmt = QtGui.QTextBlockFormat()
-        fmt.setLineHeight(percent, 1)  # 1 = ProportionalHeight
-        cursor.mergeBlockFormat(fmt)
-
     def _auto_resize_content(self):
-        """根据 document 的实际渲染高度动态调整 QPlainTextEdit 的高度。
+        """根据视觉行数（含自动换行）动态调整高度。
         
-        使用 doc.size().height() 获取已布局的真实像素高度，
-        加上一个小的底部边距作为最终高度。
+        与 ThinkingSection._update_height 相同的可靠方案：
+        逐块遍历 block.layout().lineCount() 统计真实视觉行数，
+        避免 doc.size().height() 在流式追加时返回旧值的问题。
         """
         doc = self.content_label.document()
-        # 确保布局信息是最新的
-        doc.adjustSize()
-        doc_height = int(doc.size().height())
-        target = doc_height + 4  # 底部留 4px 余量
-        min_h = self._content_line_h + 4
+        visual_lines = 0
+        block = doc.begin()
+        while block.isValid():
+            bl = block.layout()
+            if bl and bl.lineCount() > 0:
+                visual_lines += bl.lineCount()
+            else:
+                visual_lines += 1
+            block = block.next()
+        visual_lines = max(1, visual_lines)
+        
+        target = self._content_line_h * visual_lines + 8
+        min_h = self._content_line_h + 8
         target = max(target, min_h)
-        current_h = self.content_label.height()
-        if abs(target - current_h) > 1:
+        current_h = self.content_label.maximumHeight()
+        if target != current_h:
             self.content_label.setFixedHeight(target)
     
     def append_content(self, text: str):
         """追加内容（流式场景高频调用，需要高效）
         
-        ★ 增量渲染策略（借鉴 markstream-vue）：
-        1. 文本追加到 _pending_text
-        2. 检查是否有已完成的段落（双换行分隔 / 代码块闭合）
-        3. 已完成段落冻结为 RichText Widget，不再变动
-        4. 不完整的尾部保留在 QPlainTextEdit 中继续接收 delta
+        使用 QPlainTextEdit.insertPlainText 增量追加，O(1) 复杂度，
+        不触发全文 word-wrap 重算。
         """
         if not text.strip():
             return
@@ -1202,145 +1168,16 @@ class AIResponse(QtWidgets.QWidget):
         if '\ufffd' in text:
             text = text.replace('\ufffd', '')
         self._content += text
-        self._pending_text += text
-
-        # 尝试冻结已完成的段落
-        if self._incremental_enabled:
-            self._try_freeze_completed()
-
-        # 更新活跃区域显示（只显示未冻结的文本）
-        self.content_label.setPlainText(self._pending_text)
-        # setPlainText 会重置 block format，需要重新应用行间距
-        self._apply_line_spacing(160)
-        # 光标移到末尾
+        # ★ 增量追加：移到文档末尾插入，不重排之前的文本
         cursor = self.content_label.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.insertText(text)
         self.content_label.setTextCursor(cursor)
-
-    def _try_freeze_completed(self):
-        """检测并冻结已完成的段落
-        
-        检测规则：
-        - 代码块: ``` 开启 → ``` 关闭，闭合后整个代码块冻结
-        - 文本段落: 两个连续换行 (\n\n) 分隔的文本段落冻结
-        """
-        text = self._pending_text
-        if not text:
-            return
-
-        # 按行扫描，寻找可冻结的边界
-        lines = text.split('\n')
-        freeze_up_to = -1  # 冻结到第几行（不含）
-        i = 0
-        in_fence = self._in_code_fence
-
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-
-            if in_fence:
-                # 在代码块内，检查关闭围栏
-                if stripped.startswith('```'):
-                    in_fence = False
-                    # 代码块结束 → 可冻结到此行（含）
-                    freeze_up_to = i + 1
-                i += 1
-                continue
-
-            # 检查代码块开启
-            if stripped.startswith('```'):
-                # 如果之前有未冻结的文本段落，先冻结它们
-                if i > 0 and freeze_up_to < i:
-                    # 检查代码块之前是否有空行分隔
-                    pass
-                in_fence = True
-                self._code_fence_lang = stripped[3:].strip()
-                i += 1
-                continue
-
-            # 检查双换行分隔（空行）
-            if not stripped:
-                # 空行 → 如果之前有内容，可以冻结到上一个非空行
-                if i > 0 and freeze_up_to < i:
-                    # 找到一个段落边界
-                    # 但只有在空行之前有实质内容时才冻结
-                    has_content_before = any(lines[j].strip() for j in range(max(0, freeze_up_to + 1 if freeze_up_to >= 0 else 0), i))
-                    if has_content_before:
-                        freeze_up_to = i  # 冻结到空行（含空行）
-            i += 1
-
-        self._in_code_fence = in_fence
-
-        # 执行冻结
-        if freeze_up_to > 0 and not in_fence:
-            frozen_text = '\n'.join(lines[:freeze_up_to])
-            remaining_text = '\n'.join(lines[freeze_up_to:])
-
-            if frozen_text.strip():
-                self._freeze_text(frozen_text)
-
-            self._pending_text = remaining_text
-
-    def _freeze_text(self, text: str):
-        """将一段文本冻结为富文本 Widget"""
-        # 使用 SimpleMarkdown 解析
-        segments = SimpleMarkdown.parse_segments(text)
-
-        for seg in segments:
-            if seg[0] == 'text':
-                lbl = QtWidgets.QLabel()
-                lbl.setWordWrap(True)
-                lbl.setTextFormat(QtCore.Qt.RichText)
-                lbl.setOpenExternalLinks(False)
-                lbl.setTextInteractionFlags(
-                    QtCore.Qt.TextSelectableByMouse
-                    | QtCore.Qt.LinksAccessibleByMouse
-                )
-                lbl.setText(seg[1])
-                lbl.setObjectName("richText")
-                lbl.linkActivated.connect(self._on_link_activated)
-                self._frozen_layout.addWidget(lbl)
-            elif seg[0] == 'code':
-                cb = CodeBlockWidget(seg[2], seg[1], self)
-                cb.createWrangleRequested.connect(self.createWrangleRequested.emit)
-                # 代码块与前后段落之间需要额外间距
-                cb.setContentsMargins(0, 6, 0, 6)
-                self._frozen_layout.addWidget(cb)
-            elif seg[0] == 'image':
-                img_lbl = QtWidgets.QLabel()
-                img_lbl.setObjectName("richImage")
-                img_lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                img_lbl.setText(
-                    f'<div style="margin:4px 0;">'
-                    f'<img src="{html.escape(seg[1])}" '
-                    f'style="max-width:100%;max-height:300px;border-radius:6px;">'
-                    f'</div>'
-                )
-                img_lbl.setTextFormat(QtCore.Qt.RichText)
-                self._frozen_layout.addWidget(img_lbl)
-
-        # 显示冻结容器
-        if not self._frozen_container.isVisible():
-            self._frozen_container.setVisible(True)
-        self._frozen_segments.append(text)
     
     def set_content(self, text: str):
-        """设置内容（一次性，非流式场景，如历史恢复）
-        
-        ★ 直接渲染为富文本，避免历史恢复时也出现跳变。
-        """
+        """设置内容（一次性，非流式场景）"""
         self._content = text
-        self._pending_text = ""
-        self._incremental_enabled = False
-        
-        content = self._clean_content(text)
-        if not content:
-            self.content_label.setPlainText("")
-            return
-        
-        # 直接渲染为富文本 Widget，保持一致的外观
-        self.content_label.setVisible(False)
-        self._freeze_text(content)
+        self.content_label.setPlainText(self._clean_content(text))
     
     @staticmethod
     def _clean_content(text: str) -> str:
@@ -1389,11 +1226,7 @@ class AIResponse(QtWidgets.QWidget):
         self.aurora_bar.stop()
 
     def finalize(self):
-        """完成回复 - 提取最终总结
-        
-        ★ 增量渲染模式下，大部分段落已经冻结为 Widget，
-        finalize 只需处理最后的 _pending_text 尾部残留。
-        """
+        """完成回复 - 提取最终总结"""
         # ★ 停止流光边框
         self.aurora_bar.stop()
         
@@ -1425,7 +1258,7 @@ class AIResponse(QtWidgets.QWidget):
         if self._clean_content(self._content):
             self._copy_btn.setVisible(True)
         
-        # ★ 增量渲染 finalize: 处理最后残余的 pending_text
+        # 处理最终内容 — 使用富文本渲染
         content = self._clean_content(self._content)
         
         if not content:
@@ -1436,20 +1269,17 @@ class AIResponse(QtWidgets.QWidget):
             self.content_label.setProperty("state", "empty")
             self.content_label.style().unpolish(self.content_label)
             self.content_label.style().polish(self.content_label)
-        elif self._frozen_segments:
-            # 增量模式：已有冻结段落，只需处理 pending 尾部
-            remaining = self._clean_content(self._pending_text)
-            if remaining:
-                # ★ 始终将残余文本冻结为富文本，避免 finalize 时的跳变
-                self._freeze_text(remaining)
-                self.content_label.setVisible(False)
-            else:
-                # 没有残余文本，隐藏 QPlainTextEdit
-                self.content_label.setVisible(False)
         else:
-            # 传统模式（无冻结段落）—— 始终渲染为富文本以保持一致性
-            self.content_label.setVisible(False)
-            self._freeze_text(content)
+            # 始终显示完整回复内容（不折叠）
+            has_node_path = bool(_NODE_PATH_RE.search(content))
+            if SimpleMarkdown.has_rich_content(content) or has_node_path:
+                self.content_label.setVisible(False)
+                rich = RichContentWidget(content, self.summary_frame)
+                rich.createWrangleRequested.connect(self.createWrangleRequested.emit)
+                rich.nodePathClicked.connect(self.nodePathClicked.emit)
+                self.summary_frame.layout().addWidget(rich)
+            else:
+                self.content_label.setPlainText(content)
     
     def _on_link_activated(self, url: str):
         """处理链接点击 — houdini:// 协议 → nodePathClicked 信号"""
@@ -1995,86 +1825,41 @@ class PlanBlock(QtWidgets.QWidget):
 # ============================================================
 
 class SimpleMarkdown:
-    """将 Markdown 转换为 Qt Rich Text HTML（增强版）
+    """将 Markdown 转换为 Qt Rich Text HTML
 
     支持特性：
     - 标题 (# ~ ####)
     - 粗体 / 斜体 / 删除线 / 行内代码
-    - 无序列表 / 有序列表 / 任务列表 / 嵌套列表
-    - 引用块（多行合并，支持渐变背景）
+    - 无序列表 / 有序列表 / 任务列表
+    - 引用块（多行合并）
     - 表格（居中 / 左对齐 / 右对齐）
     - 水平分割线
-    - 链接 [text](url) / 自动 URL 检测
-    - 图片 ![alt](url)
-    - 脚注 [^id] / [^id]: ...
-    - 转义字符 \\* \\` 等
+    - 链接 [text](url)
     - 围栏代码块（交给 CodeBlockWidget）
     """
 
     _CODE_BLOCK_RE = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
     _TABLE_SEP_RE = re.compile(r'^\|?\s*[-:]+[-| :]*$')  # 表头分割行
-    # 自动检测裸 URL
-    _AUTO_URL_RE = re.compile(
-        r'(?<!["\w/=])(?<!\]\()(?<!\[)'       # 不在引号、字母、=、](、[ 之后
-        r'(https?://[^\s<>\)\]\"\'`]+)'        # URL 本体
-    )
-    # 脚注引用
-    _FOOTNOTE_REF_RE = re.compile(r'\[\^(\w+)\](?!:)')
-    # 脚注定义
-    _FOOTNOTE_DEF_RE = re.compile(r'^\[\^(\w+)\]:\s*(.*)')
-    # 图片语法
-    _IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
-    # 列表缩进检测
-    _LIST_ITEM_RE = re.compile(r'^(\s*)([-*]|\d+\.)\s+(.*)')
-    # 任务列表
-    _TASK_ITEM_RE = re.compile(r'^(\s*)[-*]\s+\[([ xX])\]\s+(.*)')
 
     # -------- 公共接口 --------
 
     @classmethod
     def parse_segments(cls, text: str) -> list:
-        """将文本拆分为 ('text', html), ('code', lang, raw_code), ('image', url, alt) 段落"""
+        """将文本拆分为 ('text', html) 和 ('code', lang, raw_code) 段落"""
         segments: list = []
         last = 0
         for m in cls._CODE_BLOCK_RE.finditer(text):
             before = text[last:m.start()]
             if before.strip():
-                cls._parse_text_with_images(before, segments)
+                segments.append(('text', cls._text_to_html(before)))
             segments.append(('code', m.group(1) or '', m.group(2).rstrip()))
             last = m.end()
         after = text[last:]
         if after.strip():
-            cls._parse_text_with_images(after, segments)
+            segments.append(('text', cls._text_to_html(after)))
         if not segments and text.strip():
-            cls._parse_text_with_images(text, segments)
+            segments.append(('text', cls._text_to_html(text)))
         return segments
-
-    @classmethod
-    def _parse_text_with_images(cls, text: str, segments: list):
-        """将文本段落进一步拆分出独立的 image segment
-        
-        只有独占一行的 ![alt](url) 才作为独立 image segment，
-        行内的图片语法仍按行内格式处理。
-        """
-        lines = text.split('\n')
-        buf_lines: list = []
-
-        def _flush_buf():
-            if buf_lines:
-                joined = '\n'.join(buf_lines)
-                if joined.strip():
-                    segments.append(('text', cls._text_to_html(joined)))
-                buf_lines.clear()
-
-        for line in lines:
-            stripped = line.strip()
-            img_match = cls._IMAGE_RE.fullmatch(stripped)
-            if img_match:
-                _flush_buf()
-                segments.append(('image', img_match.group(2), img_match.group(1)))
-            else:
-                buf_lines.append(line)
-        _flush_buf()
 
     @classmethod
     def has_rich_content(cls, text: str) -> bool:
@@ -2091,18 +1876,9 @@ class SimpleMarkdown:
             return True
         if '|' in text and re.search(r'^\|.+\|', text, re.MULTILINE):
             return True
-        if cls._IMAGE_RE.search(text):
-            return True
-        if cls._FOOTNOTE_REF_RE.search(text):
-            return True
         return False
 
     # -------- 块级解析 --------
-
-    @classmethod
-    def _get_indent(cls, line: str) -> int:
-        """返回行的缩进空格数"""
-        return len(line) - len(line.lstrip())
 
     @classmethod
     def _text_to_html(cls, text: str) -> str:
@@ -2111,66 +1887,47 @@ class SimpleMarkdown:
         i = 0
         n = len(lines)
 
-        # 嵌套列表状态栈: [(tag, indent_level), ...]
-        list_stack: list = []
+        # 当前列表状态栈
+        in_list = False
+        tag = ''
         # 引用块缓冲
         quote_buf: list = []
-        # 脚注定义收集
-        footnotes: dict = {}
 
-        # 第一遍：收集脚注定义
-        remaining_lines: list = []
-        for line in lines:
-            fn_match = cls._FOOTNOTE_DEF_RE.match(line.strip())
-            if fn_match:
-                footnotes[fn_match.group(1)] = fn_match.group(2)
-            else:
-                remaining_lines.append(line)
-        lines = remaining_lines
-        n = len(lines)
-
-        def _flush_all_lists():
-            while list_stack:
-                _, ltag = list_stack.pop()
-                out.append(f'</{ltag}>')
-
-        def _flush_lists_to_indent(target_indent: int):
-            """关闭所有缩进大于 target_indent 的列表层级"""
-            while list_stack and list_stack[-1][0] > target_indent:
-                _, ltag = list_stack.pop()
-                out.append(f'</{ltag}>')
+        def _flush_list():
+            nonlocal in_list, tag
+            if in_list:
+                out.append(f'</{tag}>')
+                in_list = False
+                tag = ''
 
         def _flush_quote():
             nonlocal quote_buf
             if quote_buf:
-                q_html = '<br>'.join(cls._inline(q, footnotes) for q in quote_buf)
+                q_html = '<br>'.join(cls._inline(q) for q in quote_buf)
                 out.append(
-                    f'<div style="border-left:2px solid rgba(148,163,184,50);padding:8px 14px;'
-                    f'margin:8px 0;'
-                    f'background:transparent;'
-                    f'color:#cbd5e1;border-radius:0 6px 6px 0;'
-                    f'line-height:1.6;">{q_html}</div>'
+                    f'<div style="border-left:3px solid {CursorTheme.ACCENT_BEIGE};padding:6px 12px;'
+                    f'margin:6px 0;background:rgba(20,16,12,200);'
+                    f'color:#d4a574;font-style:italic;">{q_html}</div>'
                 )
                 quote_buf = []
 
         while i < n:
-            raw_line = lines[i]
-            s = raw_line.strip()
+            s = lines[i].strip()
 
             # ---- empty line ----
             if not s:
                 _flush_quote()
-                _flush_all_lists()
-                out.append('<div style="height:4px;"></div>')
+                _flush_list()
+                out.append('<div style="height:6px;"></div>')
                 i += 1
                 continue
 
             # ---- horizontal rule ----
             if re.match(r'^[-*_]{3,}\s*$', s):
                 _flush_quote()
-                _flush_all_lists()
+                _flush_list()
                 out.append(
-                    '<hr style="border:none;border-top:1px solid rgba(255,255,255,8);margin:16px 0;width:100%;">'
+                    '<hr style="border:none;border-top:1px solid rgba(255,255,255,10);margin:10px 0;">'
                 )
                 i += 1
                 continue
@@ -2178,7 +1935,7 @@ class SimpleMarkdown:
             # ---- table ----
             if '|' in s and i + 1 < n and cls._TABLE_SEP_RE.match(lines[i + 1].strip()):
                 _flush_quote()
-                _flush_all_lists()
+                _flush_list()
                 table_html = cls._parse_table(lines, i)
                 if table_html:
                     out.append(table_html[0])
@@ -2189,132 +1946,104 @@ class SimpleMarkdown:
             header_match = re.match(r'^(#{1,4})\s+(.+)', s)
             if header_match:
                 _flush_quote()
-                _flush_all_lists()
+                _flush_list()
                 lvl = len(header_match.group(1))
                 content = header_match.group(2)
+                # 层级样式
                 styles = {
-                    1: ('1.5em', '#f1f5f9', '700', '18px 0 8px 0', 'border-bottom:1px solid rgba(255,255,255,12);padding-bottom:8px;letter-spacing:0.3px;'),
-                    2: ('1.3em', '#e2e8f0', '600', '16px 0 6px 0', 'letter-spacing:0.2px;'),
-                    3: ('1.1em', '#cbd5e1', '600', '12px 0 4px 0', ''),
-                    4: ('1.0em', '#94a3b8', '600', '10px 0 3px 0', ''),
+                    1: ('18px', '#e2e8f0', '600', '14px 0 6px 0', f'border-bottom:1px solid rgba(255,255,255,10);padding-bottom:6px;'),
+                    2: ('16px', '#cbd5e1', '600', '12px 0 4px 0', ''),
+                    3: ('14px', '#94a3b8', '600', '10px 0 3px 0', ''),
+                    4: ('13px', '#94a3b8', '500', '8px 0 2px 0', ''),
                 }
                 sz, clr, wt, mg, extra = styles[lvl]
                 out.append(
                     f'<p style="font-size:{sz};font-weight:{wt};'
                     f'color:{clr};margin:{mg};{extra}">'
-                    f'{cls._inline(content, footnotes)}</p>'
+                    f'{cls._inline(content)}</p>'
                 )
                 i += 1
                 continue
 
             # ---- blockquote (合并连续行) ----
             if s.startswith('> '):
-                _flush_all_lists()
+                _flush_list()
                 quote_buf.append(s[2:])
                 i += 1
                 continue
             elif s.startswith('>'):
-                _flush_all_lists()
+                _flush_list()
                 quote_buf.append(s[1:].lstrip())
                 i += 1
                 continue
             else:
                 _flush_quote()
 
-            # ---- task list (with nesting support) ----
-            task_match = cls._TASK_ITEM_RE.match(raw_line)
+            # ---- task list ----
+            task_match = re.match(r'^[-*]\s+\[([ xX])\]\s+(.*)', s)
             if task_match:
-                indent = len(task_match.group(1))
-                _flush_lists_to_indent(indent)
-                if not list_stack or list_stack[-1][0] < indent:
+                if not in_list or tag != 'ul':
+                    _flush_list()
                     out.append(
-                        '<ul style="margin:2px 0;padding-left:4px;list-style:none;">'
+                        '<ul style="margin:4px 0;padding-left:4px;list-style:none;">'
                     )
-                    list_stack.append((indent, 'ul'))
-                checked = task_match.group(2) in ('x', 'X')
+                    in_list, tag = True, 'ul'
+                checked = task_match.group(1) in ('x', 'X')
                 box = (
-                    '<span style="color:#10b981;font-weight:bold;margin-right:6px;">✓</span>'
+                    '<span style="color:#10b981;font-weight:bold;margin-right:4px;">[x]</span>'
                     if checked else
-                    '<span style="color:#64748b;margin-right:6px;">○</span>'
+                    '<span style="color:#64748b;margin-right:4px;">[ ]</span>'
                 )
                 text_style = 'color:#64748b;text-decoration:line-through;' if checked else ''
                 out.append(
-                    f'<li style="margin:4px 0;line-height:1.6;{text_style}">'
-                    f'{box}{cls._inline(task_match.group(3), footnotes)}</li>'
+                    f'<li style="margin:2px 0;{text_style}">'
+                    f'{box}{cls._inline(task_match.group(2))}</li>'
                 )
                 i += 1
                 continue
 
-            # ---- unordered / ordered list (with nesting) ----
-            list_match = cls._LIST_ITEM_RE.match(raw_line)
-            if list_match:
-                indent = len(list_match.group(1))
-                marker = list_match.group(2)
-                item_text = list_match.group(3)
-                is_ordered = marker[-1] == '.'
-                new_tag = 'ol' if is_ordered else 'ul'
-
-                _flush_lists_to_indent(indent)
-
-                if not list_stack or list_stack[-1][0] < indent:
-                    # 开启新的嵌套层级
-                    if is_ordered:
-                        out.append(
-                            '<ol style="margin:4px 0;padding-left:22px;color:#94a3b8;">'
-                        )
-                    else:
-                        out.append(
-                            '<ul style="margin:4px 0;padding-left:22px;'
-                            'list-style-type:disc;color:#94a3b8;">'
-                        )
-                    list_stack.append((indent, new_tag))
-                elif list_stack[-1][1] != new_tag:
-                    # 同层级但类型切换
-                    old_indent, old_tag = list_stack.pop()
-                    out.append(f'</{old_tag}>')
-                    if is_ordered:
-                        out.append(
-                            '<ol style="margin:4px 0;padding-left:22px;color:#94a3b8;">'
-                        )
-                    else:
-                        out.append(
-                            '<ul style="margin:4px 0;padding-left:22px;'
-                            'list-style-type:disc;color:#94a3b8;">'
-                        )
-                    list_stack.append((indent, new_tag))
-
+            # ---- unordered list ----
+            if s.startswith('- ') or s.startswith('* '):
+                if not in_list or tag != 'ul':
+                    _flush_list()
+                    out.append(
+                        '<ul style="margin:4px 0;padding-left:20px;'
+                        'list-style-type:disc;color:#94a3b8;">'
+                    )
+                    in_list, tag = True, 'ul'
                 out.append(
-                    f'<li style="margin:4px 0;line-height:1.6;color:{CursorTheme.TEXT_PRIMARY};">'
-                    f'{cls._inline(item_text, footnotes)}</li>'
+                    f'<li style="margin:3px 0;color:{CursorTheme.TEXT_PRIMARY};">'
+                    f'{cls._inline(s[2:])}</li>'
+                )
+                i += 1
+                continue
+
+            # ---- ordered list ----
+            ol_match = re.match(r'^(\d+)\.\s+(.+)', s)
+            if ol_match:
+                if not in_list or tag != 'ol':
+                    _flush_list()
+                    out.append(
+                        '<ol style="margin:4px 0;padding-left:20px;color:#94a3b8;">'
+                    )
+                    in_list, tag = True, 'ol'
+                out.append(
+                    f'<li style="margin:3px 0;color:{CursorTheme.TEXT_PRIMARY};">'
+                    f'{cls._inline(ol_match.group(2))}</li>'
                 )
                 i += 1
                 continue
 
             # ---- normal paragraph ----
-            _flush_all_lists()
+            _flush_list()
             out.append(
-                f'<p style="margin:4px 0;line-height:1.6;color:#e2e8f0;">'
-                f'{cls._inline(s, footnotes)}</p>'
+                f'<p style="margin:3px 0;line-height:1.6;">'
+                f'{cls._inline(s)}</p>'
             )
             i += 1
 
         _flush_quote()
-        _flush_all_lists()
-
-        # 渲染脚注定义区域（如果有）
-        if footnotes:
-            out.append(
-                '<hr style="border:none;border-top:1px solid rgba(255,255,255,8);'
-                'margin:12px 0 6px 0;width:40%;">'
-            )
-            for fn_id, fn_text in footnotes.items():
-                out.append(
-                    f'<p style="margin:2px 0;font-size:0.85em;color:{CursorTheme.TEXT_SECONDARY};'
-                    f'line-height:1.4;">'
-                    f'<sup style="color:#60a5fa;">[{html.escape(fn_id)}]</sup> '
-                    f'{cls._inline(fn_text, footnotes)}</p>'
-                )
-
+        _flush_list()
         return '\n'.join(out)
 
     # -------- 表格解析 --------
@@ -2360,10 +2089,10 @@ class SimpleMarkdown:
             rows.append(_parse_row(row_s))
             j += 1
 
-        # 生成 HTML（现代极简：无外边框、无斑马纹、仅底线分隔）
+        # 生成 HTML
         tbl = [
-            '<table style="border-collapse:collapse;'
-            'margin:10px 0;width:100%;font-size:0.92em;">'
+            '<table style="border-collapse:collapse;margin:8px 0;width:100%;'
+            'font-size:13px;">'
         ]
 
         # thead
@@ -2371,26 +2100,22 @@ class SimpleMarkdown:
         for ci, h in enumerate(headers):
             align = aligns[ci] if ci < len(aligns) else 'left'
             tbl.append(
-                f'<th style="border-bottom:2px solid rgba(255,255,255,12);'
-                f'padding:7px 14px;'
-                f'background:transparent;color:#e2e8f0;font-weight:600;'
-                f'text-align:{align};font-size:0.95em;">{cls._inline(h)}</th>'
+                f'<th style="border:1px solid rgba(255,255,255,8);padding:6px 10px;'
+                f'background:rgba(18,20,38,230);color:#cbd5e1;font-weight:600;'
+                f'text-align:{align};">{cls._inline(h)}</th>'
             )
         tbl.append('</tr>')
 
-        # tbody — 统一背景，仅底线分隔
+        # tbody
         for ri, row in enumerate(rows):
+            bg = 'rgba(12,14,25,200)' if ri % 2 == 0 else 'rgba(18,20,38,180)'
             tbl.append('<tr>')
             for ci, cell in enumerate(row):
                 align = aligns[ci] if ci < len(aligns) else 'left'
-                border_bottom = (
-                    'border-bottom:1px solid rgba(255,255,255,5);'
-                    if ri < len(rows) - 1 else ''
-                )
                 tbl.append(
-                    f'<td style="{border_bottom}padding:7px 14px;'
-                    f'background:transparent;color:{CursorTheme.TEXT_PRIMARY};'
-                    f'text-align:{align};line-height:1.5;">{cls._inline(cell)}</td>'
+                    f'<td style="border:1px solid rgba(255,255,255,6);padding:5px 10px;'
+                    f'background:{bg};color:{CursorTheme.TEXT_PRIMARY};'
+                    f'text-align:{align};">{cls._inline(cell)}</td>'
                 )
             tbl.append('</tr>')
 
@@ -2400,79 +2125,31 @@ class SimpleMarkdown:
     # -------- 行内解析 --------
 
     @classmethod
-    def _inline(cls, text: str, footnotes: dict = None) -> str:
-        """行内格式: **粗体**, *斜体*, ~~删除线~~, `代码`, [链接](url),
-        ![图片](url), [^脚注], 自动URL, 转义字符, 节点路径"""
-        # 1. 处理转义字符：先将 \X 替换为占位符，最后再还原
-        _ESC_MAP = {}
-        _esc_counter = [0]
-
-        def _replace_escape(m):
-            key = f'\x00ESC{_esc_counter[0]}\x00'
-            _ESC_MAP[key] = m.group(1)  # 被转义的字符
-            _esc_counter[0] += 1
-            return key
-
-        text = re.sub(r'\\([\\`*_~\[\]()#>!|])', _replace_escape, text)
-
-        # 2. HTML 转义
+    def _inline(cls, text: str) -> str:
+        """行内格式: **粗体**, *斜体*, ~~删除线~~, `代码`, [链接](url), 节点路径"""
         text = html.escape(text)
-
-        # 3. 行内图片 ![alt](url)（行内级别，不独占行）
-        text = re.sub(
-            r'!\[([^\]]*)\]\(([^)]+)\)',
-            r'<img src="\2" alt="\1" style="max-width:100%;max-height:200px;'
-            r'border-radius:4px;margin:2px 0;vertical-align:middle;">',
-            text,
-        )
-
-        # 4. 链接 [text](url)
+        # 链接 [text](url)
         text = re.sub(
             r'\[([^\]]+?)\]\(([^)]+?)\)',
-            r'<a href="\2" style="color:#818cf8;text-decoration:none;'
-            r'border-bottom:1px solid rgba(129,140,248,0.3);">\1</a>',
+            r'<a href="\2" style="color:#60a5fa;text-decoration:none;">\1</a>',
             text,
         )
-
-        # 5. 脚注引用 [^id]
-        if footnotes:
-            def _fn_ref(m):
-                fid = m.group(1)
-                if fid in footnotes:
-                    return (
-                        f'<sup style="color:#818cf8;cursor:pointer;">'
-                        f'<a href="#fn-{html.escape(fid)}" style="color:#818cf8;'
-                        f'text-decoration:none;">[{html.escape(fid)}]</a></sup>'
-                    )
-                return m.group(0)
-            text = cls._FOOTNOTE_REF_RE.sub(_fn_ref, text)
-
-        # 6. 粗体
-        text = re.sub(r'\*\*(.+?)\*\*', r'<b style="color:#f1f5f9;font-weight:600;">\1</b>', text)
-        # 7. 删除线
+        # 粗体
+        text = re.sub(r'\*\*(.+?)\*\*', r'<b style="color:#f1f5f9;">\1</b>', text)
+        # 删除线
         text = re.sub(r'~~(.+?)~~', r'<s style="color:#64748b;">\1</s>', text)
-        # 8. 斜体
+        # 斜体
         text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i style="color:#cbd5e1;">\1</i>', text)
-        # 9. 行内代码
+        # 行内代码
         text = re.sub(
             r'`([^`]+?)`',
-            r'<code style="background:rgba(255,255,255,8);padding:2px 7px;border-radius:5px;'
-            r'font-family:Consolas,Monaco,monospace;color:#c9d1d9;'
-            r'font-size:0.88em;border:1px solid rgba(255,255,255,5);">\1</code>',
+            r'<code style="background:rgba(18,20,38,230);padding:2px 6px;border-radius:4px;'
+            r'font-family:Consolas,Monaco,monospace;color:#fbbf24;'
+            r'font-size:0.9em;border:1px solid rgba(255,255,255,10);">\1</code>',
             text,
         )
-        # 10. 自动 URL 检测（裸链接）
-        text = cls._AUTO_URL_RE.sub(
-            r'<a href="\1" style="color:#818cf8;text-decoration:none;">\1</a>',
-            text,
-        )
-        # 11. Houdini 节点路径 → 可点击链接
+        # Houdini 节点路径 → 可点击链接
         text = _linkify_node_paths(text)
-
-        # 12. 还原转义字符
-        for key, char in _ESC_MAP.items():
-            text = text.replace(key, html.escape(char))
-
         return text
 
 
@@ -2481,27 +2158,18 @@ class SimpleMarkdown:
 # ============================================================
 
 class SyntaxHighlighter:
-    """代码语法高亮 — 基于 token 的着色
-    
-    支持语言: VEX, Python, JSON, YAML, Bash/Shell, JavaScript/TypeScript,
-    HScript, GLSL, Markdown
-    """
+    """代码语法高亮 (VEX / Python) — 基于 token 的着色"""
 
     COL = {
-        'keyword':  '#569CD6',
-        'type':     '#4EC9B0',
-        'builtin':  '#DCDCAA',
-        'string':   '#CE9178',
-        'comment':  '#6A9955',
-        'number':   '#B5CEA8',
-        'attr':     '#9CDCFE',
-        'key':      '#9CDCFE',    # JSON / YAML key
-        'constant': '#569CD6',    # true / false / null
-        'operator': '#D4D4D4',    # operators
-        'directive': '#C586C0',   # preprocessor / shebang
+        'keyword': '#569CD6',
+        'type':    '#4EC9B0',
+        'builtin': '#DCDCAA',
+        'string':  '#CE9178',
+        'comment': '#6A9955',
+        'number':  '#B5CEA8',
+        'attr':    '#9CDCFE',
     }
 
-    # ---- VEX ----
     VEX_KW = frozenset(
         'if else for while return break continue foreach do switch case default'.split()
     )
@@ -2517,7 +2185,6 @@ class SyntaxHighlighter:
         'nearpoints xyzdist primuv'.split()
     )
 
-    # ---- Python ----
     PY_KW = frozenset(
         'import from def class return if else elif for while try except finally '
         'with as in not and or is None True False pass break continue raise '
@@ -2529,64 +2196,6 @@ class SyntaxHighlighter:
         'staticmethod classmethod hasattr getattr setattr'.split()
     )
 
-    # ---- JavaScript / TypeScript ----
-    JS_KW = frozenset(
-        'var let const function return if else for while do switch case default '
-        'break continue new this typeof instanceof void delete throw try catch '
-        'finally class extends import export from as async await yield of in '
-        'static get set super'.split()
-    )
-    JS_TY = frozenset(
-        'string number boolean any void never unknown object symbol bigint '
-        'undefined null Array Promise Map Set Record Partial Required Readonly '
-        'interface type enum namespace'.split()
-    )
-    JS_BI = frozenset(
-        'console log warn error parseInt parseFloat isNaN isFinite '
-        'JSON Math Date RegExp Object Array String Number Boolean '
-        'setTimeout setInterval clearTimeout clearInterval '
-        'fetch require module exports process'.split()
-    )
-
-    # ---- Bash / Shell ----
-    BASH_KW = frozenset(
-        'if then else elif fi for do done while until case esac in '
-        'function return exit break continue select'.split()
-    )
-    BASH_BI = frozenset(
-        'echo printf cd ls cp mv rm mkdir rmdir cat grep sed awk find '
-        'chmod chown tar gzip gunzip curl wget git pip python node npm '
-        'export source alias unalias set unset read eval exec test '
-        'true false shift'.split()
-    )
-
-    # ---- HScript ----
-    HSCRIPT_KW = frozenset(
-        'if else endif for foreach end set setenv echo opcf opcd '
-        'opparm oprm opadd opsave opload chadd chkey chls optype '
-        'opflag opname opset oppane opproperty'.split()
-    )
-
-    # ---- GLSL ----
-    GLSL_KW = frozenset(
-        'if else for while do return break continue discard switch case default '
-        'struct void const in out inout uniform varying attribute '
-        'layout precision highp mediump lowp flat smooth noperspective '
-        'centroid sample'.split()
-    )
-    GLSL_TY = frozenset(
-        'float vec2 vec3 vec4 int ivec2 ivec3 ivec4 uint uvec2 uvec3 uvec4 '
-        'bool bvec2 bvec3 bvec4 mat2 mat3 mat4 mat2x2 mat2x3 mat2x4 '
-        'mat3x2 mat3x3 mat3x4 mat4x2 mat4x3 mat4x4 '
-        'sampler1D sampler2D sampler3D samplerCube sampler2DShadow'.split()
-    )
-    GLSL_BI = frozenset(
-        'texture texture2D textureCube normalize length distance dot cross '
-        'reflect refract mix clamp smoothstep step min max abs sign floor '
-        'ceil fract mod pow exp log sqrt inversesqrt sin cos tan asin acos atan '
-        'radians degrees dFdx dFdy fwidth'.split()
-    )
-
     @classmethod
     def highlight_vex(cls, code: str) -> str:
         return cls._tokenize(code, cls.VEX_KW, cls.VEX_TY, cls.VEX_BI,
@@ -2596,196 +2205,6 @@ class SyntaxHighlighter:
     def highlight_python(cls, code: str) -> str:
         return cls._tokenize(code, cls.PY_KW, frozenset(), cls.PY_BI,
                               '#', None, None)
-
-    @classmethod
-    def highlight_javascript(cls, code: str) -> str:
-        return cls._tokenize(code, cls.JS_KW, cls.JS_TY, cls.JS_BI,
-                              '//', ('/*', '*/'), None)
-
-    @classmethod
-    def highlight_bash(cls, code: str) -> str:
-        return cls._tokenize(code, cls.BASH_KW, frozenset(), cls.BASH_BI,
-                              '#', None, '$')
-
-    @classmethod
-    def highlight_hscript(cls, code: str) -> str:
-        return cls._tokenize(code, cls.HSCRIPT_KW, frozenset(), frozenset(),
-                              '#', None, '$')
-
-    @classmethod
-    def highlight_glsl(cls, code: str) -> str:
-        return cls._tokenize(code, cls.GLSL_KW, cls.GLSL_TY, cls.GLSL_BI,
-                              '//', ('/*', '*/'), None)
-
-    @classmethod
-    def highlight_json(cls, code: str) -> str:
-        """JSON 高亮：key 和 value 区分着色"""
-        parts: list = []
-        i, n = 0, len(code)
-        # 简单状态：上一个非空白字符是 { 或 , 或行首 → 下一个字符串是 key
-        expect_key = True
-
-        while i < n:
-            c = code[i]
-
-            # 空白
-            if c in (' ', '\t', '\n', '\r'):
-                parts.append(c)
-                if c == '\n':
-                    expect_key = True
-                i += 1
-                continue
-
-            # 字符串
-            if c == '"':
-                j = i + 1
-                while j < n and code[j] != '"':
-                    if code[j] == '\\':
-                        j += 1
-                    j += 1
-                if j < n:
-                    j += 1
-                s = code[i:j]
-                # 判断是 key 还是 value
-                # key 后面（跳过空白）应该是 :
-                rest = code[j:].lstrip()
-                if expect_key and rest.startswith(':'):
-                    parts.append(cls._span('key', s))
-                    expect_key = False
-                else:
-                    parts.append(cls._span('string', s))
-                i = j
-                continue
-
-            # 冒号
-            if c == ':':
-                parts.append(html.escape(c))
-                expect_key = False
-                i += 1
-                continue
-
-            # 逗号
-            if c == ',':
-                parts.append(html.escape(c))
-                expect_key = True
-                i += 1
-                continue
-
-            # 大括号 / 方括号
-            if c in ('{', '['):
-                parts.append(html.escape(c))
-                expect_key = True
-                i += 1
-                continue
-            if c in ('}', ']'):
-                parts.append(html.escape(c))
-                i += 1
-                continue
-
-            # 数字
-            if c.isdigit() or (c == '-' and i + 1 < n and code[i + 1].isdigit()):
-                j = i + 1 if c == '-' else i
-                while j < n and (code[j].isdigit() or code[j] in ('.', 'e', 'E', '+', '-')):
-                    j += 1
-                parts.append(cls._span('number', code[i:j]))
-                i = j
-                continue
-
-            # true / false / null
-            for kw in ('true', 'false', 'null'):
-                if code[i:i + len(kw)] == kw:
-                    parts.append(cls._span('constant', kw))
-                    i += len(kw)
-                    break
-            else:
-                parts.append(html.escape(c))
-                i += 1
-
-        return ''.join(parts)
-
-    @classmethod
-    def highlight_yaml(cls, code: str) -> str:
-        """YAML 高亮：key-value 区分、注释、列表标记"""
-        parts: list = []
-        lines = code.split('\n')
-        for li, line in enumerate(lines):
-            if li > 0:
-                parts.append('\n')
-
-            stripped = line.lstrip()
-
-            # 注释
-            if stripped.startswith('#'):
-                parts.append(cls._span('comment', line))
-                continue
-
-            # 文档分隔符 ---
-            if stripped in ('---', '...'):
-                parts.append(cls._span('directive', line))
-                continue
-
-            # 列表项 - xxx: value
-            indent = line[:len(line) - len(stripped)]
-            if indent:
-                parts.append(html.escape(indent))
-
-            # 检查 key: value 格式
-            colon_pos = stripped.find(':')
-            if colon_pos > 0 and (colon_pos + 1 >= len(stripped) or stripped[colon_pos + 1] == ' '):
-                # 处理列表标记
-                key_part = stripped[:colon_pos]
-                if key_part.startswith('- '):
-                    parts.append(html.escape('- '))
-                    key_part = key_part[2:]
-
-                parts.append(cls._span('key', key_part))
-                parts.append(html.escape(':'))
-
-                value_part = stripped[colon_pos + 1:]
-                if value_part:
-                    # 检查 value 中的注释
-                    comment_pos = value_part.find(' #')
-                    if comment_pos >= 0:
-                        val = value_part[:comment_pos]
-                        comment = value_part[comment_pos:]
-                        parts.append(cls._highlight_yaml_value(val))
-                        parts.append(cls._span('comment', comment))
-                    else:
-                        parts.append(cls._highlight_yaml_value(value_part))
-            else:
-                # 列表项或纯值
-                if stripped.startswith('- '):
-                    parts.append(html.escape('- '))
-                    parts.append(cls._highlight_yaml_value(stripped[2:]))
-                else:
-                    parts.append(html.escape(stripped))
-
-        return ''.join(parts)
-
-    @classmethod
-    def _highlight_yaml_value(cls, value: str) -> str:
-        """高亮 YAML 值"""
-        v = value.strip()
-        if not v:
-            return html.escape(value)
-
-        # 保留前导空格
-        leading = value[:len(value) - len(value.lstrip())]
-        result = html.escape(leading) if leading else ''
-
-        # 字符串（带引号）
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            return result + cls._span('string', v)
-        # 布尔 / null
-        if v.lower() in ('true', 'false', 'yes', 'no', 'on', 'off', 'null', '~'):
-            return result + cls._span('constant', v)
-        # 数字
-        try:
-            float(v)
-            return result + cls._span('number', v)
-        except ValueError:
-            pass
-        return result + html.escape(v)
 
     @classmethod
     def _tokenize(cls, code, keywords, types, builtins,
@@ -2810,19 +2229,7 @@ class SyntaxHighlighter:
                 i = end
                 continue
             # --- strings ---
-            if c in ('"', "'", '`'):
-                # Template literals (JS backtick strings)
-                if c == '`':
-                    j = i + 1
-                    while j < n and code[j] != '`':
-                        if code[j] == '\\':
-                            j += 1
-                        j += 1
-                    if j < n:
-                        j += 1
-                    parts.append(cls._span('string', code[i:j]))
-                    i = j
-                    continue
+            if c in ('"', "'"):
                 triple = code[i:i + 3]
                 if triple in ('"""', "'''"):
                     end = code.find(triple, i + 3)
@@ -2840,7 +2247,7 @@ class SyntaxHighlighter:
                 parts.append(cls._span('string', code[i:j]))
                 i = j
                 continue
-            # --- attribute prefix (@P, $VAR etc.) ---
+            # --- VEX attribute (@P etc.) ---
             if (attr_prefix and c == attr_prefix
                     and i + 1 < n and (code[i + 1].isalpha() or code[i + 1] == '_')):
                 j = i + 1
@@ -2849,15 +2256,6 @@ class SyntaxHighlighter:
                 parts.append(cls._span('attr', code[i:j]))
                 i = j
                 continue
-            # --- preprocessor directive (#include, #define) ---
-            if c == '#' and (not comment_single or comment_single != '#'):
-                if i == 0 or code[i - 1] == '\n':
-                    end = code.find('\n', i)
-                    if end == -1:
-                        end = n
-                    parts.append(cls._span('directive', code[i:end]))
-                    i = end
-                    continue
             # --- identifier / keyword ---
             if c.isalpha() or c == '_':
                 j = i
@@ -2874,18 +2272,11 @@ class SyntaxHighlighter:
                     parts.append(html.escape(word))
                 i = j
                 continue
-            # --- number (including hex 0x...) ---
+            # --- number ---
             if c.isdigit() or (c == '.' and i + 1 < n and code[i + 1].isdigit()):
                 j = i
-                if c == '0' and j + 1 < n and code[j + 1] in ('x', 'X'):
-                    j += 2
-                    while j < n and (code[j].isdigit() or code[j] in 'abcdefABCDEF'):
-                        j += 1
-                else:
-                    while j < n and (code[j].isdigit() or code[j] in ('.', 'e', 'E', '+', '-', 'f')):
-                        if code[j] in ('+', '-') and j > 0 and code[j - 1] not in ('e', 'E'):
-                            break
-                        j += 1
+                while j < n and (code[j].isdigit() or code[j] == '.'):
+                    j += 1
                 parts.append(cls._span('number', code[i:j]))
                 i = j
                 continue
@@ -2895,8 +2286,7 @@ class SyntaxHighlighter:
 
     @classmethod
     def _span(cls, tok_type: str, text: str) -> str:
-        color = cls.COL.get(tok_type, '#D4D4D4')
-        return f'<span style="color:{color};">{html.escape(text)}</span>'
+        return f'<span style="color:{cls.COL[tok_type]};">{html.escape(text)}</span>'
 
 
 # ============================================================
@@ -3196,13 +2586,7 @@ class SystemShellWidget(QtWidgets.QFrame):
 # ============================================================
 
 class CodeBlockWidget(QtWidgets.QFrame):
-    """代码块 — 语法高亮 + 行号 + 复制 + 折叠 + 创建 Wrangle（VEX 专属）
-    
-    ★ Phase 6 增强:
-    - 大于 5 行时自动显示行号
-    - 超过 15 行默认折叠，点击展开
-    - 语言标签显示在 header
-    """
+    """代码块 — 语法高亮 + 复制 + 创建 Wrangle（VEX 专属）"""
 
     createWrangleRequested = QtCore.Signal(str)  # vex_code
 
@@ -3213,17 +2597,10 @@ class CodeBlockWidget(QtWidgets.QFrame):
         'vector ', 'float ', '#include',
     )
 
-    _COLLAPSE_THRESHOLD = 15   # 超过此行数默认折叠
-    _LINE_NUM_THRESHOLD = 5    # 超过此行数显示行号
-    _MAX_HEIGHT = 400          # 最大高度
-
     def __init__(self, code: str, language: str = "", parent=None):
         super().__init__(parent)
         self._code = code
         self._lang = language.lower()
-        self._line_count = code.count('\n') + 1
-        self._collapsed = self._line_count > self._COLLAPSE_THRESHOLD
-        self._show_line_numbers = self._line_count > self._LINE_NUM_THRESHOLD
 
         self.setObjectName("CodeBlockWidget")
 
@@ -3239,44 +2616,23 @@ class CodeBlockWidget(QtWidgets.QFrame):
         hl.setSpacing(4)
 
         lang_text = self._lang.upper() or ("VEX" if self._is_vex() else "CODE")
-        # 语言标签 + 行数信息
-        lang_info = f"{lang_text}"
-        if self._line_count > 1:
-            lang_info += f"  ({self._line_count} 行)"
-        lang_lbl = QtWidgets.QLabel(lang_info)
+        lang_lbl = QtWidgets.QLabel(lang_text)
         lang_lbl.setObjectName("codeBlockLang")
         hl.addWidget(lang_lbl)
         hl.addStretch()
-
-        # 操作按钮列表（hover 时显示）
-        self._action_btns: list = []
-
-        # 折叠/展开按钮（仅在超过阈值时显示，始终可见）
-        if self._line_count > self._COLLAPSE_THRESHOLD:
-            self._toggle_btn = QtWidgets.QPushButton(
-                f"展开 ({self._line_count} 行)" if self._collapsed else "收起"
-            )
-            self._toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
-            self._toggle_btn.setObjectName("codeBlockBtn")
-            self._toggle_btn.clicked.connect(self._toggle_collapse)
-            hl.addWidget(self._toggle_btn)
 
         copy_btn = QtWidgets.QPushButton("复制")
         copy_btn.setCursor(QtCore.Qt.PointingHandCursor)
         copy_btn.setObjectName("codeBlockBtn")
         copy_btn.clicked.connect(self._on_copy)
-        copy_btn.setVisible(False)
         hl.addWidget(copy_btn)
-        self._action_btns.append(copy_btn)
 
         if self._lang in ('vex', 'vfl', '') and self._is_vex():
             wrangle_btn = QtWidgets.QPushButton("创建 Wrangle")
             wrangle_btn.setCursor(QtCore.Qt.PointingHandCursor)
             wrangle_btn.setObjectName("codeBlockBtnGreen")
             wrangle_btn.clicked.connect(lambda: self.createWrangleRequested.emit(self._code))
-            wrangle_btn.setVisible(False)
             hl.addWidget(wrangle_btn)
-            self._action_btns.append(wrangle_btn)
 
         layout.addWidget(header)
 
@@ -3289,109 +2645,26 @@ class CodeBlockWidget(QtWidgets.QFrame):
         self._code_edit.setObjectName("codeBlockEdit")
 
         highlighted = self._highlight()
-        code_html = self._add_line_numbers(highlighted) if self._show_line_numbers else highlighted
         self._code_edit.setHtml(
-            f'<pre style="margin:0;white-space:pre;">{code_html}</pre>'
+            f'<pre style="margin:0;white-space:pre;">{highlighted}</pre>'
         )
-        # auto-height (capped)
+        # auto-height (capped at 400)
         doc = self._code_edit.document()
         doc.setDocumentMargin(4)
-        self._full_h = int(doc.size().height()) + 20
-
-        # 计算折叠高度（COLLAPSE_THRESHOLD 行）
-        fm = self._code_edit.fontMetrics()
-        line_h = fm.lineSpacing() if fm.lineSpacing() > 0 else 17
-        self._collapsed_h = self._COLLAPSE_THRESHOLD * line_h + 20
-
-        if self._collapsed:
-            self._code_edit.setFixedHeight(min(self._collapsed_h, self._MAX_HEIGHT))
-            self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        else:
-            self._code_edit.setFixedHeight(min(self._full_h, self._MAX_HEIGHT))
-
+        h = int(doc.size().height()) + 20
+        self._code_edit.setFixedHeight(min(h, 400))
         layout.addWidget(self._code_edit)
-
-    def _add_line_numbers(self, highlighted_code: str) -> str:
-        """为高亮代码添加行号（使用 HTML table 布局）"""
-        lines = highlighted_code.split('\n')
-        width = len(str(len(lines)))
-        result: list = []
-        num_color = '#4a5568'  # 暗灰色行号
-        sep_color = 'rgba(255,255,255,6)'  # 分隔线
-
-        for i, line in enumerate(lines, 1):
-            num = str(i).rjust(width)
-            result.append(
-                f'<span style="color:{num_color};user-select:none;'
-                f'padding-right:12px;border-right:1px solid {sep_color};'
-                f'margin-right:12px;">{num}</span>{line}'
-            )
-        return '\n'.join(result)
-
-    def _toggle_collapse(self):
-        """切换代码块折叠/展开"""
-        self._collapsed = not self._collapsed
-        if self._collapsed:
-            self._code_edit.setFixedHeight(min(self._collapsed_h, self._MAX_HEIGHT))
-            self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            self._code_edit.verticalScrollBar().setValue(0)
-            self._toggle_btn.setText(f"展开 ({self._line_count} 行)")
-        else:
-            self._code_edit.setFixedHeight(min(self._full_h, self._MAX_HEIGHT))
-            if self._full_h > self._MAX_HEIGHT:
-                self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-            else:
-                self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            self._toggle_btn.setText("收起")
 
     # --- helpers ---
     def _is_vex(self) -> bool:
         return any(ind in self._code for ind in self._VEX_INDICATORS)
 
     def _highlight(self) -> str:
-        lang = self._lang
-        # VEX 自动检测
-        if lang in ('vex', 'vfl') or (not lang and self._is_vex()):
+        if self._lang in ('vex', 'vfl') or (not self._lang and self._is_vex()):
             return SyntaxHighlighter.highlight_vex(self._code)
-        # Python
-        if lang in ('python', 'py'):
+        if self._lang in ('python', 'py'):
             return SyntaxHighlighter.highlight_python(self._code)
-        # JSON
-        if lang == 'json':
-            return SyntaxHighlighter.highlight_json(self._code)
-        # YAML
-        if lang in ('yaml', 'yml'):
-            return SyntaxHighlighter.highlight_yaml(self._code)
-        # Bash / Shell
-        if lang in ('bash', 'sh', 'shell', 'zsh', 'powershell', 'ps1', 'bat', 'cmd'):
-            return SyntaxHighlighter.highlight_bash(self._code)
-        # JavaScript / TypeScript
-        if lang in ('javascript', 'js', 'typescript', 'ts', 'jsx', 'tsx'):
-            return SyntaxHighlighter.highlight_javascript(self._code)
-        # HScript
-        if lang in ('hscript', 'hs'):
-            return SyntaxHighlighter.highlight_hscript(self._code)
-        # GLSL / HLSL / shader
-        if lang in ('glsl', 'hlsl', 'shader', 'frag', 'vert', 'wgsl'):
-            return SyntaxHighlighter.highlight_glsl(self._code)
-        # C / C++ / C# (use GLSL tokenizer as base — similar syntax)
-        if lang in ('c', 'cpp', 'c++', 'cxx', 'h', 'hpp', 'cs', 'csharp'):
-            return SyntaxHighlighter.highlight_glsl(self._code)
-        # XML / HTML — use plain escaped (simple approach)
-        if lang in ('xml', 'html', 'svg'):
-            return html.escape(self._code)
-        # Fallback: no highlighting
         return html.escape(self._code)
-
-    def enterEvent(self, event):
-        for btn in self._action_btns:
-            btn.setVisible(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        for btn in self._action_btns:
-            btn.setVisible(False)
-        super().leaveEvent(event)
 
     def _on_copy(self):
         QtWidgets.QApplication.clipboard().setText(self._code)
@@ -3426,7 +2699,7 @@ class RichContentWidget(QtWidgets.QWidget):
         super().__init__(parent)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)  # 段落间距由 HTML margin 控制
+        layout.setSpacing(6)
 
         segments = SimpleMarkdown.parse_segments(text)
 
@@ -3447,24 +2720,7 @@ class RichContentWidget(QtWidgets.QWidget):
             elif seg[0] == 'code':
                 cb = CodeBlockWidget(seg[2], seg[1], self)
                 cb.createWrangleRequested.connect(self.createWrangleRequested.emit)
-                cb.setContentsMargins(0, 6, 0, 6)
                 layout.addWidget(cb)
-            elif seg[0] == 'image':
-                img_url = seg[1]
-                img_alt = seg[2] if len(seg) > 2 else ''
-                img_lbl = QtWidgets.QLabel()
-                img_lbl.setObjectName("richImage")
-                img_lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-                img_lbl.setWordWrap(False)
-                img_lbl.setText(
-                    f'<div style="margin:4px 0;">'
-                    f'<img src="{html.escape(img_url)}" '
-                    f'alt="{html.escape(img_alt)}" '
-                    f'style="max-width:100%;max-height:300px;border-radius:6px;">'
-                    f'</div>'
-                )
-                img_lbl.setTextFormat(QtCore.Qt.RichText)
-                layout.addWidget(img_lbl)
 
     def _on_link(self, url: str):
         """处理链接点击"""
@@ -3486,12 +2742,12 @@ class NodeContextBar(QtWidgets.QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(22)
+        self.setFixedHeight(28)
         self.setObjectName("NodeContextBar")
 
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(10, 0, 6, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(8)
 
         self.path_label = QtWidgets.QLabel("/obj")
         self.path_label.setObjectName("ctxPathLabel")
@@ -3562,142 +2818,6 @@ class ToolStatusBar(QtWidgets.QFrame):
         self._pulse.stop()
         self.setVisible(False)
         self._label.setText("")
-
-
-# ============================================================
-# 统一状态指示栏（合并 ThinkingBar + ToolStatusBar）
-# ============================================================
-
-class UnifiedStatusBar(QtWidgets.QWidget):
-    """统一状态指示栏 — 合并思考状态和工具执行状态为一条指示条。
-
-    提供三个接口：
-        show_thinking(elapsed)  显示思考中 + 流光动画
-        show_tool(tool_name)    显示工具执行中 + 脉冲动画
-        hide()                  隐藏状态栏
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(18)
-        self.setObjectName("unifiedStatusBar")
-        self.setVisible(False)
-
-        self._mode = None  # 'thinking' | 'tool' | None
-        self._elapsed = 0.0
-        self._phase = 0.0
-
-        # 流光定时器 ~25fps（用于思考模式）
-        self._timer = QtCore.QTimer(self)
-        self._timer.setInterval(40)
-        self._timer.timeout.connect(self._tick)
-
-        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-
-    # ---- 公共 API ----
-
-    def start(self):
-        """启动思考模式（兼容旧 ThinkingBar.start）"""
-        self._mode = 'thinking'
-        self._elapsed = 0.0
-        self._phase = 0.0
-        self.setVisible(True)
-        self._timer.start()
-        self.update()
-
-    def stop(self):
-        """停止所有状态（兼容旧 ThinkingBar.stop）"""
-        self._mode = None
-        self._timer.stop()
-        self.setVisible(False)
-
-    def set_elapsed(self, seconds: float):
-        """更新思考耗时（兼容旧 ThinkingBar.set_elapsed）"""
-        self._elapsed = seconds
-        self.update()
-
-    def show_tool(self, tool_name: str):
-        """切换到工具执行模式"""
-        self._mode = 'tool'
-        self._tool_name = tool_name
-        self._phase = 0.0
-        self.setVisible(True)
-        if not self._timer.isActive():
-            self._timer.start()
-        self.update()
-
-    def hide_tool(self):
-        """隐藏工具状态（如果当前不在思考模式则完全隐藏）"""
-        if self._mode == 'tool':
-            self._mode = None
-            self._timer.stop()
-            self.setVisible(False)
-
-    # ---- 内部 ----
-
-    def _tick(self):
-        self._phase += 0.025
-        if self._phase > 1.0:
-            self._phase -= 1.0
-        self.update()
-
-    def paintEvent(self, event):
-        if self._mode == 'thinking':
-            self._paint_thinking(event)
-        elif self._mode == 'tool':
-            self._paint_tool(event)
-
-    def _paint_thinking(self, event):
-        """绘制思考状态 — 流光文字"""
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        text = f"Thinking {self._elapsed:.1f}s" if self._elapsed > 0 else "Thinking..."
-        font = QtGui.QFont(CursorTheme.FONT_BODY, 10)
-        p.setFont(font)
-        fm = p.fontMetrics()
-        tw = fm.horizontalAdvance(text)
-        x = (w - tw) // 2
-        y = (h + fm.ascent() - fm.descent()) // 2
-        # 底色文字
-        p.setPen(QtGui.QColor(100, 116, 139, 120))
-        p.drawText(x, y, text)
-        # 流光高亮（扫过效果）
-        grad = QtGui.QLinearGradient(x, 0, x + tw, 0)
-        pos = self._phase
-        before = max(0.0, pos - 0.15)
-        after = min(1.0, pos + 0.15)
-        grad.setColorAt(0.0, QtGui.QColor(226, 232, 240, 0))
-        if before > 0:
-            grad.setColorAt(before, QtGui.QColor(226, 232, 240, 0))
-        grad.setColorAt(pos, QtGui.QColor(226, 232, 240, 200))
-        if after < 1.0:
-            grad.setColorAt(after, QtGui.QColor(226, 232, 240, 0))
-        grad.setColorAt(1.0, QtGui.QColor(226, 232, 240, 0))
-        p.setPen(QtGui.QPen(QtGui.QBrush(grad), 0))
-        p.drawText(x, y, text)
-        p.end()
-
-    def _paint_tool(self, event):
-        """绘制工具执行状态 — 脉冲点 + 工具名"""
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        # 脉冲圆点
-        import math
-        alpha = int(80 + 120 * (0.5 + 0.5 * math.sin(self._phase * math.pi * 2)))
-        dot_color = QtGui.QColor(212, 165, 116, alpha)
-        p.setBrush(dot_color)
-        p.setPen(QtCore.Qt.NoPen)
-        dot_r = 3
-        p.drawEllipse(8, (h - dot_r * 2) // 2, dot_r * 2, dot_r * 2)
-        # 工具名
-        text = getattr(self, '_tool_name', '')
-        font = QtGui.QFont(CursorTheme.FONT_MONO, 10)
-        p.setFont(font)
-        p.setPen(QtGui.QColor(100, 116, 139))
-        p.drawText(20, (h + p.fontMetrics().ascent() - p.fontMetrics().descent()) // 2, text)
-        p.end()
 
 
 # ============================================================

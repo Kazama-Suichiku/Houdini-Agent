@@ -24,7 +24,7 @@ class SessionManagerMixin:
         container.setObjectName("sessionBar")
         
         hl = QtWidgets.QHBoxLayout(container)
-        hl.setContentsMargins(8, 0, 8, 0)
+        hl.setContentsMargins(4, 2, 4, 2)
         hl.setSpacing(0)
         
         self.session_tabs = QtWidgets.QTabBar()
@@ -121,7 +121,6 @@ class SessionManagerMixin:
             'current_response': self._current_response,
             'token_stats': self._token_stats,
         }
-        self._sync_tabs_backup()
     
     def _create_todo_list(self, parent=None) -> TodoList:
         """为会话创建 TodoList 控件（初始隐藏，首次使用时插入 chat_layout）"""
@@ -206,7 +205,6 @@ class SessionManagerMixin:
         self.session_tabs.blockSignals(False)
         self.session_stack.setCurrentWidget(scroll_area)
         
-        self._sync_tabs_backup()
         self._update_context_stats()
     
     def _switch_session(self, tab_index: int):
@@ -262,15 +260,6 @@ class SessionManagerMixin:
             self.session_stack.removeWidget(sdata['scroll_area'])
             sdata['scroll_area'].deleteLater()
         
-        # ★ 关闭 tab 后同步删除对应的磁盘 session 文件
-        try:
-            session_file = self._cache_dir / f"session_{session_id}.json"
-            if session_file.exists():
-                session_file.unlink()
-        except Exception:
-            pass
-        
-        self._sync_tabs_backup()
         self._update_context_stats()
     
     def _save_current_session_state(self):
@@ -282,19 +271,6 @@ class SessionManagerMixin:
         s['context_summary'] = self._context_summary
         s['current_response'] = self._current_response
         s['token_stats'] = self._token_stats
-    
-    def _sync_tabs_backup(self):
-        """同步 tab 顺序和标签名到纯 Python 备份（atexit 时 Qt widget 可能已销毁）"""
-        try:
-            backup = []
-            for i in range(self.session_tabs.count()):
-                sid = self.session_tabs.tabData(i)
-                label = self.session_tabs.tabText(i)
-                if sid:
-                    backup.append((sid, label))
-            self._tabs_backup = backup
-        except (RuntimeError, AttributeError):
-            pass  # Qt widget 已销毁，保留旧备份
     
     def _load_session_state(self, session_id: str):
         """从 _sessions 恢复指定会话的状态"""

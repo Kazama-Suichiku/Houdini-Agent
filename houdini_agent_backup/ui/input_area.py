@@ -13,8 +13,9 @@ from .cursor_widgets import (
     ChatInput,
     SendButton,
     StopButton,
-    UnifiedStatusBar,
+    ToolStatusBar,
     NodeCompleterPopup,
+    ThinkingBar,
 )
 
 
@@ -22,23 +23,13 @@ class InputAreaMixin:
     """输入区域构建、模式切换、@提及、确认模式"""
 
     def _build_input_area(self) -> QtWidgets.QWidget:
-        """输入区域 — 紧凑现代布局：
-        
-        ┌─ batch bar (hidden) ──────────────────────────────┐
-        │ unified status bar (hidden)                        │
-        │ image preview (hidden)                             │
-        │ [+] Agent  Cfm           1.1M | $16   61% 122K/200K│  ← toolbar
-        │ ┌──────────────────────────────────┐ ┌────┐┌────┐ │
-        │ │ input text area                  │ │Stop││Send│ │  ← input row
-        │ └──────────────────────────────────┘ └────┘└────┘ │
-        └───────────────────────────────────────────────────┘
-        """
+        """输入区域"""
         container = QtWidgets.QFrame()
         container.setObjectName("inputArea")
         
         layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(8, 3, 8, 5)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
         
         # -------- Undo All / Keep All 批量操作栏（默认隐藏）--------
         self._batch_bar = QtWidgets.QFrame()
@@ -67,13 +58,16 @@ class InputAreaMixin:
         
         layout.addWidget(self._batch_bar)
         
-        # -------- 统一状态栏（合并 ThinkingBar + ToolStatusBar）--------
-        self.thinking_bar = UnifiedStatusBar()
-        self.tool_status_bar = self.thinking_bar  # 兼容别名
+        # -------- 思考中指示条（流光动画，默认隐藏）--------
+        self.thinking_bar = ThinkingBar()
         layout.addWidget(self.thinking_bar)
         
+        # 工具执行状态栏（显示当前正在调用的工具名，默认隐藏）
+        self.tool_status_bar = ToolStatusBar()
+        layout.addWidget(self.tool_status_bar)
+        
         # 图片附件预览区（输入框上方，默认隐藏）
-        self._pending_images = []  # List[Tuple[str, str, QPixmap]]
+        self._pending_images = []  # List[Tuple[str, str, QPixmap]]  (base64_data, media_type, thumbnail)
         self.image_preview_container = QtWidgets.QWidget()
         self.image_preview_container.setVisible(False)
         self.image_preview_layout = QtWidgets.QHBoxLayout(self.image_preview_container)
@@ -82,24 +76,19 @@ class InputAreaMixin:
         self.image_preview_layout.addStretch()
         layout.addWidget(self.image_preview_container)
         
-        # -------- 工具行：+ | Agent | Cfm | stretch | token | context --------
-        toolbar = QtWidgets.QHBoxLayout()
-        toolbar.setSpacing(6)
-        toolbar.setContentsMargins(0, 0, 0, 0)
+        # -------- 输入行：模式下拉 + 输入框 --------
+        input_row = QtWidgets.QHBoxLayout()
+        input_row.setSpacing(6)
         
-        self._agent_mode = True
+        # 模式下拉框（Agent / Ask）— 放在输入框左侧
+        self._agent_mode = True  # True=Agent, False=Ask
         self._confirm_mode = False
         
-        # + 附件弹出菜单
-        self.btn_attach_menu = QtWidgets.QPushButton("+")
-        self.btn_attach_menu.setObjectName("btnAttach")
-        self.btn_attach_menu.setFixedSize(18, 18)
-        self.btn_attach_menu.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_attach_menu.setToolTip("Attach / Actions")
-        self.btn_attach_menu.clicked.connect(self._show_attach_menu)
-        toolbar.addWidget(self.btn_attach_menu)
+        # 左侧垂直容器：模式下拉 + 确认开关
+        left_col = QtWidgets.QVBoxLayout()
+        left_col.setSpacing(4)
+        left_col.setContentsMargins(0, 0, 0, 0)
         
-        # Agent/Ask 模式
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.setObjectName("modeCombo")
         self.mode_combo.addItem("Agent")
@@ -108,97 +97,87 @@ class InputAreaMixin:
         self.mode_combo.setProperty("mode", "agent")
         self.mode_combo.setCursor(QtCore.Qt.PointingHandCursor)
         self.mode_combo.setToolTip(tr('mode.tooltip'))
-        self.mode_combo.setFixedWidth(58)
+        self.mode_combo.setFixedWidth(100)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        toolbar.addWidget(self.mode_combo)
+        left_col.addWidget(self.mode_combo)
         
         # 确认模式开关
-        self.chk_confirm_mode = QtWidgets.QCheckBox("Cfm")
+        self.chk_confirm_mode = QtWidgets.QCheckBox(tr('confirm'))
         self.chk_confirm_mode.setObjectName("chkConfirm")
         self.chk_confirm_mode.setChecked(False)
         self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
         self.chk_confirm_mode.setToolTip(tr('confirm.tooltip'))
         self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
-        toolbar.addWidget(self.chk_confirm_mode)
+        left_col.addWidget(self.chk_confirm_mode)
         
-        toolbar.addStretch()
-        
-        # Token 统计
-        self.token_stats_btn = QtWidgets.QPushButton("0")
-        self.token_stats_btn.setObjectName("tokenStats")
-        self.token_stats_btn.setToolTip(tr('header.token_stats.tooltip'))
-        self.token_stats_btn.clicked.connect(self._show_token_stats_dialog)
-        toolbar.addWidget(self.token_stats_btn)
-        
-        # 上下文统计
-        self.context_label = QtWidgets.QLabel("0K / 64K")
-        self.context_label.setObjectName("contextLabel")
-        toolbar.addWidget(self.context_label)
-        
-        layout.addLayout(toolbar)
-        
-        # -------- 输入行：输入框 + Send/Stop --------
-        input_row = QtWidgets.QHBoxLayout()
-        input_row.setSpacing(6)
+        input_row.addLayout(left_col)
         
         # 输入框（自适应高度）
         self.input_edit = ChatInput()
         self.input_edit.imageDropped.connect(self._on_image_dropped)
         self.input_edit.atTriggered.connect(self._on_at_triggered)
-        input_row.addWidget(self.input_edit, 1)
+        input_row.addWidget(self.input_edit, 1)  # stretch=1 让输入框占满
         
-        # 节点路径补全弹出框
+        # 节点路径补全弹出框（传入 parent 防止创建时短暂闪烁）
         self._node_completer = NodeCompleterPopup(parent=self.input_edit)
         self._node_completer.pathSelected.connect(self._on_node_path_selected)
+        # ★ 让输入框持有弹出框引用，支持键盘导航和自动关闭
         self.input_edit.set_completer_popup(self._node_completer)
-        
-        # Send / Stop 按钮 — 输入框右侧
-        btn_col = QtWidgets.QVBoxLayout()
-        btn_col.setSpacing(4)
-        btn_col.setContentsMargins(0, 0, 0, 0)
-        btn_col.addStretch()
-        
-        self.btn_stop = StopButton()
-        self.btn_stop.setFixedHeight(26)
-        self.btn_stop.setVisible(False)
-        btn_col.addWidget(self.btn_stop)
-        
-        self.btn_send = SendButton()
-        self.btn_send.setFixedHeight(26)
-        btn_col.addWidget(self.btn_send)
-        
-        input_row.addLayout(btn_col)
         
         layout.addLayout(input_row)
         
-        # -------- 隐藏按钮（保持 self.btn_xxx 引用兼容 _wire_events）--------
-        self.btn_attach_image = QtWidgets.QPushButton("Img")
-        self.btn_attach_image.setVisible(False)
+        # 按钮行
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.setSpacing(6)
         
+        # 图片附件按钮
+        self.btn_attach_image = QtWidgets.QPushButton("Img")
+        self.btn_attach_image.setObjectName("btnSmall")
+        self.btn_attach_image.setToolTip(tr('attach_image.tooltip'))
+        btn_layout.addWidget(self.btn_attach_image)
+        
+        # 快捷操作
         self.btn_network = QtWidgets.QPushButton("Read Network")
-        self.btn_network.setVisible(False)
+        self.btn_network.setObjectName("btnSmall")
+        btn_layout.addWidget(self.btn_network)
         
         self.btn_selection = QtWidgets.QPushButton("Read Selection")
-        self.btn_selection.setVisible(False)
+        self.btn_selection.setObjectName("btnSmall")
+        btn_layout.addWidget(self.btn_selection)
         
+        # 导出训练数据按钮
         self.btn_export_train = QtWidgets.QPushButton("Train")
-        self.btn_export_train.setVisible(False)
+        self.btn_export_train.setObjectName("btnSmall")
+        self.btn_export_train.setToolTip(tr('train.tooltip'))
+        btn_layout.addWidget(self.btn_export_train)
+        
+        btn_layout.addStretch()
+        
+        # Token 统计按钮（可点击查看详情）
+        self.token_stats_btn = QtWidgets.QPushButton("0")
+        self.token_stats_btn.setObjectName("tokenStats")
+        self.token_stats_btn.setToolTip(tr('header.token_stats.tooltip'))
+        self.token_stats_btn.clicked.connect(self._show_token_stats_dialog)
+        btn_layout.addWidget(self.token_stats_btn)
+        
+        # 上下文统计
+        self.context_label = QtWidgets.QLabel("0K / 64K")
+        self.context_label.setObjectName("contextLabel")
+        btn_layout.addWidget(self.context_label)
+        
+        # 停止/发送
+        self.btn_stop = StopButton()
+        self.btn_stop.setVisible(False)
+        self.btn_stop.setFixedHeight(32)
+        btn_layout.addWidget(self.btn_stop)
+        
+        self.btn_send = SendButton()
+        self.btn_send.setFixedHeight(32)
+        btn_layout.addWidget(self.btn_send)
+        
+        layout.addLayout(btn_layout)
         
         return container
-
-    # -------- + 菜单弹出 --------
-
-    def _show_attach_menu(self):
-        """弹出附件/低频操作菜单"""
-        menu = QtWidgets.QMenu(self)
-        menu.addAction("Attach Image", self.btn_attach_image.click)
-        menu.addAction("Read Network", self.btn_network.click)
-        menu.addAction("Read Selection", self.btn_selection.click)
-        menu.addSeparator()
-        menu.addAction("Export Train", self.btn_export_train.click)
-        menu.exec_(self.btn_attach_menu.mapToGlobal(
-            QtCore.QPoint(0, -menu.sizeHint().height())
-        ))
 
     # ---------- 确认模式切换 ----------
     
@@ -211,9 +190,11 @@ class InputAreaMixin:
         """模式下拉框切换：0=Agent, 1=Ask"""
         self._agent_mode = (index == 0)
         mode = "agent" if self._agent_mode else "ask"
+        # 更新下拉框颜色
         self.mode_combo.setProperty("mode", mode)
         self.mode_combo.style().unpolish(self.mode_combo)
         self.mode_combo.style().polish(self.mode_combo)
+        # 更新发送按钮颜色
         self.btn_send.setProperty("mode", mode)
         self.btn_send.style().unpolish(self.btn_send)
         self.btn_send.style().polish(self.btn_send)
@@ -242,6 +223,7 @@ class InputAreaMixin:
         try:
             import hou  # type: ignore
             paths = []
+            # 收集常用上下文的节点路径
             for ctx in ['/obj', '/out', '/shop', '/mat', '/stage']:
                 try:
                     node = hou.node(ctx)
@@ -254,25 +236,26 @@ class InputAreaMixin:
         except ImportError:
             return []
 
-    # ---------- 工具执行状态（兼容旧 API）----------
+    # ---------- 工具执行状态 ----------
 
     def _on_show_tool_status(self, tool_name: str):
         """在输入区域状态栏显示当前正在执行的工具"""
         try:
-            self.thinking_bar.show_tool(tool_name)
+            self.tool_status_bar.show_tool(tool_name)
         except RuntimeError:
             pass
 
     def _on_hide_tool_status(self):
         """隐藏工具状态"""
         try:
-            self.thinking_bar.hide_tool()
+            self.tool_status_bar.hide_tool()
         except RuntimeError:
             pass
 
     def _retranslate_input_area(self):
         """语言切换后更新输入区域所有翻译文本"""
         self.mode_combo.setToolTip(tr('mode.tooltip'))
+        self.chk_confirm_mode.setText(tr('confirm'))
         self.chk_confirm_mode.setToolTip(tr('confirm.tooltip'))
         self.input_edit.setPlaceholderText(tr('placeholder'))
         self.btn_attach_image.setToolTip(tr('attach_image.tooltip'))

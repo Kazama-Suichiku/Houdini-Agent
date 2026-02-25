@@ -14,19 +14,19 @@ class HeaderMixin:
     """顶部设置栏构建与交互逻辑"""
 
     def _build_header(self) -> QtWidgets.QWidget:
-        """顶部设置栏 — 单行：Provider + Model + keyStatus + Web + Think + ⋯ 溢出菜单"""
+        """顶部设置栏 - 分两行：上行选择器，下行功能按钮"""
         header = QtWidgets.QFrame()
         header.setObjectName("headerFrame")
         
         outer = QtWidgets.QVBoxLayout(header)
-        outer.setContentsMargins(8, 2, 8, 2)
-        outer.setSpacing(0)
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(3)
         
-        # -------- 单行：Provider + Model + keyStatus + Web + Think + ⋯ --------
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(4)
+        # -------- 第一行：提供商 + 模型 + Agent/Web --------
+        row1 = QtWidgets.QHBoxLayout()
+        row1.setSpacing(4)
         
-        # 提供商
+        # 提供商（缩短名称，省空间）
         self.provider_combo = QtWidgets.QComboBox()
         self.provider_combo.setObjectName("providerCombo")
         self.provider_combo.addItem("Ollama", 'ollama')
@@ -36,7 +36,7 @@ class HeaderMixin:
         self.provider_combo.addItem("Duojie", 'duojie')
         self.provider_combo.setMinimumWidth(70)
         self.provider_combo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        row.addWidget(self.provider_combo)
+        row1.addWidget(self.provider_combo)
         
         # 模型
         self.model_combo = QtWidgets.QComboBox()
@@ -77,6 +77,8 @@ class HeaderMixin:
             'glm-5': 200000,
         }
         # 模型特性配置
+        # supports_prompt_caching: 是否支持提示缓存（保持消息前缀稳定可自动命中）
+        # supports_vision: 是否支持图片识别（可在消息中发送图片）
         self._model_features = {
             # Ollama
             'qwen2.5:14b':               {'supports_prompt_caching': True, 'supports_vision': False},
@@ -106,116 +108,83 @@ class HeaderMixin:
         self._refresh_models('ollama')
         self.model_combo.setMinimumWidth(100)
         self.model_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        row.addWidget(self.model_combo, 1)
+        row1.addWidget(self.model_combo, 1)  # stretch=1 让模型框占满剩余宽度
         
-        # API Key 状态 — 紧凑指示（行内，限宽 + 省略号）
-        self.key_status = QtWidgets.QLabel()
-        self.key_status.setObjectName("keyStatus")
-        self.key_status.setMaximumWidth(90)
-        self.key_status.setMinimumWidth(0)
-        from houdini_agent.qt_compat import QtCore as _qc
-        self.key_status.setTextInteractionFlags(_qc.Qt.NoTextInteraction)
-        row.addWidget(self.key_status)
-        
-        # Web / Think 开关
+        # Web / Think 开关（Agent/Ask 模式已移至输入区域下方）
         self.web_check = QtWidgets.QCheckBox("Web")
         self.web_check.setObjectName("chkWeb")
         self.web_check.setChecked(True)
-        row.addWidget(self.web_check)
+        row1.addWidget(self.web_check)
         
         self.think_check = QtWidgets.QCheckBox("Think")
         self.think_check.setObjectName("chkThink")
         self.think_check.setChecked(True)
         self.think_check.setToolTip(tr('header.think.tooltip'))
-        row.addWidget(self.think_check)
+        row1.addWidget(self.think_check)
         
-        # ⋯ 溢出菜单按钮
-        self.btn_overflow = QtWidgets.QPushButton("···")
-        self.btn_overflow.setObjectName("btnOverflow")
-        self.btn_overflow.setFixedSize(24, 22)
-        self.btn_overflow.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_overflow.clicked.connect(self._show_overflow_menu)
-        row.addWidget(self.btn_overflow)
+        outer.addLayout(row1)
         
-        outer.addLayout(row)
+        # -------- 第二行：Key 状态 + 功能按钮 --------
+        row2 = QtWidgets.QHBoxLayout()
+        row2.setSpacing(4)
         
-        # -------- 隐藏按钮（保持 self.btn_xxx 引用兼容 _wire_events）--------
-        # 这些按钮不加入布局，仅用于信号连接
+        # API Key 状态
+        self.key_status = QtWidgets.QLabel()
+        self.key_status.setObjectName("keyStatus")
+        row2.addWidget(self.key_status, 1)
+        
+        # 功能按钮（紧凑）
         self.btn_key = QtWidgets.QPushButton("Key")
         self.btn_key.setObjectName("btnSmall")
-        self.btn_key.setVisible(False)
+        self.btn_key.setFixedHeight(24)
+        row2.addWidget(self.btn_key)
         
         self.btn_clear = QtWidgets.QPushButton("Clear")
         self.btn_clear.setObjectName("btnSmall")
-        self.btn_clear.setVisible(False)
+        self.btn_clear.setFixedHeight(24)
+        row2.addWidget(self.btn_clear)
         
         self.btn_cache = QtWidgets.QPushButton("Cache")
         self.btn_cache.setObjectName("btnSmall")
-        self.btn_cache.setVisible(False)
+        self.btn_cache.setFixedHeight(24)
+        self.btn_cache.setToolTip(tr('header.cache.tooltip'))
+        row2.addWidget(self.btn_cache)
         
         self.btn_optimize = QtWidgets.QPushButton("Opt")
         self.btn_optimize.setObjectName("btnOptimize")
-        self.btn_optimize.setVisible(False)
+        self.btn_optimize.setFixedHeight(24)
+        self.btn_optimize.setToolTip(tr('header.optimize.tooltip'))
+        row2.addWidget(self.btn_optimize)
         
+        # ★ 更新按钮（黄色醒目）
         self.btn_update = QtWidgets.QPushButton("Update")
         self.btn_update.setObjectName("btnUpdate")
-        self.btn_update.setVisible(False)
+        self.btn_update.setFixedHeight(24)
+        self.btn_update.setToolTip(tr('header.update.tooltip'))
+        row2.addWidget(self.btn_update)
         
+        # Aa 字号缩放按钮
         self.btn_font_scale = QtWidgets.QPushButton("Aa")
         self.btn_font_scale.setObjectName("btnFontScale")
-        self.btn_font_scale.setVisible(False)
+        self.btn_font_scale.setFixedHeight(24)
+        self.btn_font_scale.setToolTip(tr('header.font.tooltip'))
+        row2.addWidget(self.btn_font_scale)
         
-        # 语言下拉框（隐藏，仅用于引用 + 信号）
+        # 语言切换下拉框
         self.lang_combo = QtWidgets.QComboBox()
         self.lang_combo.setObjectName("langCombo")
+        self.lang_combo.setFixedHeight(24)
+        self.lang_combo.setFixedWidth(58)
         self.lang_combo.addItem("中文", "zh")
         self.lang_combo.addItem("EN", "en")
+        # 根据当前语言设置选中项
         self.lang_combo.setCurrentIndex(0 if get_language() == 'zh' else 1)
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
-        self.lang_combo.setVisible(False)
+        row2.addWidget(self.lang_combo)
+        
+        outer.addLayout(row2)
         
         return header
-
-    def _show_overflow_menu(self):
-        """显示溢出菜单：低频功能集中在此"""
-        menu = QtWidgets.QMenu(self)
-        
-        menu.addAction("API Key", self.btn_key.click)
-        menu.addAction("Clear Chat", self.btn_clear.click)
-        menu.addAction("Cache", self.btn_cache.click)
-        menu.addAction("Optimize", self.btn_optimize.click)
-        menu.addSeparator()
-        menu.addAction("Update", self.btn_update.click)
-        menu.addAction("Font (Aa)", self.btn_font_scale.click)
-        menu.addSeparator()
-        
-        # 语言子菜单
-        lang_menu = menu.addMenu("Language")
-        act_zh = lang_menu.addAction("中文")
-        act_en = lang_menu.addAction("EN")
-        current_lang = get_language()
-        act_zh.setCheckable(True)
-        act_en.setCheckable(True)
-        act_zh.setChecked(current_lang == 'zh')
-        act_en.setChecked(current_lang == 'en')
-        act_zh.triggered.connect(lambda: self._set_lang_from_menu('zh'))
-        act_en.triggered.connect(lambda: self._set_lang_from_menu('en'))
-        
-        # 弹出位置：溢出按钮下方
-        menu.exec_(self.btn_overflow.mapToGlobal(
-            QtCore.QPoint(0, self.btn_overflow.height())
-        ))
-
-    def _set_lang_from_menu(self, lang: str):
-        """从溢出菜单切换语言"""
-        if lang != get_language():
-            set_language(lang)
-            # 同步隐藏的 lang_combo（保持状态一致）
-            expected_idx = 0 if lang == 'zh' else 1
-            if self.lang_combo.currentIndex() != expected_idx:
-                self.lang_combo.blockSignals(True)
-                self.lang_combo.setCurrentIndex(expected_idx)
-                self.lang_combo.blockSignals(False)
 
     def _on_language_changed(self, index: int):
         """语言下拉框切换"""

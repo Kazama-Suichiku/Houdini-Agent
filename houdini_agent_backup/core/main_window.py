@@ -80,20 +80,32 @@ class MainWindow(QtWidgets.QMainWindow):
     def _save_workspace(self):
         """保存工作区（窗口状态 + 所有会话缓存）"""
         try:
-            geometry = self.geometry()
-            window_state = {
-                'x': geometry.x(),
-                'y': geometry.y(),
-                'width': geometry.width(),
-                'height': geometry.height(),
-                'is_maximized': self.isMaximized()
-            }
+            # 获取窗口状态（可能因 Qt 已销毁而失败）
+            try:
+                geometry = self.geometry()
+                window_state = {
+                    'x': geometry.x(),
+                    'y': geometry.y(),
+                    'width': geometry.width(),
+                    'height': geometry.height(),
+                    'is_maximized': self.isMaximized()
+                }
+            except RuntimeError:
+                window_state = {}
             
             has_sessions = False
             tab_count = 0
             if hasattr(self, 'ai_tab') and self.ai_tab:
-                has_sessions = self.ai_tab._save_all_sessions()
-                tab_count = self.ai_tab.session_tabs.count()
+                try:
+                    has_sessions = self.ai_tab._save_all_sessions()
+                    tab_count = self.ai_tab.session_tabs.count()
+                except RuntimeError:
+                    # Qt widget 已销毁，尝试 atexit 级别的保存
+                    try:
+                        self.ai_tab._atexit_save()
+                        has_sessions = True
+                    except Exception:
+                        pass
             
             workspace_data = {
                 'version': '1.1',
@@ -108,7 +120,10 @@ class MainWindow(QtWidgets.QMainWindow):
             with open(self._workspace_file, 'w', encoding='utf-8') as f:
                 json.dump(workspace_data, f, ensure_ascii=False, indent=2)
             
-            print(f"[Workspace] Saved: window({window_state['width']}x{window_state['height']}), {tab_count} session tabs")
+            if window_state:
+                print(f"[Workspace] Saved: window({window_state['width']}x{window_state['height']}), {tab_count} session tabs")
+            else:
+                print(f"[Workspace] Saved: (window state unavailable), sessions={has_sessions}")
             
         except Exception as e:
             print(f"[Workspace] Save failed: {str(e)}")
@@ -136,11 +151,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.setWindowState(QtCore.Qt.WindowMaximized)
             
             cache_info = workspace_data.get('cache_info', {})
-            # ★ 始终尝试恢复（不再依赖 has_conversation 标志，
-            #   即使上次退出时所有会话为空，manifest 或 cache_latest 中可能仍有内容）
-            if hasattr(self, 'ai_tab'):
-                # 延迟 200ms 确保 UI 完全初始化完毕
-                QtCore.QTimer.singleShot(200, self._load_workspace_cache)
+            if cache_info.get('has_conversation') and hasattr(self, 'ai_tab'):
+                QtCore.QTimer.singleShot(100, self._load_workspace_cache)
+            elif hasattr(self, 'ai_tab'):
+                QtCore.QTimer.singleShot(100, self._load_workspace_cache)
             
             print(f"[Workspace] Loaded: {self._workspace_file}")
             
@@ -152,17 +166,29 @@ class MainWindow(QtWidgets.QMainWindow):
         """延迟加载工作区缓存"""
         try:
             if not hasattr(self, 'ai_tab'):
+                print("[Workspace] Cache load skipped: ai_tab not initialized")
                 return
             
+            print("[Workspace] 开始恢复会话缓存...")
             if self.ai_tab._restore_all_sessions():
+                print("[Workspace] 会话缓存恢复成功（通过 manifest）")
                 return
             
+            # manifest 恢复失败，尝试 cache_latest.json 兜底
             cache_dir = self.ai_tab._cache_dir
             latest_cache = cache_dir / "cache_latest.json"
             if latest_cache.exists():
-                self.ai_tab._load_cache_silent(latest_cache)
+                print("[Workspace] manifest 恢复失败，尝试 cache_latest.json 兜底...")
+                if self.ai_tab._load_cache_silent(latest_cache):
+                    print("[Workspace] cache_latest.json 恢复成功")
+                else:
+                    print("[Workspace] cache_latest.json 恢复也失败了")
+            else:
+                print("[Workspace] 无可用缓存文件")
         except Exception as e:
+            import traceback
             print(f"[Workspace] Cache load failed: {str(e)}")
+            traceback.print_exc()
     
     def _on_app_about_to_quit(self):
         self._save_workspace_once()
@@ -172,21 +198,26 @@ class MainWindow(QtWidgets.QMainWindow):
     
     def _on_hip_event(self, event_type):
         try:
+            # BeforeClear: 关闭场景 / 退出 Houdini
+            # BeforeLoad: 加载新场景前
+            # BeforeSave: 保存场景时也顺便保存 Agent 状态
             if event_type in (hou.hipFileEventType.BeforeClear,
-                              hou.hipFileEventType.BeforeLoad):
+                              hou.hipFileEventType.BeforeLoad,
+                              hou.hipFileEventType.BeforeSave):
                 self._save_workspace_once()
         except Exception:
             pass
     
     def _save_workspace_once(self):
-        """确保退出时只保存一次（aboutToQuit / atexit / closeEvent 都可能触发）"""
         if self._already_saved:
             return
-        self._already_saved = True  # ★ 不在 finally 中重置，确保只执行一次
+        self._already_saved = True
         try:
             self._save_workspace()
         except Exception as e:
             print(f"[Workspace] Exit save failed: {e}")
+        finally:
+            self._already_saved = False
     
     def closeEvent(self, event):
         self._save_workspace()

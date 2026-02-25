@@ -130,8 +130,6 @@ class AITab(
         # 多会话管理
         self._sessions: Dict[str, dict] = {}   # session_id -> session state
         self._session_counter = 0               # 用于生成 tab 标签
-        # ★ 纯 Python 备份：tab 顺序和标签名（atexit 时 Qt widget 可能已销毁）
-        self._tabs_backup: list = []  # [(session_id, tab_label), ...]
         
         # 静态内容缓存（只计算一次，节省 token 和计算时间）
         self._cached_optimized_system_prompt: Optional[str] = None
@@ -222,10 +220,10 @@ class AITab(
         self._update_key_status()
         self._update_context_stats()
         
-        # 定期自动保存（每 60 秒），防止 Houdini 退出时丢失会话
+        # 定期自动保存（每 30 秒），防止 Houdini 直接退出时丢失会话
         self._auto_save_timer = QtCore.QTimer(self)
         self._auto_save_timer.timeout.connect(self._periodic_save_all)
-        self._auto_save_timer.start(60_000)  # 60 秒
+        self._auto_save_timer.start(30_000)  # 30 秒
         
         # 注册 atexit 回调和 QApplication.aboutToQuit 信号
         import atexit
@@ -525,6 +523,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
         # 顶部设置栏
         header = self._build_header()
+        # ★ 玻璃面板投影（header 底部柔和阴影）
+        header_shadow = QtWidgets.QGraphicsDropShadowEffect(header)
+        header_shadow.setColor(QtGui.QColor(0, 0, 0, 60))
+        header_shadow.setBlurRadius(16)
+        header_shadow.setOffset(0, 3)
+        header.setGraphicsEffect(header_shadow)
         layout.addWidget(header)
         
         # 会话标签栏（多会话切换）
@@ -545,6 +549,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
         # 输入区域
         input_area = self._build_input_area()
+        # ★ 玻璃面板投影（input 顶部柔和阴影）
+        input_shadow = QtWidgets.QGraphicsDropShadowEffect(input_area)
+        input_shadow.setColor(QtGui.QColor(0, 0, 0, 60))
+        input_shadow.setBlurRadius(16)
+        input_shadow.setOffset(0, -3)
+        input_area.setGraphicsEffect(input_shadow)
         layout.addWidget(input_area)
 
     # ===================================================================
@@ -916,14 +926,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._in_think_block = False
             self._tag_parse_buf = ""
             self._fake_warned = False
-            # 重置自适应缓冲参数
-            self._output_buffer = ""
-            self._last_flush_time = time.time()
-            self._adaptive_buf_size = 80
-            self._adaptive_interval = 0.15
-            self._last_render_duration = 0.0
-            self._flush_count = 0
-            self._is_first_content_chunk = True
             
             self.client.reset_stop()
             # 启动思考计时器
@@ -1071,11 +1073,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         if not hasattr(self, '_output_buffer'):
             self._output_buffer = ""
             self._last_flush_time = time.time()
-            self._adaptive_buf_size = 80
-            self._adaptive_interval = 0.15
-            self._last_render_duration = 0.0
-            self._flush_count = 0
-            self._is_first_content_chunk = True
 
         # 追加到标签解析缓冲区
         self._tag_parse_buf += text
@@ -1200,15 +1197,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             pass
 
     def _emit_normal_content(self, text: str):
-        """发送正式内容（带 token 限制 + 自适应缓冲刷新）
-        
-        ★ 自适应策略（借鉴 markstream-vue 的时间预算机制）：
-        - 首个 chunk 立即刷新，消除首字延迟
-        - 后续根据上一次渲染耗时动态调整缓冲大小：
-          渲染快 → 小缓冲、多刷新（流畅感）
-          渲染慢 → 大缓冲、少刷新（避免卡顿）
-        - 换行始终立即刷新（段落边界及时显示）
-        """
+        """发送正式内容（带 token 限制 + 缓冲刷新）"""
         if not text:
             return
         # 首次正式内容到达时，确保思考区块已 finalize（适配 DeepSeek 原生 reasoning_content）
@@ -1229,35 +1218,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
         self._output_buffer += text
 
-        # ★ 自适应缓冲刷新策略
+        # ★ 缓冲刷新策略（优化：增大批量减少跨线程信号发射 + UI 更新次数）
         should_flush = False
         current_time = time.time()
-
-        # 初始化自适应状态（首次调用）
-        if not hasattr(self, '_adaptive_buf_size'):
-            self._adaptive_buf_size = 80       # 初始缓冲大小（字符）
-            self._adaptive_interval = 0.15     # 初始兜底间隔（秒）
-            self._last_render_duration = 0.0   # 上次渲染耗时
-            self._flush_count = 0              # flush 计数（性能追踪）
-            self._is_first_content_chunk = True  # 首个 chunk 标志
-
-        # 规则 1: 首个 chunk 立即刷新（消除首字延迟）
-        if self._is_first_content_chunk:
+        if len(self._output_buffer) >= 200:        # 200 字符批量刷新（原 50）
             should_flush = True
-            self._is_first_content_chunk = False
-        # 规则 2: 缓冲区达到自适应阈值
-        elif len(self._output_buffer) >= self._adaptive_buf_size:
+        elif '\n' in text:                          # 换行时立即刷新（保证段落及时显示）
             should_flush = True
-        # 规则 3: 换行时立即刷新（段落边界及时显示）
-        elif '\n' in text:
-            should_flush = True
-        # 规则 4: 自适应兜底间隔
-        elif current_time - self._last_flush_time > self._adaptive_interval:
+        elif current_time - self._last_flush_time > 0.25:  # 250ms 兜底（原 150ms）
             should_flush = True
 
         if should_flush and self._output_buffer:
-            flush_start = time.time()
-
             # 实时过滤伪造的工具调用行
             buf = self._output_buffer
             if '[ok]' in buf or '[err]' in buf or '[工具执行结果]' in buf or '[Tool Result]' in buf:
@@ -1278,19 +1249,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 self._appendContent.emit(buf)
             self._output_buffer = ""
             self._last_flush_time = current_time
-            self._flush_count += 1
-
-            # ★ 自适应调整：根据上次渲染耗时动态调整缓冲参数
-            render_dur = time.time() - flush_start
-            self._last_render_duration = render_dur
-            if render_dur < 0.004:
-                # 渲染很快 → 减小缓冲，更频繁刷新（流畅感）
-                self._adaptive_buf_size = max(40, self._adaptive_buf_size - 20)
-                self._adaptive_interval = max(0.08, self._adaptive_interval - 0.02)
-            elif render_dur > 0.012:
-                # 渲染较慢 → 增大缓冲，减少刷新（避免卡顿）
-                self._adaptive_buf_size = min(500, self._adaptive_buf_size + 40)
-                self._adaptive_interval = min(0.40, self._adaptive_interval + 0.05)
 
     def _check_output_token_limit(self, text: str) -> bool:
         """检查正式输出 token 是否超过限制（思考内容不计入）"""
@@ -1400,20 +1358,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 1. 添加工具交互链（原生 OpenAI 格式）
         # new_messages 包含：assistant(tool_calls) + tool(results) + ...
-        # ★ 只添加中间轮次（带 tool_calls 的 assistant 和 tool 回复），
-        #   最终的纯文本 assistant 回复由下面步骤 2 统一构建，避免重复
         if new_messages:
             for nm in new_messages:
                 clean = nm.copy()
                 clean.pop('reasoning_content', None)  # 推理模型专用，不需持久化
-                # 跳过最后一条纯文本 assistant 消息（没有 tool_calls 的），
-                # 它会在步骤 2 中作为 final_msg 添加
-                if nm is new_messages[-1] and nm.get('role') == 'assistant' and not nm.get('tool_calls'):
-                    continue
                 history.append(clean)
         
         # 2. 提取并添加最终 AI 回复
-        # 优先使用 final_content（最后一轮的纯文本），其次从 new_messages 提取
+        # 优先使用 final_content（最后一轮的纯文本），其次 full_content
         final_content = result.get('final_content', '')
         if not final_content or not final_content.strip():
             # final_content 为空 → 尝试从 new_messages 中提取最后一个有 content 的 assistant 消息
@@ -1438,8 +1390,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             clean_content = self._strip_fake_tool_results(clean_content)
         
         # 确保历史以 assistant 消息结尾（维持 user→assistant 交替）
-        # 只要有内容或有工具交互，都需要一条最终 assistant 消息
-        need_final = bool(clean_content) or bool(new_messages) or not history or history[-1].get('role') != 'assistant'
+        need_final = clean_content or new_messages or (not new_messages and not clean_content)
         if need_final:
             final_msg = {'role': 'assistant', 'content': clean_content or tr('ai.no_content')}
             if thinking_text:
@@ -1450,20 +1401,20 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             for tc in tool_calls_history:
                 tn = tc.get('tool_name', '')
                 ta = tc.get('arguments', {})
-                tc_result = tc.get('result', {})
+                tr = tc.get('result', {})
                 if tn == 'execute_python' and ta.get('code'):
                     py_shells.append({
                         'code': ta['code'],
-                        'output': tc_result.get('result', ''),
-                        'error': tc_result.get('error', ''),
-                        'success': bool(tc_result.get('success')),
+                        'output': tr.get('result', ''),
+                        'error': tr.get('error', ''),
+                        'success': bool(tr.get('success')),
                     })
                 elif tn == 'execute_shell' and ta.get('command'):
                     sys_shells.append({
                         'command': ta['command'],
-                        'output': tc_result.get('result', ''),
-                        'error': tc_result.get('error', ''),
-                        'success': bool(tc_result.get('success')),
+                        'output': tr.get('result', ''),
+                        'error': tr.get('error', ''),
+                        'success': bool(tr.get('success')),
                         'cwd': ta.get('cwd', ''),
                     })
             if py_shells:
@@ -1471,6 +1422,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if sys_shells:
                 final_msg['system_shells'] = sys_shells
             history.append(final_msg)
+        
+        # ★ 检测 API 返回的真实 context limit，动态更新本地配置
+        _usage_for_limit = result.get('usage', {})
+        detected_limit = _usage_for_limit.get('_detected_context_limit')
+        if detected_limit and detected_limit > 0:
+            model_name = self.model_combo.currentText()
+            old_limit = self._model_context_limits.get(model_name, 0)
+            if detected_limit < old_limit:
+                print(f"[Context] ★ 修正 {model_name} 的 context limit: {old_limit} → {detected_limit}")
+                self._model_context_limits[model_name] = detected_limit
+                self._addStatus.emit(f"Context limit 已从 {old_limit//1000}K 修正为 {detected_limit//1000}K")
         
         # 管理上下文
         self._manage_context()
@@ -1526,12 +1488,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if agent_sid in self._sessions:
                 self._sessions[agent_sid]['conversation_history'] = history
                 self._sessions[agent_sid]['token_stats'] = stats
-            # 如果当前显示的恰好就是 agent session，直接保存
-            if agent_sid == self._session_id:
-                self._save_cache()
-            else:
-                # 不在当前 session 上，写入 session 字典即可（下次切换回来时再保存）
-                pass
+            # ★ 每次对话完成后保存所有 session（防止 Houdini 直接退出时丢失）
+            self._save_all_sessions()
         
         self._set_running(False)
         
@@ -1563,9 +1521,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         except RuntimeError:
             pass  # widget 已被 clear 销毁
         
-        # ★ 确保历史以 assistant 结尾（防止连续 user 消息破坏结构）
-        self._ensure_history_ends_with_assistant(f"[Error] {error}")
-        
         self._set_running(False)
 
     def _on_agent_stopped(self):
@@ -1587,21 +1542,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         except RuntimeError:
             pass  # widget 已被 clear 销毁
         
-        # ★ 确保历史以 assistant 结尾（防止连续 user 消息破坏结构）
-        self._ensure_history_ends_with_assistant("[Stopped by user]")
-        
         self._set_running(False)
         self._hideToolStatus.emit()
-    
-    def _ensure_history_ends_with_assistant(self, fallback_content: str):
-        """确保 conversation_history 以 assistant 消息结尾
-        
-        当 agent 出错或被中断时，用户消息已追加但没有对应的 assistant 回复，
-        这会破坏 user↔assistant 交替结构，导致下次 API 调用失败。
-        """
-        history = self._agent_history if self._agent_history is not None else self._conversation_history
-        if history and history[-1].get('role') == 'user':
-            history.append({'role': 'assistant', 'content': fallback_content})
 
     # ---------- 工具执行状态 ----------
 
@@ -2063,48 +2005,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 continue
             
             if role == prev_role and role in ('user', 'assistant'):
-                # 合并连续的相同角色消息
-                prev_content = fixed[-1].get('content')
-                curr_content = msg.get('content')
-                
-                # ★ 多模态消息（content 是 list）不能直接用 + 拼接字符串
-                # 策略：如果任一 content 是 list，提取文字部分再合并
-                prev_text = prev_content
-                curr_text = curr_content
-                if isinstance(prev_content, list):
-                    prev_text = '\n'.join(
-                        p.get('text', '') for p in prev_content
-                        if isinstance(p, dict) and p.get('type') == 'text'
-                    ) or ''
-                if isinstance(curr_content, list):
-                    curr_text = '\n'.join(
-                        p.get('text', '') for p in curr_content
-                        if isinstance(p, dict) and p.get('type') == 'text'
-                    ) or ''
-                
-                prev_text = prev_text or ''
-                curr_text = curr_text or ''
-                
+                # 合并连续的相同角色消息（仅限纯文本消息）
+                prev_content = fixed[-1].get('content') or ''
+                curr_content = msg.get('content') or ''
                 fixed[-1] = fixed[-1].copy()
-                
-                # 如果两边都是纯文本，直接拼接
-                # 如果任一方是多模态 list，保留最后一个的图片部分 + 合并文字
-                if isinstance(prev_content, list) or isinstance(curr_content, list):
-                    # 合并为多模态格式：保留所有 text 和 image_url
-                    merged_parts = []
-                    combined_text = (prev_text + '\n\n' + curr_text).strip()
-                    if combined_text:
-                        merged_parts.append({'type': 'text', 'text': combined_text})
-                    # 收集所有图片部分
-                    for src in (prev_content, curr_content):
-                        if isinstance(src, list):
-                            for part in src:
-                                if isinstance(part, dict) and part.get('type') == 'image_url':
-                                    merged_parts.append(part)
-                    fixed[-1]['content'] = merged_parts if merged_parts else combined_text
-                else:
-                    fixed[-1]['content'] = prev_text + '\n\n' + curr_text
-                
+                fixed[-1]['content'] = prev_content + '\n\n' + curr_content
                 if 'thinking' in msg and msg['thinking']:
                     prev_thinking = fixed[-1].get('thinking', '')
                     fixed[-1]['thinking'] = (prev_thinking + '\n' + msg['thinking']).strip()
@@ -2655,71 +2560,90 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 # 将上下文提醒作为系统消息添加到末尾
                 messages.append({'role': 'system', 'content': f"[Context] {context_reminder}"})
             
-            # Cursor 风格预发送压缩：只压缩 tool 结果，保留 user/assistant 完整
-            if self._auto_optimize:
-                current_tokens = self.token_optimizer.calculate_message_tokens(messages)
-                should_compress, _ = self.token_optimizer.should_compress(current_tokens, context_limit)
+            # ★ 预发送压缩：使用安全余量，为 agent loop 中的工具调用预留空间
+            # 注意：本地 token 估算可能与 API 实际计算存在偏差（不同 tokenizer），
+            # 因此必须留足余量。此外 API 代理可能有比模型本身更低的 context limit。
+            current_tokens = self.token_optimizer.calculate_message_tokens(messages)
+            # 还需要加上工具定义的 token（API 会把 tools 定义计入 input token）
+            if not hasattr(self, '_tools_token_cache'):
+                import json as _json
+                from houdini_agent.utils.ai_client import HOUDINI_TOOLS
+                tools_json = _json.dumps(HOUDINI_TOOLS, ensure_ascii=False)
+                self._tools_token_cache = self.token_optimizer.estimate_tokens(tools_json)
+            total_estimated = current_tokens + self._tools_token_cache
+            
+            # 安全上限：取 context_limit 的 65%（留 35% 给工具调用增长 + tokenizer 偏差）
+            safe_limit = int(context_limit * 0.65)
+            needs_compress = total_estimated >= safe_limit
+            
+            if not needs_compress and self._auto_optimize:
+                # 即使未超安全上限，也按 should_compress 的阈值检查
+                needs_compress, _ = self.token_optimizer.should_compress(total_estimated, context_limit)
+            
+            if needs_compress:
+                print(f"[Context] 预发送检查: 估算 {total_estimated} tokens (消息={current_tokens}, 工具={self._tools_token_cache}), limit={context_limit}, safe={safe_limit}")
+                old_tokens = current_tokens
+                # 分离系统提示和上下文提醒
+                first_system = messages[0] if messages and messages[0].get('role') == 'system' else None
+                last_context = messages[-1] if messages and ('[上下文]' in messages[-1].get('content', '') or '[Context]' in messages[-1].get('content', '')) else None
+                start_idx = 1 if first_system else 0
+                end_idx = -1 if last_context else len(messages)
+                body = messages[start_idx:end_idx] if end_idx != len(messages) else messages[start_idx:]
                 
-                if should_compress:
-                    old_tokens = current_tokens
-                    # 分离系统提示和上下文提醒
-                    first_system = messages[0] if messages and messages[0].get('role') == 'system' else None
-                    last_context = messages[-1] if messages and ('[上下文]' in messages[-1].get('content', '') or '[Context]' in messages[-1].get('content', '')) else None
-                    start_idx = 1 if first_system else 0
-                    end_idx = -1 if last_context else len(messages)
-                    body = messages[start_idx:end_idx] if end_idx != len(messages) else messages[start_idx:]
-                    
-                    # 按 user 消息划分轮次
-                    rounds = []
-                    cur_rnd = []
-                    for m in body:
-                        if m.get('role') == 'user' and cur_rnd:
-                            rounds.append(cur_rnd)
-                            cur_rnd = []
-                        cur_rnd.append(m)
-                    if cur_rnd:
+                # 按 user 消息划分轮次
+                rounds = []
+                cur_rnd = []
+                for m in body:
+                    if m.get('role') == 'user' and cur_rnd:
                         rounds.append(cur_rnd)
-                    
-                    # 第一遍：压缩旧轮次 tool 结果
-                    n_rounds = len(rounds)
-                    protect_n = max(2, int(n_rounds * 0.6))
-                    for r_idx in range(n_rounds - protect_n):
-                        for m in rounds[r_idx]:
-                            if m.get('role') == 'tool':
-                                c = m.get('content') or ''
-                                if len(c) > 200:
-                                    m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[summary]'
-                    
-                    compressed_body = [m for rnd in rounds for m in rnd]
-                    
-                    # 如果仍超限，删除最早轮次
-                    target = int(context_limit * 0.7)
-                    while len(rounds) > 2:
-                        test_body = [m for rnd in rounds for m in rnd]
-                        test_msgs = ([first_system] if first_system else []) + test_body + ([last_context] if last_context else [])
-                        if self.token_optimizer.calculate_message_tokens(test_msgs) <= target:
-                            break
-                        rounds.pop(0)
-                    
-                    compressed_body = [m for rnd in rounds for m in rnd]
-                    
-                    # 重组
-                    messages = []
-                    if first_system:
-                        messages.append(first_system)
-                    if n_rounds - len(rounds) > 0:
-                        messages.append({
-                            'role': 'system',
-                            'content': tr('ai.old_rounds', n_rounds - len(rounds))
-                        })
-                    messages.extend(compressed_body)
-                    if last_context:
-                        messages.append(last_context)
-                    
-                    new_tokens = self.token_optimizer.calculate_message_tokens(messages)
-                    saved = old_tokens - new_tokens
-                    if saved > 0:
-                        self._addStatus.emit(tr('opt.auto_status', saved))
+                        cur_rnd = []
+                    cur_rnd.append(m)
+                if cur_rnd:
+                    rounds.append(cur_rnd)
+                
+                # 第一遍：压缩旧轮次 tool 结果
+                n_rounds = len(rounds)
+                protect_n = max(2, int(n_rounds * 0.6))
+                for r_idx in range(n_rounds - protect_n):
+                    for m in rounds[r_idx]:
+                        if m.get('role') == 'tool':
+                            c = m.get('content') or ''
+                            if len(c) > 200:
+                                m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[summary]'
+                
+                compressed_body = [m for rnd in rounds for m in rnd]
+                
+                # 如果仍超限，删除最早轮次
+                # ★ 目标：消息 token + 工具定义 token 降到 context_limit 的 55%
+                target_msg_tokens = int(context_limit * 0.55) - self._tools_token_cache
+                target_msg_tokens = max(target_msg_tokens, int(context_limit * 0.3))  # 兜底
+                while len(rounds) > 2:
+                    test_body = [m for rnd in rounds for m in rnd]
+                    test_msgs = ([first_system] if first_system else []) + test_body + ([last_context] if last_context else [])
+                    if self.token_optimizer.calculate_message_tokens(test_msgs) <= target_msg_tokens:
+                        break
+                    rounds.pop(0)
+                
+                compressed_body = [m for rnd in rounds for m in rnd]
+                
+                # 重组
+                messages = []
+                if first_system:
+                    messages.append(first_system)
+                if n_rounds - len(rounds) > 0:
+                    messages.append({
+                        'role': 'system',
+                        'content': tr('ai.old_rounds', n_rounds - len(rounds))
+                    })
+                messages.extend(compressed_body)
+                if last_context:
+                    messages.append(last_context)
+                
+                new_tokens = self.token_optimizer.calculate_message_tokens(messages)
+                saved = old_tokens - new_tokens
+                if saved > 0:
+                    self._addStatus.emit(tr('opt.auto_status', saved))
+                    print(f"[Context] 预发送压缩: {old_tokens} → {new_tokens} (limit={context_limit}, safe={safe_limit})")
             
             # ⚠️ 使用从主线程传入的参数（不直接访问 Qt 控件）
             # provider, model, use_web, use_agent 已在方法开头从 agent_params 获取
@@ -3662,19 +3586,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 同步到 sessions 字典
         self._save_current_session_state()
         
-        # ★ 清空后删除磁盘上的旧 session 文件（防止残留数据在重启后被恢复）
-        try:
-            old_session_file = self._cache_dir / f"session_{self._session_id}.json"
-            if old_session_file.exists():
-                old_session_file.unlink()
-        except Exception:
-            pass
-        # ★ 立即更新 manifest（移除已清空的会话条目）
-        try:
-            self._update_manifest()
-        except Exception:
-            pass
-        
         # 重置标签名
         for i in range(self.session_tabs.count()):
             if self.session_tabs.tabData(i) == self._session_id:
@@ -3729,91 +3640,32 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._add_image_from_path(fp)
     
     def _add_image_from_path(self, file_path: str):
-        """从文件路径加载图片并添加到待发送列表（自动缩放过大图片）"""
+        """从文件路径加载图片并添加到待发送列表"""
         import base64
         try:
-            # ★ 通过 QImage 加载，统一走缩放逻辑
-            qimg = QtGui.QImage(file_path)
-            if qimg.isNull():
-                print(f"[AI Tab] 无法加载图片: {file_path}")
-                return
-            qimg = self._resize_image_if_needed(qimg, self._MAX_IMAGE_DIMENSION)
-            
+            with open(file_path, 'rb') as f:
+                img_data = f.read()
+            # 检测 MIME 类型
             ext = os.path.splitext(file_path)[1].lower()
-            # 优先保持原始格式；BMP/GIF 等不适合直接发 API，统一转 PNG
-            if ext in ('.jpg', '.jpeg'):
-                fmt, media_type = 'JPEG', 'image/jpeg'
-            elif ext == '.webp':
-                fmt, media_type = 'WEBP', 'image/webp'
-            else:
-                fmt, media_type = 'PNG', 'image/png'
-            
-            buf = QtCore.QBuffer()
-            buf.open(QtCore.QIODevice.WriteOnly)
-            quality = 90 if fmt == 'JPEG' else -1
-            qimg.save(buf, fmt, quality)
-            raw_bytes = buf.data().data()
-            buf.close()
-            
-            # ★ 过大时降级为 JPEG 压缩
-            if len(raw_bytes) > self._MAX_IMAGE_BYTES and fmt != 'JPEG':
-                buf2 = QtCore.QBuffer()
-                buf2.open(QtCore.QIODevice.WriteOnly)
-                qimg.save(buf2, 'JPEG', 85)
-                raw_bytes = buf2.data().data()
-                buf2.close()
-                media_type = 'image/jpeg'
-                print(f"[AI Tab] 图片过大，已转为 JPEG ({len(raw_bytes)//1024}KB)")
-            
-            b64 = base64.b64encode(raw_bytes).decode('utf-8')
+            mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp'}
+            media_type = mime_map.get(ext, 'image/png')
+            b64 = base64.b64encode(img_data).decode('utf-8')
             self._add_pending_image(b64, media_type)
         except Exception as e:
             print(f"[AI Tab] 加载图片失败: {e}")
     
-    # ★ 图片尺寸限制：超过此分辨率的图片自动缩放（防止 base64 过大导致 API 400 错误）
-    _MAX_IMAGE_DIMENSION = 2048  # 最长边不超过 2048px
-    _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # base64 前的原始字节数上限 ~5MB（编码后约 6.7MB）
-
-    @staticmethod
-    def _resize_image_if_needed(image: 'QtGui.QImage', max_dim: int = 2048) -> 'QtGui.QImage':
-        """如果图片超过 max_dim，等比缩放。返回缩放后的 QImage。"""
-        w, h = image.width(), image.height()
-        if w <= max_dim and h <= max_dim:
-            return image
-        if w > h:
-            new_w = max_dim
-            new_h = int(h * max_dim / w)
-        else:
-            new_h = max_dim
-            new_w = int(w * max_dim / h)
-        print(f"[AI Tab] 图片过大 ({w}x{h})，自动缩放至 {new_w}x{new_h}")
-        return image.scaled(new_w, new_h, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-
     def _on_image_dropped(self, image: 'QtGui.QImage'):
         """ChatInput 拖拽或粘贴图片的回调"""
         if not self._current_model_supports_vision():
             return
         import base64
-        # ★ 自动缩放过大图片
-        image = self._resize_image_if_needed(image, self._MAX_IMAGE_DIMENSION)
         buf = QtCore.QBuffer()
         buf.open(QtCore.QIODevice.WriteOnly)
         image.save(buf, "PNG")
-        raw_bytes = buf.data().data()
+        b64 = base64.b64encode(buf.data().data()).decode('utf-8')
         buf.close()
-        # ★ 如果 PNG 仍然过大，改用 JPEG 压缩
-        if len(raw_bytes) > self._MAX_IMAGE_BYTES:
-            buf2 = QtCore.QBuffer()
-            buf2.open(QtCore.QIODevice.WriteOnly)
-            image.save(buf2, "JPEG", 85)
-            raw_bytes = buf2.data().data()
-            buf2.close()
-            media_type = 'image/jpeg'
-            print(f"[AI Tab] PNG 过大，已转为 JPEG (quality=85, {len(raw_bytes)//1024}KB)")
-        else:
-            media_type = 'image/png'
-        b64 = base64.b64encode(raw_bytes).decode('utf-8')
-        self._add_pending_image(b64, media_type)
+        self._add_pending_image(b64, 'image/png')
     
     def _add_pending_image(self, b64_data: str, media_type: str):
         """添加图片到待发送列表并在预览区显示缩略图（点击可放大）"""
@@ -3913,19 +3765,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         Returns:
             list: content 数组，包含 text 和 image_url 项
         """
-        # ★ API 支持的 media type 白名单（BMP 等需要先转换）
-        _SUPPORTED_MEDIA = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
-        
         content_parts = []
-        # ★ 始终添加 text 部分（即使为空也提供占位符，某些 API 要求至少一个 text block）
-        content_parts.append({"type": "text", "text": text or " "})
+        # 先添加文字
+        if text:
+            content_parts.append({"type": "text", "text": text})
         # 添加图片
         for b64_data, media_type, _thumb in images:
-            if not b64_data:
-                continue  # 跳过空数据
-            # ★ 不支持的 media type 降级为 image/png
-            if media_type not in _SUPPORTED_MEDIA:
-                media_type = 'image/png'
             content_parts.append({
                 "type": "image_url",
                 "image_url": {
@@ -4127,40 +3972,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 显示菜单
         menu.exec_(self.btn_cache.mapToGlobal(QtCore.QPoint(0, self.btn_cache.height())))
     
-    @staticmethod
-    def _strip_images_for_cache(history: list) -> list:
-        """剥离 conversation_history 中的 base64 图片数据，
-        用占位文本替代，大幅减小缓存文件体积。
-        返回一份深拷贝，不修改原始 history。
-        """
-        import copy
-        stripped = []
-        for msg in history:
-            content = msg.get('content')
-            if isinstance(content, list):
-                # 多模态消息：content 是 [{type:text,...}, {type:image_url,...}, ...]
-                new_parts = []
-                for part in content:
-                    if part.get('type') == 'image_url':
-                        url = part.get('image_url', {}).get('url', '')
-                        if url.startswith('data:'):
-                            # 替换 base64 为占位符，保留 media type 信息
-                            media_type = url.split(';')[0].replace('data:', '')
-                            new_parts.append({
-                                'type': 'text',
-                                'text': f'[Image: {media_type}]',
-                            })
-                        else:
-                            new_parts.append(copy.copy(part))
-                    else:
-                        new_parts.append(copy.copy(part))
-                new_msg = msg.copy()
-                new_msg['content'] = new_parts
-                stripped.append(new_msg)
-            else:
-                stripped.append(msg)  # 非多模态消息直接引用（str/None 不可变）
-        return stripped
-    
     def _build_cache_data(self) -> dict:
         """构建缓存数据字典"""
         todo_data = []
@@ -4176,12 +3987,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             'context_summary': self._context_summary,
             'todo_summary': self.todo_list.get_todos_summary() if hasattr(self, 'todo_list') else "",
             'todo_data': todo_data,
-            'token_stats': self._token_stats.copy(),
         }
 
     def _periodic_save_all(self):
         """定期保存所有会话（QTimer 触发 + aboutToQuit 触发）"""
         try:
+            # ★ 恢复过程中不保存，防止覆盖 manifest
+            if getattr(self, '_restoring_sessions', False):
+                return
             if not self._sessions:
                 return
             # 只有存在对话时才保存
@@ -4193,55 +4006,50 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if not has_any:
                 return
             self._save_all_sessions()
+        except RuntimeError:
+            pass  # Qt 对象已销毁（Houdini 退出时可能触发）
         except Exception as e:
             print(f"[Cache] 定期保存失败: {e}")
     
     def _atexit_save(self):
-        """Python 退出时的最后保存机会（atexit 回调）
-        
-        ★ 此时 Qt widget 可能已被销毁，因此：
-        - 使用 _tabs_backup（纯 Python 列表）代替遍历 QTabBar
-        - 使用 try/except 包裹 todo_list 访问
-        """
+        """Python 退出时的最后保存机会（atexit 回调）"""
         try:
             if not hasattr(self, '_sessions') or not self._sessions:
                 return
-            # 尝试同步当前状态（Qt widget 可能已销毁）
-            try:
-                self._save_current_session_state()
-            except (RuntimeError, AttributeError):
-                pass
-            
-            # ★ 优先使用 _tabs_backup（纯 Python 数据，不依赖 Qt）
-            tabs_info = getattr(self, '_tabs_backup', [])
-            if not tabs_info:
-                # 如果备份也为空，尝试从 _sessions 字典的 key 中获取
-                tabs_info = [(sid, f"Chat") for sid in self._sessions]
-            
+            self._save_current_session_state()
             # 直接写文件，不依赖 Qt 事件循环
             manifest_tabs = []
-            for sid, tab_label in tabs_info:
-                if not sid or sid not in self._sessions:
-                    continue
-                sdata = self._sessions[sid]
+
+            # ★ 优先从 _sessions 字典获取数据（Qt widget 可能已销毁）
+            # 尝试从 session_tabs 获取标签名，失败则使用 session_id 作为标签
+            tab_labels = {}
+            try:
+                for i in range(self.session_tabs.count()):
+                    sid = self.session_tabs.tabData(i)
+                    if sid:
+                        tab_labels[sid] = self.session_tabs.tabText(i)
+            except (RuntimeError, AttributeError):
+                pass  # Qt widget 已销毁，使用空 tab_labels
+
+            for sid, sdata in self._sessions.items():
                 history = sdata.get('conversation_history', [])
                 if not history:
                     continue
-                # 收集 todo 数据（widget 可能已销毁）
+                tab_label = tab_labels.get(sid, f'Chat ({sid})')
+                # 收集 todo 数据
+                todo_list_obj = sdata.get('todo_list')
                 todo_data = []
                 try:
-                    todo_list_obj = sdata.get('todo_list')
                     todo_data = todo_list_obj.get_todos_data() if todo_list_obj else []
-                except (RuntimeError, AttributeError, Exception):
+                except Exception:
                     pass
                 cache_data = {
                     'version': '1.0',
                     'session_id': sid,
                     'message_count': len(history),
-                    'conversation_history': self._strip_images_for_cache(history),
+                    'conversation_history': history,
                     'context_summary': sdata.get('context_summary', ''),
                     'todo_data': todo_data,
-                    'token_stats': sdata.get('token_stats', {}),
                 }
                 session_file = self._cache_dir / f"session_{sid}.json"
                 with open(session_file, 'w', encoding='utf-8') as f:
@@ -4270,14 +4078,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         try:
             # 同步当前会话状态到 _sessions
             self._save_current_session_state()
-            # ★ 同步 tab 备份
-            self._sync_tabs_backup()
             
             cache_data = self._build_cache_data()
-            # ★ 剥离 base64 图片以减小缓存文件大小
-            cache_data['conversation_history'] = self._strip_images_for_cache(
-                cache_data.get('conversation_history', [])
-            )
 
             # 1. 覆写固定的 session 文件（一个 session 只有一个文件）
             session_file = self._cache_dir / f"session_{self._session_id}.json"
@@ -4335,11 +4137,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
     def _save_all_sessions(self) -> bool:
         """保存所有打开的会话到磁盘（关闭软件时调用）"""
+        # ★ 恢复过程中不保存，防止覆盖 manifest
+        if getattr(self, '_restoring_sessions', False):
+            return False
         try:
             # 先保存当前活跃会话的状态到 _sessions 字典
             self._save_current_session_state()
-            # ★ 同步 tab 备份（确保 atexit 时也能用）
-            self._sync_tabs_backup()
 
             manifest_tabs = []
             active_session_id = self._session_id
@@ -4353,33 +4156,24 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 sdata = self._sessions[sid]
                 history = sdata.get('conversation_history', [])
                 if not history:
-                    # ★ 空会话：清理其磁盘上的旧 session 文件（防止残留）
-                    try:
-                        old_file = self._cache_dir / f"session_{sid}.json"
-                        if old_file.exists():
-                            old_file.unlink()
-                    except Exception:
-                        pass
                     continue  # 空会话不保存
 
-                # 收集 todo 数据（防御 widget 已销毁的情况）
-                todo_data = []
+                # 收集 todo 数据
+                todo_list_obj = sdata.get('todo_list')
                 try:
-                    todo_list_obj = sdata.get('todo_list')
                     todo_data = todo_list_obj.get_todos_data() if todo_list_obj else []
-                except (RuntimeError, AttributeError):
-                    pass
+                except Exception:
+                    todo_data = []
 
-                # 写 session 文件（★ 剥离 base64 图片以减小文件大小）
+                # 写 session 文件
                 cache_data = {
                     'version': '1.0',
                     'session_id': sid,
                     'created_at': datetime.now().isoformat(),
                     'message_count': len(history),
-                    'conversation_history': self._strip_images_for_cache(history),
+                    'conversation_history': history,
                     'context_summary': sdata.get('context_summary', ''),
                     'todo_data': todo_data,
-                    'token_stats': sdata.get('token_stats', {}),
                 }
                 session_file = self._cache_dir / f"session_{sid}.json"
                 with open(session_file, 'w', encoding='utf-8') as f:
@@ -4407,26 +4201,25 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             # 同时维护 cache_latest.json 兼容性
             if self._conversation_history:
                 cache_data = self._build_cache_data()
-                # ★ cache_latest 也剥离图片
-                cache_data['conversation_history'] = self._strip_images_for_cache(
-                    cache_data.get('conversation_history', [])
-                )
                 latest_file = self._cache_dir / "cache_latest.json"
                 with open(latest_file, 'w', encoding='utf-8') as f:
                     json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
-            # print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话到磁盘")
+            print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话到磁盘")
             return True
         except Exception as e:
+            import traceback as _tb
             print(f"[Cache] 保存所有会话失败: {e}")
-            import traceback; traceback.print_exc()
+            _tb.print_exc()
             return False
 
     def _restore_all_sessions(self) -> bool:
         """从 sessions_manifest.json 恢复所有会话标签（启动时调用）"""
+        self._restoring_sessions = True  # ★ 阻止定时器在恢复期间覆盖 manifest
         try:
             manifest_file = self._cache_dir / "sessions_manifest.json"
             if not manifest_file.exists():
+                print("[Cache] 恢复跳过: sessions_manifest.json 不存在")
                 return False
 
             with open(manifest_file, 'r', encoding='utf-8') as f:
@@ -4434,11 +4227,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
             tabs_info = manifest.get('tabs', [])
             if not tabs_info:
+                print("[Cache] 恢复跳过: manifest 中无 tabs 信息")
                 return False
 
+            print(f"[Cache] 开始恢复 {len(tabs_info)} 个会话...")
             active_sid = manifest.get('active_session_id', '')
             active_tab_index = 0
             first_tab = True
+            restored_count = 0
 
             for tab_info in tabs_info:
                 sid = tab_info.get('session_id', '')
@@ -4446,131 +4242,151 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 session_file = self._cache_dir / tab_info.get('file', '')
 
                 if not session_file.exists():
+                    print(f"[Cache] 跳过会话 {sid}: 文件 {session_file.name} 不存在")
                     continue
 
-                with open(session_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
+                try:
+                    with open(session_file, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                except Exception as e:
+                    print(f"[Cache] 跳过会话 {sid}: 读取文件失败 - {e}")
+                    continue
 
                 history = cache_data.get('conversation_history', [])
                 if not history:
+                    print(f"[Cache] 跳过会话 {sid}: 对话历史为空")
                     continue
 
                 context_summary = cache_data.get('context_summary', '')
                 todo_data = cache_data.get('todo_data', [])
-                # ★ 从缓存中恢复 token 使用统计
-                saved_token_stats = cache_data.get('token_stats', {
-                    'input_tokens': 0, 'output_tokens': 0,
-                    'reasoning_tokens': 0,
-                    'cache_read': 0, 'cache_write': 0,
-                    'total_tokens': 0, 'requests': 0,
-                    'estimated_cost': 0.0,
-                })
 
-                if first_tab:
-                    # 第一个 tab：加载到已有的初始会话中
-                    first_tab = False
-                    old_id = self._session_id
+                try:
+                    if first_tab:
+                        # 第一个 tab：加载到已有的初始会话中
+                        first_tab = False
+                        old_id = self._session_id
 
-                    self._session_id = sid
-                    self._conversation_history = history
-                    self._context_summary = context_summary
-                    self._token_stats = saved_token_stats
+                        self._session_id = sid
+                        self._conversation_history = history
+                        self._context_summary = context_summary
 
-                    # 更新 sessions 字典
-                    if old_id in self._sessions:
-                        sdata = self._sessions.pop(old_id)
-                        sdata['conversation_history'] = history
-                        sdata['context_summary'] = context_summary
-                        sdata['token_stats'] = saved_token_stats
-                        self._sessions[sid] = sdata
-                    elif sid not in self._sessions:
+                        # 更新 sessions 字典
+                        if old_id in self._sessions:
+                            sdata = self._sessions.pop(old_id)
+                            sdata['conversation_history'] = history
+                            sdata['context_summary'] = context_summary
+                            self._sessions[sid] = sdata
+                        elif sid not in self._sessions:
+                            self._sessions[sid] = {
+                                'scroll_area': self.scroll_area,
+                                'chat_container': self.chat_container,
+                                'chat_layout': self.chat_layout,
+                                'todo_list': self.todo_list,
+                                'conversation_history': history,
+                                'context_summary': context_summary,
+                                'current_response': None,
+                                'token_stats': self._token_stats,
+                            }
+
+                        # 恢复 todo 数据
+                        if todo_data and hasattr(self, 'todo_list') and self.todo_list:
+                            try:
+                                self.todo_list.restore_todos(todo_data)
+                                self._ensure_todo_in_chat(self.todo_list, self.chat_layout)
+                            except Exception as e:
+                                print(f"[Cache] 恢复 todo 失败(tab {sid}): {e}")
+
+                        # 更新标签
+                        for i in range(self.session_tabs.count()):
+                            if self.session_tabs.tabData(i) == old_id:
+                                self.session_tabs.setTabData(i, sid)
+                                self.session_tabs.setTabText(i, tab_label)
+                                if sid == active_sid:
+                                    active_tab_index = i
+                                break
+
+                        self._render_conversation_history()
+                        restored_count += 1
+                        print(f"[Cache] 恢复会话 {sid}: {len(history)} 条消息 (首个标签)")
+                    else:
+                        # 后续 tab：创建新标签
+                        self._save_current_session_state()
+                        self._session_counter += 1
+
+                        scroll_area, chat_container, chat_layout = self._create_session_widgets()
+                        self.session_stack.addWidget(scroll_area)
+
+                        tab_index = self.session_tabs.addTab(tab_label)
+                        self.session_tabs.setTabData(tab_index, sid)
+
+                        new_token_stats = {
+                            'input_tokens': 0, 'output_tokens': 0,
+                            'cache_read': 0, 'cache_write': 0,
+                            'total_tokens': 0, 'requests': 0,
+                        }
+
+                        todo = self._create_todo_list(chat_container)
+                        # 恢复 todo 数据
+                        if todo_data:
+                            try:
+                                todo.restore_todos(todo_data)
+                                self._ensure_todo_in_chat(todo, chat_layout)
+                            except Exception as e:
+                                print(f"[Cache] 恢复 todo 失败(tab {sid}): {e}")
+
                         self._sessions[sid] = {
-                            'scroll_area': self.scroll_area,
-                            'chat_container': self.chat_container,
-                            'chat_layout': self.chat_layout,
-                            'todo_list': self.todo_list,
+                            'scroll_area': scroll_area,
+                            'chat_container': chat_container,
+                            'chat_layout': chat_layout,
+                            'todo_list': todo,
                             'conversation_history': history,
                             'context_summary': context_summary,
                             'current_response': None,
-                            'token_stats': saved_token_stats,
+                            'token_stats': new_token_stats,
                         }
 
-                    # 恢复 todo 数据
-                    if todo_data and hasattr(self, 'todo_list') and self.todo_list:
-                        self.todo_list.restore_todos(todo_data)
-                        self._ensure_todo_in_chat(self.todo_list, self.chat_layout)
+                        # 临时切换到该标签以渲染历史
+                        old_scroll = self.scroll_area
+                        old_chat_container = self.chat_container
+                        old_chat_layout = self.chat_layout
+                        old_todo = self.todo_list
+                        old_history = self._conversation_history
+                        old_summary = self._context_summary
+                        old_stats = self._token_stats
+                        old_sid = self._session_id
 
-                    # 更新标签
-                    for i in range(self.session_tabs.count()):
-                        if self.session_tabs.tabData(i) == old_id:
-                            self.session_tabs.setTabData(i, sid)
-                            self.session_tabs.setTabText(i, tab_label)
-                            if sid == active_sid:
-                                active_tab_index = i
-                            break
+                        self._session_id = sid
+                        self._conversation_history = history
+                        self._context_summary = context_summary
+                        self._token_stats = new_token_stats
+                        self.scroll_area = scroll_area
+                        self.chat_container = chat_container
+                        self.chat_layout = chat_layout
+                        self.todo_list = todo
 
-                    self._render_conversation_history()
-                else:
-                    # 后续 tab：创建新标签
-                    self._save_current_session_state()
-                    self._session_counter += 1
+                        self._render_conversation_history()
 
-                    scroll_area, chat_container, chat_layout = self._create_session_widgets()
-                    self.session_stack.addWidget(scroll_area)
+                        # 恢复
+                        self._session_id = old_sid
+                        self._conversation_history = old_history
+                        self._context_summary = old_summary
+                        self._token_stats = old_stats
+                        self.scroll_area = old_scroll
+                        self.chat_container = old_chat_container
+                        self.chat_layout = old_chat_layout
+                        self.todo_list = old_todo
 
-                    tab_index = self.session_tabs.addTab(tab_label)
-                    self.session_tabs.setTabData(tab_index, sid)
+                        if sid == active_sid:
+                            active_tab_index = tab_index
 
-                    todo = self._create_todo_list(chat_container)
-                    # 恢复 todo 数据
-                    if todo_data:
-                        todo.restore_todos(todo_data)
-                        self._ensure_todo_in_chat(todo, chat_layout)
+                        restored_count += 1
+                        print(f"[Cache] 恢复会话 {sid}: {len(history)} 条消息 (标签 {tab_index})")
 
-                    self._sessions[sid] = {
-                        'scroll_area': scroll_area,
-                        'chat_container': chat_container,
-                        'chat_layout': chat_layout,
-                        'todo_list': todo,
-                        'conversation_history': history,
-                        'context_summary': context_summary,
-                        'current_response': None,
-                        'token_stats': saved_token_stats,
-                    }
-
-                    # 临时切换到该标签以渲染历史
-                    old_scroll = self.scroll_area
-                    old_chat_container = self.chat_container
-                    old_chat_layout = self.chat_layout
-                    old_todo = self.todo_list
-                    old_history = self._conversation_history
-                    old_summary = self._context_summary
-                    old_stats = self._token_stats
-                    old_sid = self._session_id
-
-                    self._session_id = sid
-                    self._conversation_history = history
-                    self._context_summary = context_summary
-                    self._token_stats = saved_token_stats
-                    self.scroll_area = scroll_area
-                    self.chat_container = chat_container
-                    self.chat_layout = chat_layout
-                    self.todo_list = todo
-
-                    self._render_conversation_history()
-
-                    # 恢复
-                    self._session_id = old_sid
-                    self._conversation_history = old_history
-                    self._context_summary = old_summary
-                    self._token_stats = old_stats
-                    self.scroll_area = old_scroll
-                    self.chat_container = old_chat_container
-                    self.chat_layout = old_chat_layout
-                    self.todo_list = old_todo
-
-                    if sid == active_sid:
-                        active_tab_index = tab_index
+                except Exception as tab_err:
+                    import traceback as _tb
+                    print(f"[Cache] ★ 恢复会话 {sid} 失败: {tab_err}")
+                    _tb.print_exc()
+                    # 继续恢复其他会话，不中断整个流程
 
             # 切换到之前活跃的标签
             if self.session_tabs.count() > 0:
@@ -4585,17 +4401,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         self._sessions[target_sid]['scroll_area']
                     )
 
-            # ★ 恢复完成后同步 tab 备份并更新 UI 显示
-            self._sync_tabs_backup()
-            self._update_token_stats_display()
             self._update_context_stats()
-            print(f"[Cache] 已恢复 {self.session_tabs.count()} 个会话标签")
-            return True
+            print(f"[Cache] 已恢复 {restored_count}/{len(tabs_info)} 个会话标签 (总标签数: {self.session_tabs.count()})")
+            return restored_count > 0
 
         except Exception as e:
-            print(f"[Cache] 恢复多会话失败: {e}")
-            import traceback; traceback.print_exc()
+            import traceback as _tb
+            print(f"[Cache] ★ 恢复多会话失败: {e}")
+            _tb.print_exc()
             return False
+        finally:
+            self._restoring_sessions = False  # ★ 确保标志位被释放
 
     def _archive_cache(self) -> bool:
         """手动存档：创建带时间戳的独立文件（不会被覆写）"""
@@ -4655,21 +4471,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             context_summary = cache_data.get('context_summary', '')
             todo_data = cache_data.get('todo_data', [])
             cached_session_id = cache_data.get('session_id', str(uuid.uuid4())[:8])
-            # ★ 恢复 token 使用统计
-            saved_token_stats = cache_data.get('token_stats', {
-                'input_tokens': 0, 'output_tokens': 0,
-                'reasoning_tokens': 0,
-                'cache_read': 0, 'cache_write': 0,
-                'total_tokens': 0, 'requests': 0,
-                'estimated_cost': 0.0,
-            })
             
             if silent and not self._conversation_history:
                 # 静默恢复：当前会话为空时直接加载到当前标签
                 self._conversation_history = history
                 self._context_summary = context_summary
                 self._session_id = cached_session_id
-                self._token_stats = saved_token_stats
                 # 恢复 todo 数据
                 if todo_data and hasattr(self, 'todo_list') and self.todo_list:
                     self.todo_list.restore_todos(todo_data)
@@ -4678,14 +4485,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 if self._session_id in self._sessions:
                     self._sessions[self._session_id]['conversation_history'] = self._conversation_history
                     self._sessions[self._session_id]['context_summary'] = self._context_summary
-                    self._sessions[self._session_id]['token_stats'] = saved_token_stats
                 elif self._sessions:
                     # 旧 session_id 已经变了，需要重新映射
                     old_id = list(self._sessions.keys())[0]
                     sdata = self._sessions.pop(old_id)
                     sdata['conversation_history'] = self._conversation_history
                     sdata['context_summary'] = self._context_summary
-                    sdata['token_stats'] = saved_token_stats
                     self._sessions[self._session_id] = sdata
                     # 更新标签数据
                     for i in range(self.session_tabs.count()):
@@ -4693,7 +4498,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                             self.session_tabs.setTabData(i, self._session_id)
                             break
                 self._render_conversation_history()
-                self._update_token_stats_display()
                 self._update_context_stats()
                 # 自动重命名标签
                 if history:
@@ -4725,6 +4529,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             tab_index = self.session_tabs.addTab(label)
             self.session_tabs.setTabData(tab_index, cached_session_id)
             
+            new_token_stats = {
+                'input_tokens': 0, 'output_tokens': 0,
+                'cache_read': 0, 'cache_write': 0,
+                'total_tokens': 0, 'requests': 0,
+            }
+            
             todo = self._create_todo_list(chat_container)
             if todo_data:
                 todo.restore_todos(todo_data)
@@ -4738,7 +4548,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 'conversation_history': history,
                 'context_summary': context_summary,
                 'current_response': None,
-                'token_stats': saved_token_stats,
+                'token_stats': new_token_stats,
             }
             
             # 切换到新标签
@@ -4746,7 +4556,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._conversation_history = history
             self._context_summary = context_summary
             self._current_response = None
-            self._token_stats = saved_token_stats
+            self._token_stats = new_token_stats
             self.scroll_area = scroll_area
             self.chat_container = chat_container
             self.chat_layout = chat_layout
@@ -4758,7 +4568,6 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self.session_stack.setCurrentWidget(scroll_area)
             
             self._render_conversation_history()
-            self._update_token_stats_display()
             self._update_context_stats()
             
             if not silent:
@@ -5005,18 +4814,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
     _CONTEXT_HEADERS = ('[Network structure]', '[Selected nodes]',
                         '[网络结构]', '[选中节点]')
 
-    # ★ 分批渲染常量（借鉴 markstream-vue 的批次策略）
-    _BATCH_INITIAL = 30      # 首批渲染最后 N 条消息（用户最近看到的）
-    _BATCH_SIZE = 15          # 后续每批渲染 N 条
-    _BATCH_BUDGET_MS = 8      # 每批时间预算（毫秒）
-
     def _render_conversation_history(self):
         """重新渲染对话历史到 UI
-
-        ★ 分批渲染策略（借鉴 markstream-vue）：
-        1. 首批渲染最后 _BATCH_INITIAL 条消息（用户最近看到的）
-        2. 用 QTimer.singleShot(0) 模拟 idle callback，逐批渲染剩余
-        3. 每批设时间预算，超出则暂停让出主线程
 
         处理三种数据格式：
         1. role="user" 中嵌入 [Network structure] / [Selected nodes] 等上下文
@@ -5032,246 +4831,104 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if item.widget():
                 item.widget().deleteLater()
 
-        # 取消之前的分批渲染定时器
-        if hasattr(self, '_batch_render_timer') and self._batch_render_timer is not None:
-            self._batch_render_timer.stop()
-            self._batch_render_timer = None
-
         messages = self._conversation_history
-        if not messages:
-            return
-
-        # ★ 预扫描：将消息分组为逻辑"轮次"（每轮 = 一组相关消息）
-        groups = self._group_messages_into_turns(messages)
-        total_groups = len(groups)
-
-        if total_groups <= self._BATCH_INITIAL:
-            # 消息量小，一次性渲染
-            self._render_message_groups(groups, 0, total_groups)
-        else:
-            # ★ 分批渲染：先渲染最后 _BATCH_INITIAL 组（用户最近看到的）
-            # 早期消息用占位符
-            early_count = total_groups - self._BATCH_INITIAL
-
-            # 插入占位符
-            self._batch_placeholder = QtWidgets.QLabel(
-                f"⏳ 加载历史消息 ({early_count} 轮)..."
-            )
-            self._batch_placeholder.setObjectName("batchPlaceholder")
-            self._batch_placeholder.setStyleSheet(
-                "color: #64748b; padding: 8px 12px; font-size: 12px; "
-                "font-style: italic; background: transparent;"
-            )
-            self._batch_placeholder.setAlignment(QtCore.Qt.AlignCenter)
-            # 插入到 stretch 之前
-            self.chat_layout.insertWidget(self.chat_layout.count() - 1,
-                                         self._batch_placeholder)
-
-            # 渲染最后 _BATCH_INITIAL 组
-            self._render_message_groups(groups, early_count, total_groups)
-
-            # 用 QTimer 分批渲染早期消息
-            self._batch_groups = groups
-            self._batch_cursor = early_count  # 从 early_count 向 0 回退
-            self._batch_insert_pos = 0  # 早期消息插入到布局头部
-            self._batch_render_timer = QtCore.QTimer(self)
-            self._batch_render_timer.setSingleShot(True)
-            self._batch_render_timer.timeout.connect(self._render_next_batch)
-            self._batch_render_timer.start(0)  # 下一帧开始
-
-    def _group_messages_into_turns(self, messages: list) -> list:
-        """将消息列表分组为逻辑轮次
-        
-        返回: list of (start_idx, end_idx) 元组
-        """
-        groups: list = []
         i = 0
+        render_errors = 0
         while i < len(messages):
-            msg = messages[i]
-            role = msg.get('role', '')
-
-            if role == 'user':
-                groups.append((i, i + 1))
-                i += 1
-            elif role == 'assistant':
-                if msg.get('tool_calls'):
-                    # 收集工具交互轮次
-                    j = i + 1
-                    while j < len(messages):
-                        m = messages[j]
-                        r = m.get('role', '')
-                        if r == 'tool':
-                            j += 1
-                        elif r == 'assistant':
-                            j += 1
-                            if not m.get('tool_calls'):
-                                break
-                        else:
-                            break
-                    groups.append((i, j))
-                    i = j
+            try:
+                msg = messages[i]
+                role = msg.get('role', '')
+                raw_content = msg.get('content', '') or ''
+                # 多模态消息的 content 可能是 list（含 text/image 部分），统一提取文本
+                if isinstance(raw_content, list):
+                    content = '\n'.join(
+                        part.get('text', '') for part in raw_content
+                        if isinstance(part, dict) and part.get('type') == 'text'
+                    )
                 else:
-                    # 普通 assistant + 后续 tool 消息
+                    content = raw_content
+
+                # ─── 用户消息 ───
+                if role == 'user':
+                    self._render_user_history(content)
+                    i += 1
+
+                # ─── 助手消息 ───
+                elif role == 'assistant':
+                    # ★ 新格式检测：assistant 带 tool_calls → Cursor 风格原生格式 ★
+                    if msg.get('tool_calls'):
+                        # 收集整个工具交互轮次
+                        # 模式：assistant(tc) → tool → [assistant(tc) → tool →] ... → assistant(reply)
+                        turn_msgs = [msg]
+                        j = i + 1
+                        while j < len(messages):
+                            m = messages[j]
+                            r = m.get('role', '')
+                            if r == 'tool':
+                                turn_msgs.append(m)
+                                j += 1
+                            elif r == 'assistant':
+                                turn_msgs.append(m)
+                                j += 1
+                                if not m.get('tool_calls'):
+                                    break  # 找到最终回复
+                            else:
+                                break
+                        self._render_native_tool_turn(turn_msgs)
+                        i = j
+                        continue
+
+                    # ─── 旧格式处理（向后兼容） ───
+                    tool_msgs = []
                     j = i + 1
                     while j < len(messages) and messages[j].get('role') == 'tool':
+                        tool_msgs.append(messages[j])
                         j += 1
-                    groups.append((i, j))
+
+                    if content.lstrip().startswith('[工具执行结果]'):
+                        self._render_tool_summary_history(content, msg)
+                    else:
+                        response = self._add_ai_response()
+                        thinking = msg.get('thinking', '')
+                        if thinking:
+                            response.add_thinking(thinking)
+                            response.thinking_section.finalize()
+                        self._render_old_tool_msgs(response, tool_msgs)
+                        self._restore_shell_widgets(response, msg)
+                        response.set_content(content)
+                        response.status_label.setText("历史")
+                        response.finalize()
+                        parts = []
+                        if thinking:
+                            parts.append("思考")
+                        if tool_msgs:
+                            parts.append(f"{len(tool_msgs)}次调用")
+                        label = f"历史 | {', '.join(parts)}" if parts else "历史"
+                        response.status_label.setText(label)
+
                     i = j
-            elif role == 'system':
-                groups.append((i, i + 1))
-                i += 1
-            else:
-                groups.append((i, i + 1))
-                i += 1
-        return groups
 
-    def _render_message_groups(self, groups: list, start: int, end: int):
-        """渲染 [start, end) 范围内的消息组"""
-        messages = self._conversation_history
-        for gi in range(start, end):
-            si, ei = groups[gi]
-            try:
-                self._render_single_group(messages, si, ei)
-            except Exception:
-                import traceback
-                traceback.print_exc()
-
-    def _render_single_group(self, messages: list, si: int, ei: int):
-        """渲染一个消息组"""
-        msg = messages[si]
-        role = msg.get('role', '')
-        raw_content = msg.get('content', '') or ''
-        if isinstance(raw_content, list):
-            content = '\n'.join(
-                part.get('text', '') for part in raw_content
-                if isinstance(part, dict) and part.get('type') == 'text'
-            )
-        else:
-            content = raw_content
-
-        if role == 'user':
-            self._render_user_history(content)
-
-        elif role == 'assistant':
-            if msg.get('tool_calls'):
-                turn_msgs = messages[si:ei]
-                self._render_native_tool_turn(turn_msgs)
-            else:
-                tool_msgs = [messages[j] for j in range(si + 1, ei)
-                             if messages[j].get('role') == 'tool']
-
-                if content.lstrip().startswith('[工具执行结果]'):
-                    self._render_tool_summary_history(content, msg)
-                else:
+                # ─── 摘要 ───
+                elif role == 'system' and '[历史对话摘要' in content:
                     response = self._add_ai_response()
-                    thinking = msg.get('thinking', '')
-                    if thinking:
-                        response.add_thinking(thinking)
-                        response.thinking_section.finalize()
-                    self._render_old_tool_msgs(response, tool_msgs)
-                    self._restore_shell_widgets(response, msg)
-                    response.set_content(content)
-                    response.status_label.setText("历史")
+                    response.add_collapsible("历史对话摘要", content)
+                    response.status_label.setText("历史摘要")
                     response.finalize()
-                    parts = []
-                    if thinking:
-                        parts.append("思考")
-                    if tool_msgs:
-                        parts.append(f"{len(tool_msgs)}次调用")
-                    label = f"历史 | {', '.join(parts)}" if parts else "历史"
-                    response.status_label.setText(label)
+                    response.status_label.setText("历史摘要")
+                    i += 1
+                else:
+                    i += 1
 
-        elif role == 'system' and '[历史对话摘要' in content:
-            response = self._add_ai_response()
-            response.add_collapsible("历史对话摘要", content)
-            response.status_label.setText("历史摘要")
-            response.finalize()
-            response.status_label.setText("历史摘要")
+            except Exception as _render_err:
+                render_errors += 1
+                if render_errors <= 3:  # 只打印前 3 个错误避免刷屏
+                    import traceback as _tb
+                    print(f"[Cache] ★ 渲染历史消息失败 (index={i}, role={messages[i].get('role', '?') if i < len(messages) else '?'}): {_render_err}")
+                    _tb.print_exc()
+                i += 1  # 跳过出错的消息，继续渲染后续消息
 
-    def _render_next_batch(self):
-        """分批渲染回调 — 渲染下一批早期消息（从后向前，插入到布局头部）"""
-        if not hasattr(self, '_batch_groups') or not self._batch_groups:
-            return
-        if self._batch_cursor <= 0:
-            # 全部渲染完毕，移除占位符
-            self._finish_batch_render()
-            return
-
-        batch_start = max(0, self._batch_cursor - self._BATCH_SIZE)
-        batch_end = self._batch_cursor
-        start_time = time.time()
-
-        # ★ 早期消息需要插入到占位符之前（即布局的第 0 个位置开始）
-        # 我们从 batch_start 到 batch_end 按顺序渲染，每个 widget 插入到
-        # 占位符位置之前（insert_pos 递增）
-        messages = self._conversation_history
-        insert_pos = self._batch_insert_pos  # 在此位置之前插入
-        rendered_count = 0
-
-        for gi in range(batch_start, batch_end):
-            si, ei = self._batch_groups[gi]
-            try:
-                widgets_before = self.chat_layout.count()
-                self._render_single_group(messages, si, ei)
-                widgets_after = self.chat_layout.count()
-                added = widgets_after - widgets_before
-
-                # 将新添加的 widget 移动到正确位置（占位符之前）
-                if added > 0:
-                    for _ in range(added):
-                        # 取出最后添加的 widget（在 stretch 之前）
-                        from_idx = self.chat_layout.count() - 2  # -1 是 stretch, -2 是新 widget
-                        item = self.chat_layout.takeAt(from_idx)
-                        if item and item.widget():
-                            self.chat_layout.insertWidget(insert_pos, item.widget())
-                            insert_pos += 1
-                    rendered_count += added
-            except Exception:
-                import traceback
-                traceback.print_exc()
-
-            # 时间预算检查
-            elapsed_ms = (time.time() - start_time) * 1000
-            if elapsed_ms > self._BATCH_BUDGET_MS and gi < batch_end - 1:
-                self._batch_cursor = gi + 1
-                self._batch_insert_pos = insert_pos
-                remaining = gi + 1
-                if hasattr(self, '_batch_placeholder') and self._batch_placeholder:
-                    try:
-                        self._batch_placeholder.setText(
-                            f"⏳ 加载历史消息 ({remaining} 轮)..."
-                        )
-                    except RuntimeError:
-                        pass
-                self._batch_render_timer.start(0)
-                return
-
-        self._batch_cursor = batch_start
-        self._batch_insert_pos = insert_pos
-
-        if self._batch_cursor > 0:
-            if hasattr(self, '_batch_placeholder') and self._batch_placeholder:
-                try:
-                    self._batch_placeholder.setText(
-                        f"⏳ 加载历史消息 ({self._batch_cursor} 轮)..."
-                    )
-                except RuntimeError:
-                    pass
-            self._batch_render_timer.start(0)
-        else:
-            self._finish_batch_render()
-
-    def _finish_batch_render(self):
-        """完成分批渲染，清理占位符"""
-        if hasattr(self, '_batch_placeholder') and self._batch_placeholder:
-            try:
-                self._batch_placeholder.setVisible(False)
-                self._batch_placeholder.deleteLater()
-            except RuntimeError:
-                pass
-            self._batch_placeholder = None
-        self._batch_groups = None
-        self._batch_render_timer = None
+        if render_errors > 0:
+            print(f"[Cache] 渲染完成，共 {render_errors} 条消息渲染失败")
 
     # ------------------------------------------------------------------
     def _replay_todo_from_tool_call(self, tool_name: str, arguments_str: str):
