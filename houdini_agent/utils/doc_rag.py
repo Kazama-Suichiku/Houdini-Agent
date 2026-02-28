@@ -206,18 +206,60 @@ class HoudiniDocIndex:
     # ==========================================================
 
     def _load_knowledge_base(self):
-        """从 Doc/ 目录加载 .txt 知识库文件，按 ## 标题分段"""
+        """从 Doc/ 目录递归加载 .txt 知识库文件，按 ## 标题分段
+
+        改进:
+        1. 递归加载子目录 Doc/**/*.txt
+        2. 知识库缓存: 将解析结果序列化到 JSON 缓存
+        3. 增量检测: 按文件修改时间判断是否需要重新解析
+        """
         if not self._doc_dir or not self._doc_dir.is_dir():
             return
 
-        txt_files = list(self._doc_dir.glob("*.txt"))
+        # 递归发现所有 .txt 文件
+        txt_files = sorted(self._doc_dir.rglob("*.txt"))
         if not txt_files:
             return
 
+        kb_cache_file = self._cache_dir / "knowledge_base_cache.json"
+
+        # 构建文件指纹 {相对路径: mtime}
+        file_fingerprints = {}
+        for txt_path in txt_files:
+            rel = txt_path.relative_to(self._doc_dir)
+            file_fingerprints[str(rel)] = txt_path.stat().st_mtime
+
+        # 尝试增量加载缓存
+        if kb_cache_file.exists():
+            try:
+                with open(kb_cache_file, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                cached_fingerprints = cache_data.get("fingerprints", {})
+                # 比较指纹: 完全一致则直接加载缓存
+                if cached_fingerprints == file_fingerprints:
+                    for chunk_data in cache_data.get("chunks", []):
+                        self.knowledge_chunks.append(KnowledgeChunk(
+                            title=chunk_data["title"],
+                            content=chunk_data["content"],
+                            source=chunk_data["source"],
+                            keywords=chunk_data["keywords"],
+                        ))
+                    print(f"[DocIndex] 知识库缓存加载: {len(self.knowledge_chunks)} 个片段 "
+                          f"(来自 {len(txt_files)} 个文件)")
+                    return
+                else:
+                    print(f"[DocIndex] 知识库文件变更，重新解析...")
+            except Exception as e:
+                print(f"[DocIndex] 知识库缓存读取失败: {e}")
+
+        # 全量解析
         for txt_path in txt_files:
             try:
                 text = txt_path.read_text(encoding="utf-8")
-                chunks = self._parse_txt_sections(text, txt_path.stem)
+                # 使用相对路径作为 source（保留子目录信息）
+                rel = txt_path.relative_to(self._doc_dir)
+                source = str(rel.with_suffix("")).replace("\\", "/")
+                chunks = self._parse_txt_sections(text, source)
                 self.knowledge_chunks.extend(chunks)
             except Exception as e:
                 print(f"[DocIndex] 读取知识库 {txt_path.name} 失败: {e}")
@@ -225,6 +267,26 @@ class HoudiniDocIndex:
         if self.knowledge_chunks:
             print(f"[DocIndex] 知识库加载: {len(self.knowledge_chunks)} 个片段 "
                   f"(来自 {len(txt_files)} 个文件)")
+
+            # 保存缓存
+            try:
+                cache_data = {
+                    "fingerprints": file_fingerprints,
+                    "chunks": [
+                        {
+                            "title": c.title,
+                            "content": c.content,
+                            "source": c.source,
+                            "keywords": c.keywords,
+                        }
+                        for c in self.knowledge_chunks
+                    ],
+                }
+                with open(kb_cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f, ensure_ascii=False, separators=(",", ":"))
+                print(f"[DocIndex] 知识库缓存已保存")
+            except Exception as e:
+                print(f"[DocIndex] 知识库缓存保存失败: {e}")
 
     @staticmethod
     def _parse_txt_sections(text: str, source: str) -> List[KnowledgeChunk]:

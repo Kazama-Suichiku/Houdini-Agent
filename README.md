@@ -2,18 +2,19 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, and a minimal dark UI.
+An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, and a modern dark UI with bilingual support.
 
-Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, and query local documentation — all within an iterative agent loop.
+Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, query local documentation, create structured execution plans, and learn from past interactions — all within an iterative agent loop.
 
 ## Core Features
 
 ### Agent Loop
 
-The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Two modes are available:
+The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Three modes are available:
 
-- **Agent mode** — Full access to all 37+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
+- **Agent mode** — Full access to all 38+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
 - **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a whitelist guard.
+- **Plan mode** — The AI enters a planning phase: it researches the current scene (read-only), clarifies requirements via `ask_question`, then generates a structured execution plan with DAG flow diagram. The user reviews and confirms before execution begins.
 
 ```
 User request → AI plans → call tools → inspect results → call more tools → … → final reply
@@ -25,6 +26,7 @@ User request → AI plans → call tools → inspect results → call more tools
 - **Extended Thinking** — native support for reasoning models (DeepSeek-R1, GLM-4.7, Claude with `<think>` tags)
 - **Stop anytime** — interrupt the running agent loop at any point
 - **Smart context management** — round-based conversation trimming that never truncates user/assistant messages, only compresses tool results
+- **Long-term memory** — brain-inspired three-layer memory system (episodic, semantic, procedural) with reward-driven learning and automatic reflection
 
 ### Supported AI Providers
 
@@ -34,7 +36,7 @@ User request → AI plans → call tools → inspect results → call more tools
 | **GLM (Zhipu AI)** | `glm-4.7` | Stable in China, native reasoning & tool calling |
 | **OpenAI** | `gpt-5.2`, `gpt-5.3-codex` | Powerful, full Function Calling & Vision support |
 | **Ollama** (local) | `qwen2.5:14b`, any local model | Privacy-first, auto-detects available models |
-| **Duojie** (relay) | `claude-sonnet-4-5`, `claude-opus-4-6-kiro`, `gemini-3-pro-image-preview`, etc. | Access to Claude & Gemini models via relay endpoint |
+| **Duojie** (relay) | `claude-sonnet-4-5`, `claude-opus-4-5-kiro`, `claude-opus-4-5-max`, `claude-opus-4-6-normal`, `claude-opus-4-6-kiro`, `claude-haiku-4-5`, `gemini-3-pro-image-preview`, `glm-4.7`, `glm-5`, `kimi-k2.5`, `MiniMax-M2.5`, `qwen3.5-plus`, `gpt-5.3-codex` | Access to Claude, Gemini, GLM, Kimi, MiniMax, Qwen models via relay endpoint |
 
 ### Vision / Image Input
 
@@ -47,18 +49,22 @@ User request → AI plans → call tools → inspect results → call more tools
 
 ### Dark UI
 
-- Minimal dark theme
+- Modern warm khaki dark theme with glassmorphism effects
 - Collapsible blocks for thinking process, tool calls, and results
 - Dedicated **Python Shell** and **System Shell** widgets with syntax highlighting
 - **Clickable node paths** — paths like `/obj/geo1/box1` in AI responses become links that navigate to the node in Houdini
 - **Node context bar** showing the currently selected Houdini node
 - **Todo list** displayed above the chat area with live status icons
 - **Token analytics** — real-time token count, reasoning tokens, cache hit rate, and per-model cost estimates (click for detailed breakdown)
+- **AuroraBar** — animated silver-white flowing gradient bar during AI generation
+- **Streaming VEX code preview** — real-time Cursor Apply-style code writing animation
 - Multi-session tabs — run multiple independent conversations
 - Copy button on AI responses
 - `Ctrl+Enter` to send messages
+- **Font scaling** — `Ctrl+=`/`Ctrl+-` to zoom, "Aa" button for slider control
+- **Bilingual UI** — Chinese/English language switching via overflow menu, with all UI elements and system prompts dynamically retranslated
 
-## Available Tools (37+)
+## Available Tools (38+)
 
 ### Node Operations
 
@@ -143,6 +149,14 @@ User request → AI plans → call tools → inspect results → call more tools
 | `add_todo` | Add a task to the Todo list |
 | `update_todo` | Update task status (pending / in_progress / done / error) |
 
+### Plan Mode
+
+| Tool | Description |
+|------|-------------|
+| `create_plan` | Create a structured execution plan with phases, steps, dependencies, risk assessment, and DAG flow diagram — displayed as an interactive card for user review and confirmation |
+| `update_plan_step` | Update the status and result summary of a plan step during execution |
+| `ask_question` | Ask the user a clarification question during the planning phase (with options and recommendations) |
+
 ## Skills System
 
 Skills are pre-optimized Python scripts that run inside the Houdini environment for reliable geometry analysis. They are preferred over hand-written `execute_python` for common tasks.
@@ -200,10 +214,14 @@ Houdini-Agent/
     │   └── session_manager.py      # SessionManagerMixin — multi-session create/switch/close
     ├── ui/
     │   ├── ai_tab.py              # AI Agent tab (Mixin host, agent loop, context management, streaming UI)
-    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics)
+    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics, plan viewer)
     │   ├── header.py              # HeaderMixin — top settings bar (provider, model, toggles)
     │   ├── input_area.py          # InputAreaMixin — input area, mode switches, @mention, confirm mode
-    │   └── chat_view.py           # ChatViewMixin — chat display, scrolling, toast messages
+    │   ├── chat_view.py           # ChatViewMixin — chat display, scrolling, toast messages
+    │   ├── i18n.py                # Internationalization — bilingual support (Chinese/English)
+    │   ├── theme_engine.py        # QSS template rendering & font-size scaling
+    │   ├── font_settings_dialog.py # Font zoom slider dialog
+    │   └── style_template.qss    # Centralized QSS theme stylesheet
     ├── skills/                     # Pre-built analysis scripts
     │   ├── __init__.py            # Skill registry & loader
     │   ├── analyze_normals.py     # Normal quality detection
@@ -221,6 +239,13 @@ Houdini-Agent/
         ├── token_optimizer.py     # Token budget & compression (tiktoken-powered)
         ├── ultra_optimizer.py     # System prompt & tool definition optimizer
         ├── training_data_exporter.py # Export conversations as training JSONL
+        ├── updater.py             # Auto-updater (GitHub Releases, ETag caching)
+        ├── plan_manager.py        # Plan mode data model & persistence
+        ├── memory_store.py        # Three-layer memory (episodic/semantic/procedural) with SQLite
+        ├── embedding.py           # Local text embedding (sentence-transformers / fallback)
+        ├── reward_engine.py       # Reward scoring & memory importance updates
+        ├── reflection.py          # Rule-based + LLM deep reflection module
+        ├── growth_tracker.py      # Growth metrics & personality trait formation
         └── mcp/                   # Houdini MCP (Model Context Protocol) layer
             ├── client.py          # Tool executor (node ops, shell, skills dispatch)
             ├── hou_core.py        # Low-level hou module wrappers
@@ -317,6 +342,30 @@ Click the "Set API Key…" button and check "Save to local config".
 
 Each Mixin accesses `AITab` state via `self`, enabling clean separation without breaking shared state.
 
+### Plan Mode
+
+Plan mode enables the AI to tackle complex tasks through a structured three-phase workflow:
+
+1. **Deep Research** — Read-only scene investigation using query tools
+2. **Clarify Requirements** — Interactive Q&A with the user via `ask_question` when ambiguity exists
+3. **Structured Plan** — Generate an engineering-grade execution plan with phases, steps, dependencies, risk assessment, and estimated operations
+
+The plan is displayed as an interactive `PlanViewer` card with a DAG flow diagram. The user can review each step's details, approve/reject the plan, and monitor execution progress. Plan data is persisted to `cache/plans/plan_{session_id}.json`.
+
+### Brain-inspired Long-term Memory System
+
+A five-module system that enables the agent to learn and improve over time:
+
+| Module | Description |
+|--------|-------------|
+| `memory_store.py` | Three-layer SQLite storage — **Episodic** (specific task experiences), **Semantic** (abstracted rules from reflection), **Procedural** (problem-solving strategies with priority) |
+| `embedding.py` | Local text embedding using `sentence-transformers/all-MiniLM-L6-v2` (384-dim) with fallback to character n-gram pseudo-vectors |
+| `reward_engine.py` | Dopamine-inspired reward scoring — success, efficiency, novelty, error penalty; drives memory importance strengthening/weakening with time decay |
+| `reflection.py` | Hybrid reflection — rule-based extraction after every task + periodic LLM deep reflection to generate semantic rules and strategy updates |
+| `growth_tracker.py` | Rolling-window metrics (error rate, success rate, tool call efficiency) + personality trait formation (efficiency bias, risk tolerance, verbosity, proactivity) |
+
+Memory is activated at query time: relevant episodic memories, semantic rules, and procedural strategies are retrieved via cosine similarity and injected into the system prompt.
+
 ### Context Management
 
 - **Native tool message chain**: `assistant(tool_calls)` → `tool(result)` messages are passed directly to the model, preserving structured information
@@ -346,6 +395,13 @@ Each Mixin accesses `AITab` state via `self`, enabling clean separation without 
 - **Parameter hints**: When `set_node_parameter` fails, the error message includes similar parameter names or a list of available parameters to help the AI self-correct
 - **Doc-check suggestions**: When node creation or parameter setting fails, the error suggests querying documentation (`search_node_types`, `get_houdini_node_doc`, `get_node_parameters`) before retrying blindly
 - **Connection retry**: Transient network errors (chunk decoding, connection drops) are automatically retried with exponential backoff
+
+### Internationalization (i18n)
+
+- **Bilingual support** — full Chinese/English interface with `tr()` translation function
+- **Dynamic switching** — change language via overflow menu → Language; all UI elements, tooltips, and system prompts update instantly
+- **Persistent preference** — language choice saved via `QSettings` and restored on startup
+- **System prompt adaptation** — AI reply language enforced via system prompt rules that adapt to the selected UI language
 
 ### Local Documentation Index
 
@@ -430,6 +486,9 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
+- **v1.2.5** — **README & Release update**: Comprehensive README overhaul — documented Plan mode (3 tools: `create_plan`, `update_plan_step`, `ask_question`; interactive PlanViewer with DAG flow diagram), brain-inspired long-term memory system (5 modules: memory store, embedding, reward engine, reflection, growth tracker), bilingual i18n system, updated tool count to 38+, expanded Duojie model list (13 models including Claude, Gemini, GLM, Kimi, MiniMax, Qwen), updated project structure with all new files, and added architecture sections for Plan Mode, Memory System, and i18n.
+- **v1.2.4** — **Modern UI: warm khaki theme & compact layout**: Visual refresh — CursorTheme palette shifted to warm khaki tones with pill-style toggles. Header and input area redesigned for compact single-line layout. Provider/model selectors, Web/Think toggles, and overflow menu consolidated into one row. Hidden buttons moved to overflow menu for cleaner appearance.
+- **v1.2.3** — **Bilingual i18n system & temperature tuning**: Full internationalization — `i18n.py` module with `tr()` function, 800+ translation entries for Chinese and English. Language toggle in overflow menu with instant UI retranslation (header, input area, session tabs, system prompts). Persistent language preference via QSettings. Temperature parameter tuning for different providers and models.
 - **v1.2.2** — **Anthropic Messages protocol adapter & Think switch**: Full Anthropic Messages API compatibility layer for Duojie models (GLM-4.7, GLM-5) — complete message format conversion (system extraction, multimodal images, tool_use/tool_result blocks, strict role alternation), tool definition conversion (OpenAI function → Anthropic input_schema), streaming SSE parser with thinking/text/tool_use delta handling, and non-streaming fallback. New `DUOJIE_ANTHROPIC_API_URL` endpoint and `_DUOJIE_ANTHROPIC_MODELS` registry for automatic protocol routing. **Think switch actually works**: `_think_enabled` flag now controls whether `<think>` block content and native `reasoning_content` are displayed — when Think toggle is off, thinking content is silently discarded instead of being shown. Applies to both XML `<think>` tag parsing and native reasoning fields (`reasoning_content`, `thinking_content`, `reasoning`). **Thinking field unification**: OpenAI protocol branch now checks 3 possible field names for thinking content across different providers. **New models**: `glm-4.7`, `glm-5` added to Duojie provider with 200K context and prompt caching support.
 - **v1.2.1** — **Streaming VEX code preview**: New Cursor Apply-style real-time code preview — when AI writes VEX code via `create_wrangle_node` or `set_node_parameter`, a `StreamingCodePreview` widget shows the code being written character-by-character before execution. Built on a new `tool_args_delta` SSE event that broadcasts tool_call argument increments during streaming. Includes partial JSON parser to extract VEX code from incomplete JSON strings. Preview auto-dismissed when tool execution completes and replaced by `ParamDiffWidget`. **AIResponse height fix**: `_auto_resize_content` now counts visual lines via `block.layout().lineCount()` instead of `doc.size().height()`, fixing stale height during streaming. **ParamDiffWidget collapse redesign**: Multi-line diffs default to collapsed with 120px preview window (QScrollArea) instead of fully hidden — users see a preview without clicking.
 - **v1.2.0** — **Glassmorphism UI overhaul**: Complete visual redesign — `CursorTheme` palette shifted from VS Code gray (`#1e1e1e`) to deep blue-black (`#0f1019`) with `rgba()` translucent borders and more vibrant accent colors. **AuroraBar**: New streaming animation widget — a 3px silver-white flowing gradient bar on the left side of AI responses during generation, freezing to faint silver on completion. **Input glow**: Sine-wave breathing border animation on the input field while AI is running. **Glass panel shadows**: `QGraphicsDropShadowEffect` on header and input panels for depth. **Agent/Ask mode dropdown**: Replaced dual-checkbox mutual exclusion with a `QComboBox` placed left of the input field, with dynamic color theming via QSS property selectors. **SimpleMarkdown color adaptation**: All inline HTML colors in headings, tables, links, lists, blockquotes updated to match the new blue-black palette. **QSS template rewrite**: 599 insertions / 500 deletions in `style_template.qss` for full theme adaptation.

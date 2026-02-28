@@ -88,6 +88,7 @@ class InputAreaMixin:
         toolbar.setContentsMargins(0, 0, 0, 0)
         
         self._agent_mode = True
+        self._plan_mode = False
         self._confirm_mode = False
         
         # + 附件弹出菜单
@@ -99,11 +100,12 @@ class InputAreaMixin:
         self.btn_attach_menu.clicked.connect(self._show_attach_menu)
         toolbar.addWidget(self.btn_attach_menu)
         
-        # Agent/Ask 模式
+        # Agent/Ask/Plan 模式
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.setObjectName("modeCombo")
         self.mode_combo.addItem("Agent")
         self.mode_combo.addItem("Ask")
+        self.mode_combo.addItem("Plan")
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setProperty("mode", "agent")
         self.mode_combo.setCursor(QtCore.Qt.PointingHandCursor)
@@ -208,9 +210,11 @@ class InputAreaMixin:
     # ---------- Agent / Ask 模式切换（下拉框）----------
 
     def _on_mode_changed(self, index: int):
-        """模式下拉框切换：0=Agent, 1=Ask"""
-        self._agent_mode = (index == 0)
-        mode = "agent" if self._agent_mode else "ask"
+        """模式下拉框切换：0=Agent, 1=Ask, 2=Plan"""
+        _MODE_MAP = {0: "agent", 1: "ask", 2: "plan"}
+        mode = _MODE_MAP.get(index, "agent")
+        self._agent_mode = (mode == "agent")
+        self._plan_mode = (mode == "plan")
         self.mode_combo.setProperty("mode", mode)
         self.mode_combo.style().unpolish(self.mode_combo)
         self.mode_combo.style().polish(self.mode_combo)
@@ -267,6 +271,20 @@ class InputAreaMixin:
         """隐藏工具状态"""
         try:
             self.thinking_bar.hide_tool()
+        except RuntimeError:
+            pass
+
+    def _on_show_generating(self):
+        """显示 Generating... 状态（API 请求等待中）"""
+        try:
+            self.thinking_bar.show_generating()
+        except RuntimeError:
+            pass
+
+    def _on_show_planning(self, progress: str):
+        """显示 Planning... 进度（Plan 模式正在生成计划时）"""
+        try:
+            self.thinking_bar.show_planning(progress)
         except RuntimeError:
             pass
 

@@ -100,7 +100,12 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'gemini-3-pro-image-preview': {'input': 1.25, 'input_cache': 0.30, 'output': 10.00},
     # ---- GLM (智谱清言) ----
     'glm-4.7':              {'input': 0.50,  'input_cache': 0.50,  'output': 0.50},
+    # ---- Kimi ----
+    'kimi-k2.5':            {'input': 2.00,  'input_cache': 0.50,  'output': 8.00},
+    # ---- MiniMax ----
+    'MiniMax-M2.5':         {'input': 1.00,  'input_cache': 0.25,  'output': 4.00},
     # ---- Qwen ----
+    'qwen3.5-plus':         {'input': 0.80,  'input_cache': 0.20,  'output': 2.00},
     'qwen-plus':            {'input': 0.80,  'input_cache': 0.20,  'output': 2.00},
     'qwen-max':             {'input': 2.00,  'input_cache': 0.50,  'output': 6.00},
     'qwen-turbo':           {'input': 0.30,  'input_cache': 0.05,  'output': 0.60},

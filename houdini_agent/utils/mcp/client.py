@@ -1987,12 +1987,20 @@ class HoudiniMCP:
     # ========================================
     
     @staticmethod
-    def _snapshot_node(node) -> Optional[Dict[str, Any]]:
+    def _snapshot_node(node, _depth: int = 0) -> Optional[Dict[str, Any]]:
         """在删除前快照节点状态（用于撤销重建）
         
+        ★ 递归快照：自动保存所有子节点树，确保删除父节点后可完整恢复。
+        
+        Args:
+            node: 要快照的 Houdini 节点
+            _depth: 递归深度（内部使用，防止无限递归）
+        
         Returns:
-            快照字典，包含重建节点所需的全部信息；失败返回 None
+            快照字典，包含重建节点及其完整子树所需的全部信息；失败返回 None
         """
+        if _depth > 20:  # 防止极端嵌套导致栈溢出
+            return None
         try:
             node_type = node.type()
             parent = node.parent()
@@ -2071,6 +2079,46 @@ class HoudiniMCP:
             except Exception:
                 snapshot["display_flag"] = False
                 snapshot["render_flag"] = False
+            
+            # ★ 递归快照子节点树 — 确保删除父节点后可完整恢复子节点
+            children_snapshots = []
+            try:
+                children = node.children()
+                if children:
+                    for child in children:
+                        try:
+                            child_snap = HoudiniMCP._snapshot_node(child, _depth + 1)
+                            if child_snap:
+                                children_snapshots.append(child_snap)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            if children_snapshots:
+                snapshot["children"] = children_snapshots
+            
+            # ★ 快照子节点间的内部连接（兄弟节点之间的连线）
+            # 外部连接已在各子节点的 input_connections / output_connections 中记录，
+            # 但恢复时子节点是逐个创建的，内部连接需要在所有子节点创建完毕后单独恢复。
+            internal_connections = []
+            try:
+                if children:
+                    child_paths = set(c.path() for c in children)
+                    for child in children:
+                        try:
+                            for i, inp in enumerate(child.inputs()):
+                                if inp is not None and inp.path() in child_paths:
+                                    internal_connections.append({
+                                        "src_name": inp.name(),
+                                        "dest_name": child.name(),
+                                        "dest_input": i,
+                                    })
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            if internal_connections:
+                snapshot["internal_connections"] = internal_connections
             
             return snapshot
         except Exception:

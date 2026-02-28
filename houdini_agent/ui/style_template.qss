@@ -965,6 +965,14 @@ QComboBox#modeCombo[mode="ask"]:hover {
     background: rgba(180,160,130,8);
     color: #c0dcc4;
 }
+/* Plan = warm purple */
+QComboBox#modeCombo[mode="plan"] {
+    color: #a78bfa;
+}
+QComboBox#modeCombo[mode="plan"]:hover {
+    background: rgba(167,139,250,8);
+    color: #c4b5fd;
+}
 
 /* + Attach menu button */
 QPushButton#btnAttach {
@@ -1054,6 +1062,15 @@ QPushButton#btnSend[mode="ask"] {
 QPushButton#btnSend[mode="ask"]:hover {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #b8d8bc, stop:1 #a3c9a8);
+}
+QPushButton#btnSend[mode="plan"] {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #a78bfa, stop:1 #8b6fe0);
+    color: #1a1a18;
+}
+QPushButton#btnSend[mode="plan"]:hover {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #c4b5fd, stop:1 #a78bfa);
 }
 
 /* Stop button — warm red pill */
@@ -1166,6 +1183,311 @@ QLabel#planStep[state="pending"] { color: #64748b; }
 QLabel#planStep[state="running"] { color: #3b82f6; }
 QLabel#planStep[state="done"]    { color: #10b981; }
 QLabel#planStep[state="error"]   { color: #ef4444; }
+
+
+/* ============================================================
+   18b. PLAN VIEWER CARD (Plan 模式交互卡片)
+   ============================================================ */
+
+QFrame#planViewerCard {
+    background: rgba(16,18,36,160);
+    border: 1px solid rgba(167,139,250,40);
+    border-radius: 12px;
+}
+QLabel#planViewerTitle {
+    color: #c4b5fd;
+    font-size: {FS_XL}px;
+    font-weight: bold;
+}
+QLabel#planOverview {
+    color: #94a3b8;
+    font-size: {FS_BASE}px;
+    padding: 2px 0;
+}
+QFrame#planSeparator {
+    background: rgba(167,139,250,20);
+    max-height: 1px;
+    border: none;
+}
+QLabel#planSectionHeader {
+    color: #a78bfa;
+    font-size: {FS_SM}px;
+    font-weight: bold;
+    padding: 2px 0;
+}
+QLabel#planStepIcon {
+    font-size: {FS_BASE}px;
+}
+QLabel#planStepIcon[state="pending"] { color: #64748b; }
+QLabel#planStepIcon[state="running"] { color: #3b82f6; }
+QLabel#planStepIcon[state="done"]    { color: #10b981; }
+QLabel#planStepIcon[state="error"]   { color: #ef4444; }
+QLabel#planStepId {
+    color: #64748b;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#planStepDesc {
+    color: #e2e8f0;
+    font-size: {FS_BASE}px;
+}
+QLabel#planStepDep {
+    color: #475569;
+    font-size: {FS_SM}px;
+    font-style: italic;
+}
+QPushButton#planDAGToggle {
+    background: transparent;
+    color: #64748b;
+    border: none;
+    font-size: {FS_SM}px;
+    padding: 0 4px;
+}
+QPushButton#planDAGToggle:hover {
+    color: #a78bfa;
+}
+QWidget#planDAG {
+    background: #0d0f1a;
+    border-radius: 8px;
+}
+QScrollArea#planDAGScroll {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+}
+QScrollArea#planDAGScroll QScrollBar:horizontal {
+    height: 6px;
+    background: rgba(100,116,139,15);
+    border: none;
+    border-radius: 3px;
+}
+QScrollArea#planDAGScroll QScrollBar::handle:horizontal {
+    background: rgba(167,139,250,60);
+    border-radius: 3px;
+    min-width: 30px;
+}
+QScrollArea#planDAGScroll QScrollBar::handle:horizontal:hover {
+    background: rgba(167,139,250,100);
+}
+QScrollArea#planDAGScroll QScrollBar::add-line:horizontal,
+QScrollArea#planDAGScroll QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: none;
+}
+QProgressBar#planProgress {
+    background: rgba(100,116,139,30);
+    border: none;
+    border-radius: 4px;
+}
+QProgressBar#planProgress::chunk {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #a78bfa, stop:1 #8b6fe0);
+    border-radius: 4px;
+}
+QPushButton#planBtnConfirm {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #a78bfa, stop:1 #8b6fe0);
+    color: #1a1a18;
+    border: none;
+    border-radius: 6px;
+    font-size: {FS_BASE}px;
+    font-weight: bold;
+    padding: 4px 16px;
+}
+QPushButton#planBtnConfirm:hover {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #c4b5fd, stop:1 #a78bfa);
+}
+QPushButton#planBtnConfirm:disabled {
+    background: rgba(167,139,250,30);
+    color: #64748b;
+}
+QPushButton#planBtnReject {
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(148,163,184,40);
+    border-radius: 6px;
+    font-size: {FS_BASE}px;
+    padding: 4px 16px;
+}
+QPushButton#planBtnReject:hover {
+    background: rgba(239,68,68,15);
+    color: #ef4444;
+    border-color: rgba(239,68,68,40);
+}
+QPushButton#planBtnReject:disabled {
+    background: transparent;
+    color: #475569;
+    border-color: rgba(71,85,105,20);
+}
+QLabel#planStatusBadge {
+    font-size: {FS_XS}px;
+    font-weight: bold;
+}
+
+/* Plan 模式增强步骤样式 */
+QLabel#planMetaInfo {
+    color: #94a3b8;
+    font-size: {FS_SM}px;
+    padding: 2px 0;
+}
+QLabel#planPhaseHeader {
+    color: #c4b5fd;
+    font-size: {FS_BASE}px;
+    font-weight: bold;
+    padding: 4px 0 2px 0;
+}
+QFrame#planPhaseSeparator {
+    background: rgba(167,139,250,30);
+    max-height: 1px;
+    border: none;
+    margin-top: 4px;
+}
+QLabel#planStepTitle {
+    color: #e2e8f0;
+    font-size: {FS_BASE}px;
+    font-weight: 600;
+}
+QLabel#planStepRisk {
+    font-size: {FS_XS}px;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+QLabel#planStepRisk[risk="medium"] {
+    color: #f59e0b;
+    background: rgba(245,158,11,15);
+    border: 1px solid rgba(245,158,11,30);
+}
+QLabel#planStepRisk[risk="high"] {
+    color: #ef4444;
+    background: rgba(239,68,68,15);
+    border: 1px solid rgba(239,68,68,30);
+}
+QWidget#planStepDetail {
+    background: transparent;
+    padding: 0 0 2px 0;
+}
+QLabel#planSubStep {
+    color: #94a3b8;
+    font-size: {FS_SM}px;
+    padding: 0 0 0 4px;
+}
+QLabel#planStepTools {
+    color: #64748b;
+    font-size: {FS_SM}px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+QLabel#planStepExpected {
+    color: #10b981;
+    font-size: {FS_SM}px;
+}
+QLabel#planStepFallback {
+    color: #f59e0b;
+    font-size: {FS_SM}px;
+    font-style: italic;
+}
+QLabel#planStepNotes {
+    color: #64748b;
+    font-size: {FS_SM}px;
+    font-style: italic;
+}
+
+
+/* ============================================================
+   18c. ASK QUESTION CARD (Plan 规划阶段提问卡片)
+   ============================================================ */
+
+QFrame#askQuestionCard {
+    background: rgba(16,18,36,160);
+    border: 1px solid rgba(59,130,246,40);
+    border-radius: 12px;
+    margin: 4px 0;
+}
+QLabel#askQuestionTitle {
+    color: #93c5fd;
+    font-size: {FS_LG}px;
+    font-weight: bold;
+}
+QFrame#askQuestionSep {
+    background: rgba(59,130,246,20);
+    max-height: 1px;
+    border: none;
+}
+QLabel#askQuestionPrompt {
+    color: #e2e8f0;
+    font-size: {FS_BASE}px;
+    font-weight: 600;
+    padding: 2px 0;
+}
+QRadioButton#askQuestionOption,
+QCheckBox#askQuestionOption {
+    color: #cbd5e1;
+    font-size: {FS_BASE}px;
+    spacing: 6px;
+    padding: 2px 0 2px 8px;
+}
+QRadioButton#askQuestionOption::indicator,
+QCheckBox#askQuestionOption::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #64748b;
+    border-radius: 3px;
+    background: rgba(30,32,55,120);
+}
+QRadioButton#askQuestionOption::indicator {
+    border-radius: 7px;
+}
+QRadioButton#askQuestionOption::indicator:checked,
+QCheckBox#askQuestionOption::indicator:checked {
+    background: #3b82f6;
+    border-color: #60a5fa;
+}
+QLineEdit#askQuestionFreeText {
+    background: rgba(30,32,55,120);
+    color: #e2e8f0;
+    border: 1px solid rgba(59,130,246,30);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: {FS_BASE}px;
+    margin-left: 8px;
+}
+QLineEdit#askQuestionFreeText:focus {
+    border-color: rgba(59,130,246,60);
+}
+QPushButton#askQuestionBtnSubmit {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #3b82f6, stop:1 #2563eb);
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    font-size: {FS_BASE}px;
+    padding: 4px 16px;
+    font-weight: bold;
+}
+QPushButton#askQuestionBtnSubmit:hover {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #60a5fa, stop:1 #3b82f6);
+}
+QPushButton#askQuestionBtnSubmit:disabled {
+    background: rgba(59,130,246,30);
+    color: #64748b;
+}
+QPushButton#askQuestionBtnCancel {
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(148,163,184,40);
+    border-radius: 6px;
+    font-size: {FS_BASE}px;
+    padding: 4px 12px;
+}
+QPushButton#askQuestionBtnCancel:hover {
+    background: rgba(100,116,139,15);
+    color: #cbd5e1;
+}
+QPushButton#askQuestionBtnCancel:disabled {
+    color: #475569;
+    border-color: rgba(71,85,105,20);
+}
 
 
 /* ============================================================

@@ -2,18 +2,19 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-基于 AI 的 SideFX Houdini 智能助手，支持自主多轮工具调用、联网搜索、VEX/Python 代码执行，配备极简深色 UI。
+基于 AI 的 SideFX Houdini 智能助手，支持自主多轮工具调用、联网搜索、VEX/Python 代码执行、Plan 模式规划复杂任务、大脑启发式长期记忆系统，配备现代深色 UI 与双语支持。
 
-基于 **OpenAI Function Calling** 协议，Agent 可以读取节点网络、创建/修改/连接节点、编写 VEX Wrangle、执行系统命令、联网搜索、查询本地文档 —— 全部在自主循环中迭代完成。
+基于 **OpenAI Function Calling** 协议，Agent 可以读取节点网络、创建/修改/连接节点、编写 VEX Wrangle、执行系统命令、联网搜索、查询本地文档、创建结构化执行计划、从历史交互中持续学习 —— 全部在自主循环中迭代完成。
 
 ## 核心特性
 
 ### Agent 循环
 
-AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → 调用工具 → 检查结果 → 继续调用 → 直到任务完成。提供两种模式：
+AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → 调用工具 → 检查结果 → 继续调用 → 直到任务完成。提供三种模式：
 
 - **Agent 模式** — 完整权限，AI 可以创建、修改、连接、删除节点，设置参数，执行脚本，保存场景。
 - **Ask 模式** — 只读模式，AI 只能查询场景结构、检查参数、搜索文档和提供分析。所有修改类工具被白名单守卫拦截。
+- **Plan 模式** — AI 进入规划阶段：只读调研当前场景，通过 `ask_question` 澄清需求，然后生成带 DAG 流程图的结构化执行计划。用户审核确认后方可执行。
 
 ```
 用户请求 → AI 规划 → 调用工具 → 检查结果 → 调用更多工具 → … → 最终回复
@@ -25,6 +26,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **深度思考** — 原生支持推理模型（DeepSeek-R1、GLM-4.7、Claude `<think>` 标签）
 - **随时中断** — 可在任意时刻停止正在运行的 Agent 循环
 - **智能上下文管理** — 按轮次裁剪对话，永不截断用户/助手消息，仅压缩工具结果
+- **长期记忆** — 大脑启发式三层记忆系统（事件记忆、抽象知识、策略记忆），基于奖励驱动的学习与自动反思
 
 ### 支持的 AI 提供商
 
@@ -34,7 +36,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | **智谱 GLM** | `glm-4.7` | 国内访问稳定，原生推理与工具调用 |
 | **OpenAI** | `gpt-5.2`、`gpt-5.3-codex` | 能力强大，完整 Function Calling 与 Vision 支持 |
 | **Ollama**（本地） | `qwen2.5:14b`、任意本地模型 | 隐私优先，自动检测可用模型 |
-| **拼好饭**（中转） | `claude-sonnet-4-5`、`claude-opus-4-6-kiro`、`gemini-3-pro-image-preview` 等 | 通过中转接口访问 Claude 和 Gemini 模型 |
+| **拼好饭**（中转） | `claude-sonnet-4-5`、`claude-opus-4-5-kiro`、`claude-opus-4-5-max`、`claude-opus-4-6-normal`、`claude-opus-4-6-kiro`、`claude-haiku-4-5`、`gemini-3-pro-image-preview`、`glm-4.7`、`glm-5`、`kimi-k2.5`、`MiniMax-M2.5`、`qwen3.5-plus`、`gpt-5.3-codex` | 通过中转接口访问 Claude、Gemini、GLM、Kimi、MiniMax、Qwen 模型 |
 
 ### 图片/多模态输入
 
@@ -47,18 +49,22 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 
 ### 深色 UI
 
-- 极简深色主题
+- 现代暖色调深色主题，Glassmorphism 玻璃态效果
 - 思考过程、工具调用、执行结果均可折叠/展开
 - 内置 **Python Shell** 和 **系统 Shell** 组件，支持语法高亮
 - **可点击节点路径** — 回复中的 `/obj/geo1/box1` 等路径自动变为链接，点击即可跳转到对应节点
 - **节点上下文栏**：实时显示当前选中的 Houdini 节点
 - **Todo 列表**：显示在对话区域上方，带实时状态图标
 - **Token 分析** — 实时显示 Token 用量、推理 Token、Cache 命中率和按模型计费的费用估算（点击查看详细分析面板）
+- **AuroraBar 流光条** — AI 生成时左侧银白流动渐变光带
+- **流式 VEX 代码预览** — 类似 Cursor Apply 的实时代码书写动画
 - 多会话标签页 — 同时运行多个独立对话
 - AI 回复一键复制
 - `Ctrl+Enter` 发送消息
+- **字号缩放** — `Ctrl+=`/`Ctrl+-` 放大缩小，"Aa" 按钮滑块控制
+- **双语 UI** — 通过溢出菜单切换中文/英文界面，所有 UI 元素和系统提示词动态重译
 
-## 可用工具（35+）
+## 可用工具（38+）
 
 ### 节点操作
 
@@ -143,6 +149,14 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | `add_todo` | 添加任务到 Todo 列表 |
 | `update_todo` | 更新任务状态（pending / in_progress / done / error） |
 
+### Plan 模式
+
+| 工具 | 说明 |
+|------|------|
+| `create_plan` | 创建结构化执行计划，包含阶段、步骤、依赖关系、风险评估和 DAG 流程图 — 以交互式卡片展示，供用户审核确认 |
+| `update_plan_step` | 执行过程中更新计划步骤的状态和结果摘要 |
+| `ask_question` | 在规划阶段向用户提出澄清问题（附带选项和推荐方案） |
+
 ## Skill 系统
 
 Skill 是预优化的 Python 脚本，在 Houdini 环境中运行，用于可靠的几何体分析。涉及几何分析时优先使用 Skill，而非手写 `execute_python`。
@@ -200,10 +214,14 @@ Houdini-Agent/
     │   └── session_manager.py      # SessionManagerMixin — 多会话创建/切换/关闭
     ├── ui/
     │   ├── ai_tab.py              # AI Agent 标签页（Mixin 宿主、Agent 循环、上下文管理、流式 UI）
-    │   ├── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板）
+    │   ├── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析面板、Plan 查看器）
     │   ├── header.py              # HeaderMixin — 顶部设置栏（提供商、模型、功能开关）
     │   ├── input_area.py          # InputAreaMixin — 输入区域、模式切换、@提及、确认模式
-    │   └── chat_view.py           # ChatViewMixin — 对话显示、滚动控制、Toast 消息
+    │   ├── chat_view.py           # ChatViewMixin — 对话显示、滚动控制、Toast 消息
+    │   ├── i18n.py                # 国际化 — 中英双语支持
+    │   ├── theme_engine.py        # QSS 模板渲染与字号缩放引擎
+    │   ├── font_settings_dialog.py # 字号缩放滑块对话框
+    │   └── style_template.qss    # 集中式 QSS 主题样式表
     ├── skills/                     # 预构建分析脚本
     │   ├── __init__.py            # Skill 注册表与加载器
     │   ├── analyze_normals.py     # 法线质量检测
@@ -221,6 +239,13 @@ Houdini-Agent/
         ├── token_optimizer.py     # Token 预算与压缩策略（tiktoken 精准计数）
         ├── ultra_optimizer.py     # 系统提示词与工具定义优化器
         ├── training_data_exporter.py # 对话导出为训练数据 JSONL
+        ├── updater.py             # 自动更新器（GitHub Releases、ETag 缓存）
+        ├── plan_manager.py        # Plan 模式数据模型与持久化
+        ├── memory_store.py        # 三层记忆存储（事件/抽象/策略）SQLite
+        ├── embedding.py           # 本地文本 Embedding（sentence-transformers / 回退方案）
+        ├── reward_engine.py       # 奖励评分与记忆重要度更新
+        ├── reflection.py          # 规则反思 + LLM 深度反思模块
+        ├── growth_tracker.py      # 成长追踪与个性特征形成
         └── mcp/                   # Houdini MCP 层
             ├── client.py          # 工具执行器（节点操作、Shell、Skill 分发）
             ├── hou_core.py        # 底层 hou 模块封装
@@ -317,6 +342,30 @@ launcher.show_tool()
 
 每个 Mixin 通过 `self` 访问 `AITab` 状态，实现职责分离同时共享状态。
 
+### Plan 模式
+
+Plan 模式使 AI 能够通过结构化的三阶段工作流处理复杂任务：
+
+1. **深度调研** — 使用只读查询工具调查当前场景
+2. **需求澄清** — 发现歧义时通过 `ask_question` 与用户交互确认
+3. **结构化规划** — 生成工程级执行计划，包含阶段划分、步骤、依赖关系、风险评估和预估操作量
+
+计划以交互式 `PlanViewer` 卡片显示，附带 DAG 流程图。用户可以查看每个步骤的详情、批准/拒绝计划，并监控执行进度。计划数据持久化到 `cache/plans/plan_{session_id}.json`。
+
+### 大脑启发式长期记忆系统
+
+五个模块组成的系统，使 Agent 能够持续学习和改进：
+
+| 模块 | 说明 |
+|------|------|
+| `memory_store.py` | 三层 SQLite 存储 — **事件记忆**（具体任务经历）、**抽象知识**（反思生成的经验规则）、**策略记忆**（解决问题的套路，带优先级） |
+| `embedding.py` | 本地文本向量化，使用 `sentence-transformers/all-MiniLM-L6-v2`（384维），回退方案为字符 n-gram 伪向量 |
+| `reward_engine.py` | 类多巴胺奖励评分 — 成功度、效率、新颖度、错误惩罚；驱动记忆重要度的强化/衰减，附带时间衰减 |
+| `reflection.py` | 混合反思 — 每次任务后规则提取 + 定期 LLM 深度反思生成抽象规则和策略更新 |
+| `growth_tracker.py` | 滚动窗口指标（错误率、成功率、工具调用效率趋势）+ 个性特征形成（效率偏好、风险容忍度、回复详细度、主动性） |
+
+查询时自动激活记忆：通过余弦相似度检索相关的事件记忆、抽象规则和策略记忆，注入到系统提示词中。
+
 ### 上下文管理
 
 - **原生工具消息链**：`assistant(tool_calls)` → `tool(result)` 消息直接传递给模型，保留结构化信息
@@ -346,6 +395,13 @@ launcher.show_tool()
 - **参数纠错提示**：`set_node_parameter` 失败时，错误信息会列出相似的参数名或全部可用参数，帮助 AI 自我纠正
 - **文档查阅建议**：节点创建或参数设置失败时，建议先查询文档（`search_node_types`、`get_houdini_node_doc`、`get_node_parameters`）再重试
 - **连接重试**：网络瞬态错误（分块解码失败、连接中断等）自动指数退避重试
+
+### 国际化（i18n）
+
+- **双语支持** — 完整的中英文界面，`tr()` 翻译函数
+- **动态切换** — 通过溢出菜单 → Language 切换语言；所有 UI 元素、工具提示和系统提示词即时更新
+- **持久化偏好** — 语言选择通过 `QSettings` 保存，启动时自动恢复
+- **系统提示词适配** — AI 回复语言通过系统提示词规则强制，随 UI 语言自动调整
 
 ### 本地文档索引
 
@@ -430,6 +486,9 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **v1.2.5** — **README 与 Release 更新**：全面更新 README — 记录 Plan 模式（3 个工具：`create_plan`、`update_plan_step`、`ask_question`；交互式 PlanViewer 带 DAG 流程图）、大脑启发式长期记忆系统（5 个模块：记忆存储、Embedding、奖励引擎、反思模块、成长追踪器）、双语 i18n 系统，工具总数更新至 38+，扩展拼好饭模型列表（13 个模型覆盖 Claude、Gemini、GLM、Kimi、MiniMax、Qwen），更新项目结构含所有新文件，新增 Plan 模式、记忆系统和国际化架构章节。
+- **v1.2.4** — **现代 UI：暖色调主题与紧凑布局**：视觉刷新 — CursorTheme 调色板转向暖卡其色调，药丸式开关样式。Header 和输入区域重新设计为紧凑单行布局。Provider/模型选择器、Web/Think 开关和溢出菜单合并为一行。隐藏按钮移入溢出菜单使界面更清爽。
+- **v1.2.3** — **双语 i18n 系统与温度调优**：完整国际化 — `i18n.py` 模块含 `tr()` 函数，800+ 条中英文翻译。溢出菜单中语言切换，即时重译 UI（Header、输入区域、会话标签、系统提示词）。语言偏好通过 QSettings 持久化。针对不同提供商和模型的 Temperature 参数调优。
 - **v1.2.2** — **Anthropic Messages 协议适配层与 Think 开关生效**：为 Duojie 的 GLM-4.7、GLM-5 模型新增完整 Anthropic Messages API 兼容层 — 消息格式转换（system 提取、多模态图片转换、tool_use/tool_result 块、严格角色交替）、工具定义转换（OpenAI function → Anthropic input_schema）、流式 SSE 解析器（支持 thinking/text/tool_use delta）、非流式回退。新增 `DUOJIE_ANTHROPIC_API_URL` 端点和 `_DUOJIE_ANTHROPIC_MODELS` 注册表实现自动协议路由。**Think 开关真正生效**：`_think_enabled` 标志控制 `<think>` 块内容和原生 `reasoning_content` 是否显示 — 关闭 Think 时静默丢弃思考内容，不再显示。适用于 XML `<think>` 标签解析和原生推理字段（`reasoning_content`、`thinking_content`、`reasoning`）。**思考字段统一**：OpenAI 协议分支现在检查 3 种可能的思考内容字段名，兼容不同提供商。**新增模型**：`glm-4.7`、`glm-5` 加入 Duojie 提供商，200K 上下文，支持提示缓存。
 - **v1.2.1** — **流式 VEX 代码预览**：新增类似 Cursor Apply 的实时代码书写预览 — AI 通过 `create_wrangle_node` 或 `set_node_parameter` 写入 VEX 代码时，`StreamingCodePreview` 组件逐字符显示代码书写过程。基于新增的 `tool_args_delta` SSE 事件，在流式输出期间广播 tool_call 参数增量。包含不完整 JSON 解析器从部分 JSON 中提取 VEX 代码字段。工具执行完成后预览自动消失，由 `ParamDiffWidget` 接替。**AIResponse 高度修复**：`_auto_resize_content` 改用 `block.layout().lineCount()` 统计真实视觉行数，修复流式追加时高度不准问题。**ParamDiffWidget 折叠重设计**：多行 diff 默认折叠但露出 120px 预览窗口（QScrollArea），而非完全隐藏。
 - **v1.2.0** — **Glassmorphism UI 全面升级**：完整视觉重设计 — `CursorTheme` 调色板从 VS Code 灰色系（`#1e1e1e`）升级为深邃蓝黑系（`#0f1019`），边框改用 `rgba()` 半透明，强调色更鲜艳。**AuroraBar 流光边框**：AI 回复期间左侧显示 3px 银白流动渐变光带，完成后凝固为极淡银灰。**输入框呼吸光晕**：AI 运行期间正弦波驱动输入框边框银灰⇌亮白呼吸效果。**玻璃面板投影**：Header 和 Input 面板添加 `QGraphicsDropShadowEffect` 柔和阴影增加层次感。**Agent/Ask 模式下拉框**：原双 CheckBox 互斥切换改为 `QComboBox`，放在输入框左侧，通过 QSS 属性选择器动态着色。**SimpleMarkdown 颜色适配**：标题、表格、链接、列表、引用块中所有内联 HTML 颜色更新为新蓝黑系。**QSS 模板大幅重写**：`style_template.qss` 599 行插入 / 500 行删除，全面适配新主题。

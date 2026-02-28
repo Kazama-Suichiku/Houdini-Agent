@@ -36,6 +36,9 @@ from .cursor_widgets import (
     UserMessage,
     AIResponse,
     PlanBlock,
+    PlanViewer,
+    StreamingPlanCard,
+    AskQuestionCard,
     CollapsibleContent,
     StatusLine,
     ChatInput,
@@ -59,6 +62,15 @@ from .input_area import InputAreaMixin
 from .chat_view import ChatViewMixin
 from ..core.agent_runner import AgentRunnerMixin
 from ..core.session_manager import SessionManagerMixin
+
+# ★ 大脑启发式长期记忆系统
+from ..utils.memory_store import get_memory_store
+from ..utils.reward_engine import get_reward_engine
+from ..utils.reflection import get_reflection_module
+from ..utils.growth_tracker import get_growth_tracker, TaskMetric
+
+# ★ Plan 模式
+from ..utils.plan_manager import get_plan_manager, PLAN_TOOL_CREATE, PLAN_TOOL_UPDATE_STEP, PLAN_TOOL_ASK_QUESTION
 
 
 class AITab(
@@ -88,10 +100,17 @@ class AITab(
     _resumeThinkingSignal = QtCore.Signal()    # 恢复思考区块（线程安全）
     _showToolStatus = QtCore.Signal(str)       # 显示工具执行状态（线程安全）
     _hideToolStatus = QtCore.Signal()          # 隐藏工具执行状态
+    _showGenerating = QtCore.Signal()          # 显示 "Generating..." 状态（线程安全）
     _autoTitleDone = QtCore.Signal(str, str)   # 自动标题生成完成: (session_id, title)
     _confirmToolRequest = QtCore.Signal()  # 确认模式：请求确认（参数通过属性传递，避免 QueuedConnection dict 问题）
     _confirmToolResult = QtCore.Signal(bool)        # 确认模式：结果 (True=执行, False=取消)
     _toolArgsDelta = QtCore.Signal(str, str, str)   # 流式 VEX 预览: (tool_name, delta, accumulated)
+    _showPlanning = QtCore.Signal(str)              # 显示 "Planning..." 进度 (progress_text)
+    _createStreamingPlan = QtCore.Signal()           # 创建流式 Plan 预览卡片
+    _updateStreamingPlan = QtCore.Signal(str)        # 更新流式 Plan 预览卡片内容 (accumulated_json)
+    _renderPlanViewer = QtCore.Signal(dict)          # Plan 模式：在主线程渲染 PlanViewer 卡片
+    _updatePlanStep = QtCore.Signal(str, str, str)   # Plan 模式：更新步骤状态 (step_id, status, result_summary)
+    _askQuestionRequest = QtCore.Signal()             # Plan 模式：ask_question 请求（参数通过属性传递）
     
     def __init__(self, parent=None, workspace_dir: Optional[Path] = None):
         super().__init__(parent)
@@ -142,6 +161,20 @@ class AITab(
         self.token_optimizer = TokenOptimizer()
         self._auto_optimize = True  # 自动优化
         self._optimization_strategy = CompressionStrategy.BALANCED
+        
+        # ★ Plan 模式状态
+        self._plan_phase = 'idle'          # idle | planning | awaiting_confirmation | executing | completed
+        self._active_plan_viewer = None    # 当前活跃的 PlanViewer 组件引用
+        self._streaming_plan_card = None   # 流式 Plan 预览卡片（生成中临时使用）
+        self._plan_manager = None          # PlanManager 实例（延迟初始化）
+        
+        # ★ 大脑启发式长期记忆系统（延迟初始化，避免阻塞 UI）
+        self._memory_store = None
+        self._reward_engine = None
+        self._reflection_module = None
+        self._growth_tracker = None
+        self._memory_initialized = False
+        self._init_memory_system()
         
         # 思考长度限制（已禁用，允许完整思考）
         self._max_thinking_length = float('inf')  # 不限制思考长度
@@ -195,9 +228,16 @@ class AITab(
         self._resumeThinkingSignal.connect(self._resume_thinking_main_thread)
         self._showToolStatus.connect(self._on_show_tool_status)
         self._hideToolStatus.connect(self._on_hide_tool_status)
+        self._showGenerating.connect(self._on_show_generating)
         self._autoTitleDone.connect(self._on_auto_title_done)
         self._confirmToolRequest.connect(self._on_confirm_tool_request, QtCore.Qt.QueuedConnection)
         self._toolArgsDelta.connect(self._on_tool_args_delta)
+        self._showPlanning.connect(self._on_show_planning)
+        self._createStreamingPlan.connect(self._on_create_streaming_plan, QtCore.Qt.QueuedConnection)
+        self._updateStreamingPlan.connect(self._on_update_streaming_plan)
+        self._renderPlanViewer.connect(self._on_render_plan_viewer, QtCore.Qt.QueuedConnection)
+        self._updatePlanStep.connect(self._on_update_plan_step, QtCore.Qt.QueuedConnection)
+        self._askQuestionRequest.connect(self._on_render_ask_question, QtCore.Qt.QueuedConnection)
         
         # ── 流式 VEX 预览状态 ──
         self._streaming_preview = None          # 当前的 StreamingCodePreview widget
@@ -221,6 +261,9 @@ class AITab(
         self._load_model_preference(restore_provider=True)  # 恢复上次使用的提供商和模型
         self._update_key_status()
         self._update_context_stats()
+        
+        # ★ 启动时自动恢复上次的会话（从 sessions_manifest.json）
+        self._restore_all_sessions()
         
         # 定期自动保存（每 60 秒），防止 Houdini 退出时丢失会话
         self._auto_save_timer = QtCore.QTimer(self)
@@ -265,6 +308,209 @@ class AITab(
         # 会话标签栏
         self._retranslate_session_tabs()
         print(f"[i18n] UI retranslated for language: {_lang or get_language()}")
+
+    # ==========================================================
+    # ★ 大脑启发式长期记忆系统
+    # ==========================================================
+
+    def _init_memory_system(self):
+        """初始化长期记忆系统（后台线程，不阻塞 UI）"""
+        def _init():
+            try:
+                self._memory_store = get_memory_store()
+                self._reward_engine = get_reward_engine()
+                self._reflection_module = get_reflection_module()
+                self._growth_tracker = get_growth_tracker()
+                self._memory_initialized = True
+                print(f"[Memory] 长期记忆系统已初始化: {self._memory_store.get_stats()}")
+            except Exception as e:
+                print(f"[Memory] 初始化失败 (非致命): {e}")
+                self._memory_initialized = False
+
+        thread = threading.Thread(target=_init, daemon=True)
+        thread.start()
+
+    def _activate_long_term_memory(self, user_message: str, scene_context: dict = None) -> str:
+        """动态记忆激活 — "我想起来了"
+
+        核心机制:
+        1. 当前问题 embedding
+        2. 检索相关 episodic (具体经历)
+        3. 检索相关 semantic (抽象知识)
+        4. 检索适用的 strategies (策略)
+        5. 按 importance * relevance 排序，压缩注入
+
+        Context = WorkingMemory + TopK(RelevanceMemory)
+        """
+        if not self._memory_initialized or not self._memory_store:
+            return ""
+
+        try:
+            store = self._memory_store
+
+            # 构建查询（用户消息 + 场景关键词）
+            query = user_message
+            if scene_context:
+                selected_types = scene_context.get('selected_types', [])
+                if selected_types:
+                    query += ' ' + ' '.join(selected_types)
+
+            parts = []
+
+            # 1. 检索相关 episodic (具体经历) — TopK=3
+            episodes = store.search_episodic(query, top_k=3, min_importance=0.2)
+            for ep, score in episodes:
+                if score > 0.3:
+                    status = "✅" if ep.success else "❌"
+                    parts.append(
+                        f"[Past Experience] {status} {ep.task_description[:80]} "
+                        f"→ {ep.result_summary[:60]}"
+                    )
+                    # 增加激活次数（通过 tags 追踪）
+                    store.increment_semantic_activation(ep.id) if hasattr(store, 'increment_semantic_activation') else None
+
+            # 2. 检索相关 semantic (抽象知识) — TopK=5
+            rules = store.search_semantic(query, top_k=5, min_confidence=0.3)
+            for rule, score in rules:
+                if score > 0.25:
+                    parts.append(f"[Learned Rule] {rule.rule[:100]}")
+                    store.increment_semantic_activation(rule.id)
+
+            # 3. 检索适用的 strategies — TopK=3
+            strategies = store.search_procedural(query, top_k=3)
+            for strat, score in strategies:
+                if score > 0.2:
+                    parts.append(f"[Strategy] {strat.description[:80]}")
+
+            if not parts:
+                return ""
+
+            # 限制注入量（最多 500 字符，避免浪费 token）
+            result = "[Long-Term Memory]\n" + "\n".join(parts)
+            if len(result) > 500:
+                result = result[:500] + "..."
+
+            return result
+
+        except Exception as e:
+            print(f"[Memory] 记忆激活失败: {e}")
+            return ""
+
+    def _reflect_after_task(self, result: dict, agent_params: dict):
+        """任务完成后的反思钩子 — 在后台线程执行
+
+        从 agent result 中提取信号，创建 episodic 记忆，
+        计算 reward，触发规则/LLM 反思。
+        """
+        if not self._memory_initialized or not self._reflection_module:
+            return
+
+        try:
+            # 提取任务信息
+            tool_calls_history = result.get('tool_calls_history', [])
+            final_content = result.get('final_content', '') or result.get('content', '')
+            new_messages = result.get('new_messages', [])
+
+            # 构建工具调用序列
+            tool_calls = []
+            error_count = 0
+            retry_count = 0
+            for tc in tool_calls_history:
+                tc_result = tc.get('result', {})
+                success = bool(tc_result.get('success', True))
+                has_error = bool(tc_result.get('error', ''))
+                tool_calls.append({
+                    "name": tc.get('tool_name', ''),
+                    "success": success and not has_error,
+                    "error": tc_result.get('error', ''),
+                })
+                if has_error or not success:
+                    error_count += 1
+
+            # 检测重试（连续相同工具调用）
+            for i in range(1, len(tool_calls)):
+                if (tool_calls[i]["name"] == tool_calls[i-1]["name"]
+                        and not tool_calls[i-1]["success"]):
+                    retry_count += 1
+
+            # 提取用户请求
+            history = self._agent_history if self._agent_history is not None else self._conversation_history
+            task_description = ""
+            for msg in reversed(history):
+                if msg.get('role') == 'user':
+                    content = msg.get('content', '')
+                    if isinstance(content, list):
+                        task_description = ' '.join(
+                            p.get('text', '') for p in content if p.get('type') == 'text'
+                        )
+                    else:
+                        task_description = content
+                    task_description = task_description[:200]
+                    break
+
+            # 判断成功 / 失败
+            success = result.get('ok', True) and error_count < len(tool_calls) * 0.5
+
+            # 结果摘要
+            result_summary = ""
+            if final_content:
+                # 去除 think 标签
+                import re as _re
+                clean = _re.sub(r'<think>[\s\S]*?</think>', '', final_content).strip()
+                result_summary = clean[:150]
+
+            session_id = self._agent_session_id or self._session_id
+
+            # 执行反思
+            reflect_result = self._reflection_module.reflect_on_task(
+                session_id=session_id,
+                task_description=task_description,
+                result_summary=result_summary,
+                success=success,
+                error_count=error_count,
+                retry_count=retry_count,
+                tool_calls=tool_calls,
+                ai_client=self.client,
+                model=agent_params.get('model', 'deepseek-chat'),
+                provider=agent_params.get('provider', 'deepseek'),
+            )
+
+            # 更新 Growth Tracker
+            if self._growth_tracker:
+                metric = TaskMetric(
+                    success=success,
+                    error_count=error_count,
+                    retry_count=retry_count,
+                    tool_call_count=len(tool_calls),
+                    reward=reflect_result.get('reward', 0.0),
+                    tags=reflect_result.get('tags', []),
+                )
+                self._growth_tracker.record_task(metric)
+
+                # 如果 LLM 反思返回了技能置信度更新
+                if reflect_result.get('deep_reflected') and 'skill_confidence' in reflect_result:
+                    self._growth_tracker.update_skill_confidence_batch(
+                        reflect_result.get('skill_confidence', {})
+                    )
+
+            if reflect_result.get('reward', 0) > 0:
+                print(f"[Memory] 反思完成: reward={reflect_result['reward']:.2f}, "
+                      f"tags={reflect_result.get('tags', [])}, "
+                      f"deep_reflected={reflect_result.get('deep_reflected', False)}")
+
+        except Exception as e:
+            import traceback
+            print(f"[Memory] 反思钩子异常: {e}")
+            traceback.print_exc()
+
+    def _get_personality_injection(self) -> str:
+        """获取个性注入文本（附加到 system prompt 末尾）"""
+        if not self._memory_initialized or not self._growth_tracker:
+            return ""
+        try:
+            return self._growth_tracker.get_personality_description()
+        except Exception:
+            return ""
 
     def _build_system_prompt(self, with_thinking: bool = True) -> str:
         """构建系统提示
@@ -1057,6 +1303,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         if not text.strip():
             return
         try:
+            # ★ 内容开始流入 → 隐藏 "Generating..." 状态（如果正在显示）
+            if hasattr(self, 'thinking_bar') and getattr(self.thinking_bar, '_mode', None) == 'generating':
+                self.thinking_bar.stop()
             resp.append_content(text)
             self._scroll_agent_to_bottom(force=False)
         except RuntimeError:
@@ -1519,6 +1768,15 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 rate_percent = cache_rate * 100
                 self._addStatus.emit(f"Cache: {cache_hit}/{cache_hit+cache_miss} ({rate_percent:.0f}%)")
         
+        # ★ 反思钩子：任务完成后触发长期记忆反思（后台线程，不阻塞 UI）
+        if self._memory_initialized and tool_calls_history:
+            # 获取 agent_params（从最近的 _run_agent 调用中保存）
+            _reflect_params = getattr(self, '_last_agent_params', {})
+            def _do_reflect():
+                self._reflect_after_task(result, _reflect_params)
+            reflect_thread = threading.Thread(target=_do_reflect, daemon=True)
+            reflect_thread.start()
+        
         # 自动保存缓存（必须在 _set_running(False) 之前，因为此时 agent 引用还有效）
         agent_sid = self._agent_session_id
         if self._auto_save_cache and len(history) > 0 and agent_sid:
@@ -1633,11 +1891,20 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         不依赖 hou 模块的工具（execute_shell 等）直接在后台线程执行，避免阻塞 UI。
         """
         # ★ Ask 模式安全守卫：拦截任何不在白名单的工具
-        if not self._agent_mode and tool_name not in self._ASK_MODE_TOOLS:
+        if not self._agent_mode and not self._plan_mode and tool_name not in self._ASK_MODE_TOOLS:
             return {
                 "success": False,
                 "error": tr('ask.restricted', tool_name)
             }
+        
+        # ★ Plan 规划阶段安全守卫
+        if self._plan_mode and self._plan_phase == 'planning':
+            allowed = self._PLAN_PLANNING_TOOLS | {'create_plan'}
+            if tool_name not in allowed:
+                return {
+                    "success": False,
+                    "error": f"Plan 规划阶段不允许执行 {tool_name}，只能使用查询工具和 create_plan"
+                }
         
         # ★ 确认模式：对关键节点操作弹出预览确认
         if self._confirm_mode and tool_name in self._CONFIRM_TOOLS:
@@ -1652,6 +1919,16 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._showToolStatus.emit(tool_name)
         
         try:
+            # ★ Plan 模式专用工具处理
+            if tool_name == "create_plan":
+                return self._handle_create_plan(kwargs)
+            
+            elif tool_name == "update_plan_step":
+                return self._handle_update_plan_step(kwargs)
+            
+            elif tool_name == "ask_question":
+                return self._handle_ask_question(kwargs)
+            
             # 处理 Todo 相关工具（纯 Python 操作，线程安全）
             if tool_name == "add_todo":
                 todo_id = kwargs.get("todo_id", "")
@@ -1718,6 +1995,282 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             except queue.Empty:
                 return {"success": False, "error": tr('ai.main_exec_timeout')}
     
+    # ------------------------------------------------------------------
+    # Plan 模式工具处理
+    # ------------------------------------------------------------------
+
+    def _handle_create_plan(self, kwargs: dict) -> dict:
+        """处理 create_plan 工具调用（后台线程）"""
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            plan_data = self._plan_manager.create_plan(self._session_id, kwargs)
+            self._plan_phase = 'awaiting_confirmation'
+            # 切换状态：Planning → Generating（Plan 已完成构建）
+            self._showGenerating.emit()
+            # 通过信号在主线程渲染 PlanViewer 卡片
+            self._renderPlanViewer.emit(plan_data)
+            return {
+                "success": True,
+                "result": f"Plan '{plan_data.get('title', '')}' created with {len(plan_data.get('steps', []))} steps. Waiting for user confirmation."
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create plan: {e}"}
+
+    def _handle_update_plan_step(self, kwargs: dict) -> dict:
+        """处理 update_plan_step 工具调用（后台线程）"""
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            step_id = kwargs.get('step_id', '')
+            status = kwargs.get('status', 'done')
+            result_summary = kwargs.get('result_summary', '')
+            plan = self._plan_manager.update_step(
+                self._session_id, step_id, status, result_summary
+            )
+            if not plan:
+                return {"success": False, "error": f"No active plan found for session {self._session_id}"}
+            # 通过信号在主线程更新 PlanViewer 步骤状态
+            self._updatePlanStep.emit(step_id, status, result_summary or '')
+            # 检查是否全部完成
+            if plan.get('status') == 'completed':
+                self._plan_phase = 'completed'
+            return {
+                "success": True,
+                "result": f"Step {step_id} updated to '{status}'"
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to update plan step: {e}"}
+
+    def _handle_ask_question(self, kwargs: dict) -> dict:
+        """处理 ask_question 工具调用（后台线程）
+        
+        复用 _request_tool_confirmation 的阻塞模式：
+        1. 设置 pending 属性 → 发射信号 → 主线程渲染 AskQuestionCard
+        2. 后台线程在 queue 上阻塞等待用户回答
+        3. 用户提交后 queue.put(answers) → 后台线程继续
+        """
+        questions = kwargs.get('questions', [])
+        if not questions:
+            return {"success": False, "error": "No questions provided"}
+
+        self._ask_question_result_queue = queue.Queue()
+        self._pending_ask_questions = questions
+        self._askQuestionRequest.emit()
+
+        try:
+            result = self._ask_question_result_queue.get(timeout=300.0)  # 5 分钟超时
+            if result is None:
+                return {"success": True, "result": "User skipped the questions."}
+            # 格式化答案为可读文本
+            answer_lines = []
+            for q_id, selections in result.items():
+                readable = []
+                for sel in selections:
+                    if sel.startswith("__free_text__:"):
+                        readable.append(sel.replace("__free_text__:", ""))
+                    else:
+                        readable.append(sel)
+                answer_lines.append(f"{q_id}: {', '.join(readable)}")
+            return {
+                "success": True,
+                "result": f"User answered:\n" + "\n".join(answer_lines)
+            }
+        except queue.Empty:
+            return {"success": True, "result": "User did not answer within the time limit."}
+
+    @QtCore.Slot()
+    def _on_render_ask_question(self):
+        """主线程：在聊天流中插入 AskQuestionCard"""
+        q = getattr(self, '_ask_question_result_queue', None)
+        questions = getattr(self, '_pending_ask_questions', [])
+
+        if not q:
+            print("[AskQuestion] ⚠ _ask_question_result_queue 不存在")
+            return
+
+        try:
+            card = AskQuestionCard(questions, parent=self.chat_container)
+        except Exception as e:
+            print(f"[AskQuestion] ✖ AskQuestionCard 创建失败: {e}")
+            q.put(None)
+            return
+
+        def _on_answered(answers: dict):
+            q.put(answers)
+
+        def _on_cancelled():
+            q.put(None)
+
+        card.answered.connect(_on_answered)
+        card.cancelled.connect(_on_cancelled)
+
+        # 插入到对话流
+        try:
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
+        except Exception as e:
+            print(f"[AskQuestion] ⚠ 插入失败: {e}")
+            q.put(None)
+            return
+
+        card.setVisible(True)
+        try:
+            self._scroll_to_bottom(force=True)
+        except Exception:
+            pass
+
+    @QtCore.Slot(dict)
+    def _show_plan_generation_progress(self, accumulated: str):
+        """从 create_plan 的流式参数中提取进度信息并显示 Planning... 状态"""
+        import re as _re
+        # 统计已出现的 step id
+        step_ids = _re.findall(r'"id"\s*:\s*"(step-\d+)"', accumulated)
+        # 尝试提取 title
+        title_match = _re.search(r'"title"\s*:\s*"([^"]{1,30})', accumulated)
+        title_part = title_match.group(1) if title_match else ""
+
+        # 检查是否已进入 architecture 部分
+        has_arch = '"architecture"' in accumulated
+        arch_nodes = _re.findall(r'"id"\s*:\s*"(?!step-)([^"]+)"', accumulated)
+
+        if has_arch and arch_nodes:
+            progress = f"architecture ({len(arch_nodes)} nodes)"
+        elif step_ids:
+            progress = f"step {len(step_ids)}"
+            if title_part:
+                progress = f"「{title_part}」 {progress}"
+        elif title_part:
+            progress = f"「{title_part}」"
+        else:
+            progress = ""
+
+        self._showPlanning.emit(progress)
+
+    @QtCore.Slot()
+    def _on_create_streaming_plan(self):
+        """主线程：创建流式 Plan 预览卡片并插入聊天流"""
+        try:
+            # 如果已有旧的流式卡片则先移除
+            if self._streaming_plan_card is not None:
+                self._streaming_plan_card.setParent(None)
+                self._streaming_plan_card.deleteLater()
+
+            card = StreamingPlanCard(parent=self.chat_container)
+            self._streaming_plan_card = card
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
+            self._scroll_to_bottom(force=True)
+        except Exception as e:
+            print(f"[Plan] Create streaming card error: {e}")
+
+    @QtCore.Slot(str)
+    def _on_update_streaming_plan(self, accumulated: str):
+        """主线程：将流式 JSON 碎片增量渲染到流式 Plan 卡片
+
+        使用简单的节流策略：缓存最新数据，通过 singleShot 延迟处理，
+        避免每个 token 都触发正则解析和 UI 更新。
+        """
+        self._streaming_plan_acc = accumulated
+        if not getattr(self, '_streaming_plan_timer_active', False):
+            self._streaming_plan_timer_active = True
+            QtCore.QTimer.singleShot(150, self._flush_streaming_plan)
+
+    def _flush_streaming_plan(self):
+        """实际执行流式 Plan 卡片更新"""
+        self._streaming_plan_timer_active = False
+        if self._streaming_plan_card is None:
+            return
+        acc = getattr(self, '_streaming_plan_acc', '')
+        if not acc:
+            return
+        try:
+            old_count = self._streaming_plan_card._rendered_step_count
+            self._streaming_plan_card.update_from_accumulated(acc)
+            new_count = self._streaming_plan_card._rendered_step_count
+            if new_count > old_count:
+                self._scroll_to_bottom()
+        except Exception as e:
+            print(f"[Plan] Update streaming card error: {e}")
+
+    def _on_render_plan_viewer(self, plan_data: dict):
+        """主线程：将流式 Plan 卡片原地升级为完整交互卡片。
+
+        如果流式卡片已存在 → finalize_with_data 原地补充完整数据。
+        如果不存在（边缘情况）→ 创建新卡片。
+        """
+        try:
+            if self._streaming_plan_card is not None:
+                # ★ 原地升级：在流式骨架上补充 DAG + 按钮
+                card = self._streaming_plan_card
+                card.finalize_with_data(plan_data)
+                card.planConfirmed.connect(self._on_plan_confirmed)
+                card.planRejected.connect(self._on_plan_rejected)
+                self._active_plan_viewer = card
+                self._streaming_plan_card = None  # 不再追踪为流式卡片
+            else:
+                # 边缘情况：没有流式卡片时直接创建 PlanViewer
+                viewer = PlanViewer(plan_data, parent=self.chat_container)
+                viewer.planConfirmed.connect(self._on_plan_confirmed)
+                viewer.planRejected.connect(self._on_plan_rejected)
+                self._active_plan_viewer = viewer
+                self.chat_layout.insertWidget(self.chat_layout.count() - 1, viewer)
+            self._scroll_to_bottom(force=True)
+        except Exception as e:
+            print(f"[Plan] Render PlanViewer error: {e}")
+
+    @QtCore.Slot(str, str, str)
+    def _on_update_plan_step(self, step_id: str, status: str, result_summary: str):
+        """主线程：更新 PlanViewer 卡片中的步骤状态"""
+        if self._active_plan_viewer:
+            try:
+                self._active_plan_viewer.update_step_status(step_id, status, result_summary)
+            except Exception as e:
+                print(f"[Plan] Update step UI error: {e}")
+
+    def _on_plan_confirmed(self, plan_data: dict):
+        """用户点击 Confirm 按钮 → 启动执行阶段"""
+        self._plan_phase = 'executing'
+        # 禁用 PlanViewer 按钮（防止重复点击）
+        if self._active_plan_viewer:
+            self._active_plan_viewer.set_confirmed()
+        
+        # 构造执行提示消息
+        exec_msg = tr('ai.plan_confirmed_msg', plan_data.get('title', 'Plan'))
+        self._conversation_history.append({
+            'role': 'user', 'content': exec_msg
+        })
+        
+        # 创建新的 AI 回复块
+        self._set_running(True)
+        self._add_ai_response()
+        self._agent_response = self._current_response
+        self._start_active_aurora()
+        
+        # 构造 agent_params（复用上次的 provider/model 设置）
+        agent_params = getattr(self, '_last_agent_params', {}).copy()
+        agent_params['use_agent'] = True          # 执行阶段用完整工具
+        agent_params['plan_mode'] = True
+        agent_params['plan_executing'] = True     # 标记为 Plan 执行阶段
+        agent_params['plan_data'] = plan_data
+        
+        # 后台线程执行
+        thread = threading.Thread(
+            target=self._run_agent, args=(agent_params,), daemon=True
+        )
+        thread.start()
+
+    def _on_plan_rejected(self):
+        """用户点击 Reject 按钮 → 丢弃 Plan"""
+        self._plan_phase = 'idle'
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            self._plan_manager.delete_plan(self._session_id)
+        except Exception:
+            pass
+        if self._active_plan_viewer:
+            self._active_plan_viewer.set_rejected()
+        self._active_plan_viewer = None
+
     # 已自带 checkpoint 追踪的工具（在 _on_add_node_operation 中有专用分支）
     _SELF_TRACKING_TOOLS = frozenset({
         'create_node', 'create_nodes_batch', 'create_wrangle_node',
@@ -2286,54 +2839,95 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._render_conversation_history()
     
     def _compress_context(self):
-        """压缩上下文 - 极简摘要，保留关键信息"""
+        """压缩上下文 — 智能摘要，保留关键信息
+
+        改进策略:
+        1. 按轮次（user→assistant 对）提取信息，而非简单截取
+        2. 提取用户意图、工具操作、关键结果、节点路径
+        3. 识别错误和纠正行为
+        4. 生成结构化摘要
+        """
         if len(self._conversation_history) <= 4:
             return  # 太短不需要压缩
-        
+
         # 将旧对话压缩成摘要
         old_messages = self._conversation_history[:-4]  # 保留最近 4 条
         recent_messages = self._conversation_history[-4:]
-        
-        # 极简摘要：只保留关键信息
-        summary_parts = []
-        
-        # 提取用户请求和完成的任务（极简）
-        user_requests = []
-        completed_tasks = []
-        
+
+        # 按轮次分组
+        rounds_info = []
+        current_round = {"user": "", "assistant": "", "tools": [], "errors": []}
+
         for msg in old_messages:
             role = msg.get('role', '')
             content = msg.get('content', '')
-            
+
+            if isinstance(content, list):
+                # 多模态内容 → 提取文字
+                content = ' '.join(
+                    p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text'
+                )
+
             if role == 'user':
-                # 提取关键词（前50字符）
-                key = content[:50].replace('\n', ' ').strip()
-                if key:
-                    user_requests.append(key)
+                if current_round["user"]:
+                    rounds_info.append(current_round)
+                    current_round = {"user": "", "assistant": "", "tools": [], "errors": []}
+                current_round["user"] = content[:120].replace('\n', ' ').strip()
             elif role == 'assistant' and content:
-                # 提取最后一句（最多30字符）
-                lines = [l.strip() for l in content.split('\n') if l.strip()]
-                if lines:
-                    last_line = lines[-1][:30]
-                    if last_line:
-                        completed_tasks.append(last_line)
-        
-        # 极简格式：用户请求 | 完成项
-        if user_requests:
-            summary_parts.append(f"Requests: {', '.join(user_requests[:3])}")
-        if completed_tasks:
-            summary_parts.append(f"Done: {', '.join(completed_tasks[:3])}")
-        
-        # 生成上下文摘要（极简）
+                # 去除 think 标签
+                clean = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+                if clean:
+                    # 提取关键句（最后两行通常是结论）
+                    lines = [l.strip() for l in clean.split('\n') if l.strip()]
+                    summary_lines = lines[-2:] if len(lines) > 2 else lines
+                    current_round["assistant"] = ' '.join(summary_lines)[:100]
+                # 提取工具调用
+                tool_calls = msg.get('tool_calls', [])
+                if tool_calls:
+                    for tc in tool_calls:
+                        fn = tc.get('function', {})
+                        current_round["tools"].append(fn.get('name', ''))
+            elif role == 'tool':
+                tool_content = content or ''
+                if 'error' in tool_content.lower() or 'fail' in tool_content.lower():
+                    current_round["errors"].append(tool_content[:60])
+
+        if current_round["user"]:
+            rounds_info.append(current_round)
+
+        # 生成结构化摘要
+        summary_parts = []
+        for i, rnd in enumerate(rounds_info[-5:], 1):  # 最多保留最近 5 轮
+            parts = []
+            if rnd["user"]:
+                parts.append(f"Q: {rnd['user'][:60]}")
+            if rnd["assistant"]:
+                parts.append(f"A: {rnd['assistant'][:60]}")
+            if rnd["tools"]:
+                unique_tools = list(dict.fromkeys(rnd["tools"]))[:3]
+                parts.append(f"Tools: {','.join(unique_tools)}")
+            if rnd["errors"]:
+                parts.append(f"⚠ {rnd['errors'][0][:40]}")
+            if parts:
+                summary_parts.append(f"R{i}: " + " | ".join(parts))
+
+        # 提取提到的节点路径
+        all_text = ' '.join(msg.get('content', '') for msg in old_messages if isinstance(msg.get('content'), str))
+        node_paths = list(set(re.findall(r'/obj/[a-zA-Z0-9_/]+', all_text)))
+        if node_paths:
+            summary_parts.append(f"Nodes: {', '.join(node_paths[:5])}")
+
+        # 生成上下文摘要
         if summary_parts:
-            self._context_summary = " | ".join(summary_parts)
+            self._context_summary = "\n".join(summary_parts)
         else:
             self._context_summary = ""
-        
+
         # 更新历史（只保留最近的）
         self._conversation_history = recent_messages
-        
-        print(f"[Context] 压缩上下文: 保留 {len(recent_messages)} 条消息, 摘要 {len(self._context_summary)} 字符")
+
+        print(f"[Context] 压缩上下文: 保留 {len(recent_messages)} 条消息, "
+              f"摘要 {len(self._context_summary)} 字符 ({len(rounds_info)} 轮提取)")
     
     def _get_context_reminder(self) -> str:
         """生成上下文提醒（极简，强调复用）"""
@@ -2485,6 +3079,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             'context_limit': self._get_current_context_limit(),  # 也在主线程获取
             'scene_context': self._collect_scene_context(),  # ★ 主线程收集 Houdini 场景上下文
             'supports_vision': self._current_model_supports_vision(),  # 模型是否支持图片
+            'plan_mode': self._plan_mode,  # ★ Plan 模式标记
         }
         
         # 保存模型选择
@@ -2515,6 +3110,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         context_limit = agent_params['context_limit']
         scene_context = agent_params.get('scene_context', {})
         supports_vision = agent_params.get('supports_vision', True)
+        plan_mode = agent_params.get('plan_mode', False)
+        plan_executing = agent_params.get('plan_executing', False)
+        
+        # ★ 保存 agent_params 供反思钩子使用
+        self._last_agent_params = agent_params
         
         # ★ 存储 Think 开关状态，供 _drain_tag_buffer / _on_thinking_chunk 使用
         self._think_enabled = use_think
@@ -2530,8 +3130,25 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             sys_prompt = self._cached_prompt_think if use_think else self._cached_prompt_no_think
             
             # ★ Ask 模式：追加只读约束
-            if not use_agent:
+            if not use_agent and not plan_mode:
                 sys_prompt = sys_prompt + tr('ai.ask_mode_prompt')
+            
+            # ★ Plan 模式：追加规划或执行阶段提示词
+            if plan_mode:
+                if plan_executing:
+                    sys_prompt = sys_prompt + tr('ai.plan_mode_execution_prompt')
+                else:
+                    self._plan_phase = 'planning'
+                    sys_prompt = sys_prompt + tr('ai.plan_mode_planning_prompt')
+            
+            # ★ Agent 模式：追加复杂任务建议切换 Plan 的提示
+            if use_agent and not plan_mode:
+                sys_prompt = sys_prompt + tr('ai.agent_suggest_plan_prompt')
+            
+            # ★ 个性注入：将成长系统形成的个性特征追加到 system prompt 末尾
+            personality_text = self._get_personality_injection()
+            if personality_text:
+                sys_prompt = sys_prompt + "\n\n" + personality_text
             
             messages = [{'role': 'system', 'content': sys_prompt}]
             
@@ -2648,7 +3265,27 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 if rag_context:
                     messages.append({'role': 'system', 'content': rag_context})
             
-            # 4. 上下文提醒（放在最后，不破坏 cache 前缀）
+            # 4. ★ 长期记忆激活（"我想起来了"机制）
+            # 在 RAG 文档之后、上下文提醒之前注入
+            if user_last_msg:
+                memory_context = self._activate_long_term_memory(
+                    user_last_msg, scene_context=scene_context
+                )
+                if memory_context:
+                    messages.append({'role': 'system', 'content': memory_context})
+            
+            # 5. ★ Plan 上下文注入（仅在 Plan 执行阶段 + 当前 session 匹配时）
+            if plan_mode and plan_executing:
+                try:
+                    if self._plan_manager is None:
+                        self._plan_manager = get_plan_manager()
+                    plan_ctx = self._plan_manager.get_plan_for_context(self._session_id)
+                    if plan_ctx:
+                        messages.append({'role': 'system', 'content': plan_ctx})
+                except Exception as e:
+                    print(f"[Plan] Context injection error: {e}")
+            
+            # 6. 上下文提醒（放在最后，不破坏 cache 前缀）
             # ⚠️ Cache 优化：动态内容放在末尾，保持前缀稳定
             context_reminder = self._get_context_reminder()
             if context_reminder:
@@ -2769,7 +3406,24 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             messages = cleaned_messages
             
             # 使用缓存的优化后工具定义（只计算一次）
-            if not use_agent:
+            if plan_mode and not plan_executing:
+                # ★ Plan 规划阶段：只读工具 + create_plan + ask_question
+                plan_filtered = [t for t in HOUDINI_TOOLS
+                                 if t['function']['name'] in self._PLAN_PLANNING_TOOLS]
+                plan_filtered.append(PLAN_TOOL_CREATE)
+                plan_filtered.append(PLAN_TOOL_ASK_QUESTION)
+                if not use_web:
+                    plan_filtered = [t for t in plan_filtered
+                                     if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                tools = UltraOptimizer.optimize_tool_definitions(plan_filtered)
+            elif plan_mode and plan_executing:
+                # ★ Plan 执行阶段：完整工具 + update_plan_step
+                exec_tools = list(HOUDINI_TOOLS) + [PLAN_TOOL_UPDATE_STEP]
+                if not use_web:
+                    exec_tools = [t for t in exec_tools
+                                  if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                tools = UltraOptimizer.optimize_tool_definitions(exec_tools)
+            elif not use_agent:
                 # ★ Ask 模式：只保留只读/查询工具
                 ask_filtered = [t for t in HOUDINI_TOOLS
                                 if t['function']['name'] in self._ASK_MODE_TOOLS]
@@ -2787,7 +3441,43 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
                 tools = self._cached_optimized_tools_no_web
             
-            if use_agent:
+            # ★ Plan 模式的静默工具集合（不在 UI 中显示的工具）
+            _silent = self._SILENT_TOOLS | self._PLAN_SILENT_TOOLS if plan_mode else self._SILENT_TOOLS
+            
+            # ★ 通用回调：每轮 API 迭代开始时显示 "Generating..." 状态
+            # 第1轮也显示，填补 Send → 首字之间的空白
+            _on_iter = lambda i: self._showGenerating.emit()
+            
+            if plan_mode:
+                # ★ Plan 模式：使用 agent loop（规划或执行阶段均走此分支）
+                _max_iter = 999 if plan_executing else 20
+                result = self.client.agent_loop_auto(
+                    messages=messages,
+                    model=model,
+                    provider=provider,
+                    max_iterations=_max_iter,
+                    max_tokens=None,
+                    enable_thinking=use_think,
+                    supports_vision=supports_vision,
+                    tools_override=tools,
+                    on_content=lambda c: self._on_content_with_limit(c),
+                    on_thinking=lambda t: self._on_thinking_chunk(t),
+                    on_tool_call=lambda n, a: (
+                        None  # create_plan 已在 on_tool_args_delta 中处理
+                        if n == 'create_plan' else
+                        (self._addStatus.emit(f"[tool]{n}"), self._showToolStatus.emit(n))
+                        if n not in _silent else None
+                    ),
+                    on_tool_result=lambda n, a, r: (
+                        (self._add_tool_result(n, r, a), self._hideToolStatus.emit())
+                        if n not in _silent else None
+                    ),
+                    on_tool_args_delta=lambda name, delta, acc: (
+                        self._toolArgsDelta.emit(name, delta, acc)
+                    ),
+                    on_iteration_start=_on_iter,
+                )
+            elif use_agent:
                 # ★ Agent 模式：完整 agent loop，可创建/修改/删除节点
                 result = self.client.agent_loop_auto(
                     messages=messages,
@@ -2811,6 +3501,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     on_tool_args_delta=lambda name, delta, acc: (
                         self._toolArgsDelta.emit(name, delta, acc)
                     ),
+                    on_iteration_start=_on_iter,
                 )
             elif tools:
                 # ★ Ask 模式：仍用 agent loop 但只提供只读工具
@@ -2832,10 +3523,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     on_tool_result=lambda n, a, r: (
                         (self._add_tool_result(n, r, a), self._hideToolStatus.emit())
                         if n not in self._SILENT_TOOLS else None
-                    )
+                    ),
+                    on_iteration_start=_on_iter,
                 )
             else:
                 # 无工具的纯对话模式（fallback）
+                self._showGenerating.emit()  # ★ 显示 "Generating..." 等待首字
                 result = {'ok': True, 'content': '', 'tool_calls_history': [], 'iterations': 1, 'usage': {}}
                 for chunk in self.client.chat_stream(
                     messages=messages, 
@@ -3043,8 +3736,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
     @QtCore.Slot(str, str, str)
     def _on_tool_args_delta(self, tool_name: str, delta: str, accumulated: str):
-        """主线程 slot：处理 tool_call 参数增量，流式预览 VEX 代码"""
+        """主线程 slot：处理 tool_call 参数增量，流式预览 VEX 代码 / Plan 生成进度"""
         try:
+            # ★ Plan 模式：create_plan 参数流式 → 创建/更新流式卡片
+            if tool_name == 'create_plan':
+                # 首次收到 create_plan 参数 → 立即创建流式卡片
+                if self._streaming_plan_card is None:
+                    self._on_create_streaming_plan()
+                self._show_plan_generation_progress(accumulated)
+                self._updateStreamingPlan.emit(accumulated)
+                return
+
             if tool_name not in self._VEX_TOOLS:
                 return
 
@@ -3290,13 +3992,117 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         except Exception as e:
             self._show_toast(tr('toast.jump_failed', e))
     
+    # ----------------------------------------------------------------
+    # ★ 递归恢复节点树（用于 undo delete 操作）
+    # ----------------------------------------------------------------
+    def _restore_node_from_snapshot(self, hou, snapshot: dict, _parent_override=None):
+        """从快照递归重建节点及其整棵子节点树
+        
+        Args:
+            hou: Houdini 模块引用
+            snapshot: _snapshot_node 生成的快照字典
+            _parent_override: 若不为 None，则在此节点下创建（用于递归重建子节点）
+        
+        Returns:
+            新建的 hou.Node，或 None（失败时）
+        """
+        if not snapshot:
+            return None
+        
+        parent_path = snapshot.get("parent_path", "")
+        node_type = snapshot.get("node_type", "")
+        node_name = snapshot.get("node_name", "")
+        
+        parent = _parent_override or hou.node(parent_path)
+        if parent is None:
+            return None
+        
+        # 1) 创建节点
+        try:
+            new_node = parent.createNode(node_type, node_name)
+        except Exception:
+            return None
+        
+        # 2) 恢复位置
+        pos = snapshot.get("position")
+        if pos and len(pos) == 2:
+            try:
+                new_node.setPosition(hou.Vector2(pos[0], pos[1]))
+            except Exception:
+                pass
+        
+        # 3) 恢复参数
+        for parm_name, val in snapshot.get("params", {}).items():
+            try:
+                parm = new_node.parm(parm_name)
+                if parm is None:
+                    continue
+                if isinstance(val, dict) and "expr" in val:
+                    lang_str = val.get("lang", "Hscript")
+                    lang = (hou.exprLanguage.Python
+                            if "python" in lang_str.lower()
+                            else hou.exprLanguage.Hscript)
+                    parm.setExpression(val["expr"], lang)
+                else:
+                    parm.set(val)
+            except Exception:
+                continue
+        
+        # 4) ★ 递归重建子节点
+        children_map: dict = {}  # name → hou.Node  用于稍后恢复内部连接
+        for child_snap in snapshot.get("children", []):
+            child_node = self._restore_node_from_snapshot(hou, child_snap, _parent_override=new_node)
+            if child_node:
+                children_map[child_node.name()] = child_node
+        
+        # 5) ★ 恢复子节点间的内部连接
+        for iconn in snapshot.get("internal_connections", []):
+            try:
+                src_node = children_map.get(iconn["src_name"])
+                dest_node = children_map.get(iconn["dest_name"])
+                if src_node and dest_node:
+                    dest_node.setInput(iconn["dest_input"], src_node)
+            except Exception:
+                continue
+        
+        # 6) 恢复外部输入连接（仅顶层节点 — 子节点的外部连接由父级调用处理）
+        if _parent_override is None:
+            for conn in snapshot.get("input_connections", []):
+                try:
+                    src = hou.node(conn["source_path"])
+                    if src:
+                        new_node.setInput(conn["input_index"], src)
+                except Exception:
+                    continue
+        
+        # 7) 恢复外部输出连接（仅顶层节点）
+        if _parent_override is None:
+            for conn in snapshot.get("output_connections", []):
+                try:
+                    dest = hou.node(conn["dest_path"])
+                    if dest:
+                        dest.setInput(conn["dest_input_index"], new_node, conn.get("output_index", 0))
+                except Exception:
+                    continue
+        
+        # 8) 恢复标志位
+        try:
+            if snapshot.get("display_flag") and hasattr(new_node, 'setDisplayFlag'):
+                new_node.setDisplayFlag(True)
+            if snapshot.get("render_flag") and hasattr(new_node, 'setRenderFlag'):
+                new_node.setRenderFlag(True)
+        except Exception:
+            pass
+        
+        return new_node
+
     def _undo_node_operation(self, op_type: str = 'create',
                               node_paths: list = None,
                               undo_snapshot: dict = None):
         """精确撤销单次节点操作
         
         - create 操作 → 删除该节点（by path）
-        - delete 操作 → 从快照重建该节点
+        - delete 操作 → 从快照递归重建该节点及所有子节点
         - modify 操作 → 恢复参数旧值
         """
         try:
@@ -3357,70 +4163,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     self._show_toast(tr('toast.node_gone'))
             
             elif op_type == 'delete' and undo_snapshot:
-                # ---- 撤销删除 = 从快照重建 ----
-                parent_path = undo_snapshot.get("parent_path", "")
-                node_type = undo_snapshot.get("node_type", "")
-                node_name = undo_snapshot.get("node_name", "")
-                
-                parent = hou.node(parent_path)
-                if parent is None:
-                    self._show_toast(tr('toast.parent_not_found', parent_path))
-                    return
-                
-                # 创建节点
-                new_node = parent.createNode(node_type, node_name)
-                
-                # 恢复位置
-                pos = undo_snapshot.get("position")
-                if pos and len(pos) == 2:
-                    new_node.setPosition(hou.Vector2(pos[0], pos[1]))
-                
-                # 恢复参数
-                params = undo_snapshot.get("params", {})
-                for parm_name, val in params.items():
-                    try:
-                        parm = new_node.parm(parm_name)
-                        if parm is None:
-                            continue
-                        if isinstance(val, dict) and "expr" in val:
-                            lang_str = val.get("lang", "Hscript")
-                            lang = (hou.exprLanguage.Python
-                                    if "python" in lang_str.lower()
-                                    else hou.exprLanguage.Hscript)
-                            parm.setExpression(val["expr"], lang)
-                        else:
-                            parm.set(val)
-                    except Exception:
-                        continue
-                
-                # 恢复输入连接
-                for conn in undo_snapshot.get("input_connections", []):
-                    try:
-                        src = hou.node(conn["source_path"])
-                        if src:
-                            new_node.setInput(conn["input_index"], src)
-                    except Exception:
-                        continue
-                
-                # 恢复输出连接
-                for conn in undo_snapshot.get("output_connections", []):
-                    try:
-                        dest = hou.node(conn["dest_path"])
-                        if dest:
-                            dest.setInput(conn["dest_input_index"], new_node, conn.get("output_index", 0))
-                    except Exception:
-                        continue
-                
-                # 恢复标志
-                try:
-                    if undo_snapshot.get("display_flag") and hasattr(new_node, 'setDisplayFlag'):
-                        new_node.setDisplayFlag(True)
-                    if undo_snapshot.get("render_flag") and hasattr(new_node, 'setRenderFlag'):
-                        new_node.setRenderFlag(True)
-                except Exception:
-                    pass
-                
-                self._show_toast(tr('toast.node_restored', new_node.path()))
+                # ---- 撤销删除 = 从快照递归重建整棵节点树 ----
+                new_node = self._restore_node_from_snapshot(hou, undo_snapshot)
+                if new_node:
+                    self._show_toast(tr('toast.node_restored', new_node.path()))
+                else:
+                    self._show_toast(tr('toast.undo_failed', 'snapshot restore returned None'))
             
             else:
                 # 回退：使用 Houdini 原生 undo
@@ -4264,7 +5012,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             pass  # atexit 中不能抛出异常
 
     def _save_cache(self) -> bool:
-        """自动保存：覆写同 session 文件 + manifest + cache_latest.json"""
+        """自动保存：覆写同 session 文件 + manifest"""
         if not self._conversation_history:
             return False
         try:
@@ -4284,12 +5032,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             with open(session_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
-            # 2. 覆写 cache_latest.json（用于启动时自动恢复）
-            latest_file = self._cache_dir / "cache_latest.json"
-            with open(latest_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-
-            # 3. 同步更新 sessions_manifest.json（确保所有 tab 信息都是最新的）
+            # 2. 同步更新 sessions_manifest.json（确保所有 tab 信息都是最新的）
+            # ★ 不再写 cache_latest.json — 恢复由 sessions_manifest + session_*.json 管理
             self._update_manifest()
 
             if self._workspace_dir:
@@ -4404,17 +5148,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             with open(manifest_file, 'w', encoding='utf-8') as f:
                 json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-            # 同时维护 cache_latest.json 兼容性
-            if self._conversation_history:
-                cache_data = self._build_cache_data()
-                # ★ cache_latest 也剥离图片
-                cache_data['conversation_history'] = self._strip_images_for_cache(
-                    cache_data.get('conversation_history', [])
-                )
-                latest_file = self._cache_dir / "cache_latest.json"
-                with open(latest_file, 'w', encoding='utf-8') as f:
-                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
-
+            # ★ 不再写 cache_latest.json — 恢复由 sessions_manifest + session_*.json 管理
             # print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话到磁盘")
             return True
         except Exception as e:
@@ -4423,7 +5157,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             return False
 
     def _restore_all_sessions(self) -> bool:
-        """从 sessions_manifest.json 恢复所有会话标签（启动时调用）"""
+        """从 sessions_manifest.json 恢复所有会话标签（启动时调用，幂等）"""
+        # ★ 幂等保护：防止 __init__ 和 main_window 延迟回调重复恢复
+        if getattr(self, '_sessions_restored', False):
+            return True
         try:
             manifest_file = self._cache_dir / "sessions_manifest.json"
             if not manifest_file.exists():
@@ -4589,6 +5326,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._sync_tabs_backup()
             self._update_token_stats_display()
             self._update_context_stats()
+            self._sessions_restored = True  # 标记已恢复，防止重复
             print(f"[Cache] 已恢复 {self.session_tabs.count()} 个会话标签")
             return True
 

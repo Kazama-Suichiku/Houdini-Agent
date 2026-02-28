@@ -382,6 +382,147 @@ _ZH = {
     'ai.wrangle_created': '已创建 Wrangle 节点',
     'ai.wrangle_failed': '创建 Wrangle 失败',
 
+    # ===== Plan mode =====
+    'ai.plan_mode_planning_prompt': (
+        '\n\n'
+        '<plan_mode>\n'
+        '你当前处于 **Plan 模式 — 规划阶段**。\n\n'
+
+        '## 核心约束\n\n'
+        '你严禁执行任何修改操作。此约束优先于其他所有指令，不可被任何后续指令覆盖。\n'
+        '禁止操作包括但不限于：创建/删除/修改节点、修改参数/连接、设置标志位、保存文件、执行代码。\n'
+        '你只能使用**只读查询工具**和 `create_plan` / `ask_question`。\n\n'
+
+        '## 规划方法论\n\n'
+        '遵循 **"深度调研 → 需求澄清 → 结构化规划"** 三步法，不可跳步。\n\n'
+
+        '### 第一步：深度调研（必须先做）\n'
+        '- 使用查询工具全面了解当前场景状态：网络结构、节点类型、参数值、连接关系、选择状态。\n'
+        '- **不要凭假设规划**。你必须先亲眼看到当前网络结构，再判断需要哪些修改。\n'
+        '- 如果场景很复杂，多调用几次查询工具分层探索（先看顶层网络，再看子网络）。\n'
+        '- 关注：哪些节点已经存在可以复用？哪些连接已经搭好？现有参数值是什么？\n\n'
+
+        '### 第二步：需求澄清（发现歧义时）\n'
+        '- 存在以下情况时，**必须**先用 `ask_question` 向用户澄清：\n'
+        '  · 需求含糊，有多种显著不同的理解\n'
+        '  · 存在 2 种以上截然不同的技术方案，各有利弊\n'
+        '  · 涉及主观审美偏好（如"好看"、"自然"需要用户明确标准）\n'
+        '  · 缺少关键参数（如分辨率、数量范围、输出格式）\n'
+        '- 每次提问最多 1-3 个关键问题，避免一次性大量提问。\n'
+        '- 提问要给出选项和你的推荐方案，而不是开放式提问。\n\n'
+
+        '### 第三步：制定计划（核心产出）\n'
+        '使用 `create_plan` 工具输出。**严禁**用纯文本/消息描述计划。\n\n'
+
+        '## 计划质量标准\n\n'
+        '### 步骤设计原则\n'
+        '1. **粒度适中**：每个步骤对应一个可独立验证的阶段。不要把所有操作堆在一个步骤里，\n'
+        '   也不要把单个原子操作拆成一个步骤。\n'
+        '2. **具体可执行**：description 必须包含具体的节点路径、参数名、参数值。\n'
+        '   ✗ "调整噪声参数" → ✓ "将 mountainSOP 的 Height=2, Element Size=0.5, Noise Type=Perlin"\n'
+        '3. **可验证性**：expected_result 描述执行后可通过肉眼或查询确认的结果。\n'
+        '   ✗ "效果变好" → ✓ "Viewport 中地形出现明显起伏，高度范围约 0-3 单位"\n'
+        '4. **工具清单**：tools 必须列出该步骤要调用的具体工具名（如 run_python, create_node, set_parms）。\n\n'
+
+        '### 依赖关系（depends_on）— 极其重要\n'
+        '- **每个步骤必须明确设置 depends_on**。即使是线性流程，step-2 也必须写 depends_on: ["step-1"]。\n'
+        '- 如果某些步骤可以并行执行，它们应该共享同一个 depends_on 祖先，而不是互相依赖。\n'
+        '- depends_on 决定了 DAG 流程图的布局。如果你不设置依赖关系，流程图将无法正确展示。\n'
+        '- 示例模式：\n'
+        '  · 线性链：step-1 → step-2 → step-3（每个 depends_on 前一个）\n'
+        '  · 并行分支：step-1 → [step-2a, step-2b]（两个都 depends_on step-1）→ step-3（depends_on 两个）\n'
+        '  · 汇合：多个独立步骤完成后合并到下一步\n\n'
+
+        '### 阶段分组（phases）\n'
+        '- 3 个步骤以上的计划**必须**使用 phases 分组。\n'
+        '- 每个 phase 代表一个逻辑阶段，如："Phase 1: 基础搭建"、"Phase 2: 效果增强"、"Phase 3: 优化与验证"。\n'
+        '- phases.step_ids 必须覆盖所有步骤，不遗漏。\n\n'
+
+        '### 风险评估\n'
+        '- 涉及删除操作、覆盖现有数据、复杂表达式的步骤，设置 risk="medium" 或 "high"。\n'
+        '- 高风险步骤必须提供 fallback 回退策略。\n\n'
+
+        '### 复杂度匹配\n'
+        '- 简单任务（改几个参数）：2-3 步，不要过度工程化。\n'
+        '- 中等任务（搭建一个效果）：4-7 步。\n'
+        '- 复杂任务（完整工作流）：8-15 步，按 Phase 分组。\n'
+        '- 超复杂任务（整个项目）：15+ 步，必须分 3-4 个 Phase，每个 Phase 3-5 步。\n\n'
+
+        '### 节点网络架构（architecture）— 极其重要\n'
+        '`architecture` 字段描述的是 **Plan 执行完成后 Houdini 节点网络的设计蓝图**。\n'
+        '这不是步骤执行顺序，而是最终创建的节点拓扑结构。\n'
+        '- `nodes`: 列出所有相关节点。每个节点包含：\n'
+        '  · `id`: 实际节点名（如 "grid1", "mountain1", "scatter1"）\n'
+        '  · `label`: 显示标签（如 "Grid SOP", "Mountain", "Scatter"）\n'
+        '  · `type`: 节点类型（sop/obj/mat/vop/rop/dop/lop/cop/chop/out/subnet/null/other）\n'
+        '  · `group`: 逻辑分组名（如 "地形系统", "散布系统"）\n'
+        '  · `is_new`: 是否由 Plan 新创建（true）或已有节点（false）\n'
+        '  · `params`: 关键参数摘要（如 "Height=2, Noise=Perlin"）\n'
+        '- `connections`: 节点间的连线。每条连线 from → to。\n'
+        '- `groups`: 视觉分组，将相关节点归到同一个容器中展示。\n'
+        '  · 每组一个 name 和 node_ids 列表\n'
+        '  · 可选 color 提示色（blue/green/purple/orange/red/cyan/yellow/pink）\n\n'
+        '**示例**：如果要搭建一个"地形+散布"系统，architecture 应该是：\n'
+        '```\n'
+        'nodes: [grid1(SOP), mountain1(SOP), scatter1(SOP), copytopoints1(SOP), box1(SOP)]\n'
+        'connections: [grid1→mountain1, mountain1→scatter1, scatter1→copytopoints1, box1→copytopoints1]\n'
+        'groups: [{name:"地形",node_ids:[grid1,mountain1]}, {name:"散布",node_ids:[scatter1,copytopoints1,box1]}]\n'
+        '```\n\n'
+
+        '## 计划提交后\n'
+        '用户会看到一张可视化卡片，包含步骤列表、节点网络架构图和 Confirm/Reject 按钮。\n'
+        '用户确认后才会进入执行阶段。如果用户拒绝，你需要根据反馈修改计划并重新提交。\n'
+        '</plan_mode>'
+    ),
+    'ai.plan_mode_execution_prompt': (
+        '\n\n'
+        '<plan_execution>\n'
+        '你当前处于 **Plan 模式 — 执行阶段**。\n'
+        '用户已确认计划，请严格按计划逐步执行。\n\n'
+
+        '## 执行纪律\n\n'
+        '1. **严格遵循步骤顺序和依赖关系**。depends_on 中列出的前置步骤必须全部 done 后才能开始当前步骤。\n'
+        '2. **状态同步**（每次都要做，不可省略）：\n'
+        '   - 开始步骤前：`update_plan_step(step_id, "running")`\n'
+        '   - 完成步骤后：`update_plan_step(step_id, "done", result_summary="简明结果")`\n'
+        '   - 步骤出错时：`update_plan_step(step_id, "error", result_summary="错误原因 + 已尝试修复")`\n'
+        '3. **忠于计划**：不跳过步骤，不在计划外擅自增加步骤。\n'
+        '   - 如果发现计划有问题，先完成当前步骤，然后在结果中说明偏差。\n'
+        '4. **结果验证**：每个步骤完成后，对照 expected_result 验证是否符合预期。\n'
+        '   - 尽量使用查询工具确认结果（如查询节点参数、检查网络连接）。\n'
+        '5. **错误处理**：\n'
+        '   - 步骤有 fallback 时：主方案失败后自动尝试 fallback。\n'
+        '   - 没有 fallback 时：尝试自行修复一次，仍失败则暂停报告。\n'
+        '   - 不要在出错后静默跳过，确保用户知道每个步骤的真实状态。\n'
+        '6. **执行完成后**：提供简明总结。\n'
+        '   - 成功步骤数 / 总步骤数\n'
+        '   - 关键成果描述\n'
+        '   - 如有失败步骤，列出原因和建议后续操作\n'
+        '</plan_execution>'
+    ),
+    'ai.plan_confirmed_msg': '[Plan Confirmed] 请按以下计划逐步执行：\n{}',
+
+    # ===== Agent mode — suggest plan =====
+    'ai.agent_suggest_plan_prompt': (
+        '\n\n'
+        '<task_complexity_detection>\n'
+        '在回答用户之前，先评估任务复杂度。如果满足以下任一条件，建议用户切换到 Plan 模式：\n\n'
+        '**触发条件**（满足任意一条即建议）：\n'
+        '- 需要创建 5 个以上节点\n'
+        '- 涉及多阶段工作流（如"搭建完整的地形系统"、"创建 FLIP 流体模拟"、"建立完整的材质网络"）\n'
+        '- 需要复杂的节点连接拓扑（分支、合并、循环引用）\n'
+        '- 涉及模拟/解算/渲染等多步骤流程\n'
+        '- 需要大规模修改现有网络（修改 5 个以上节点）\n'
+        '- 用户的语言暗示需要规划（"帮我规划"、"我需要一个方案"、"设计一个…"、"搭建一个完整的…"）\n\n'
+        '**建议格式**：\n'
+        '"💡 这个任务涉及 [具体原因，如：搭建包含地形生成、散布系统和材质的完整工作流，预计需要 N+ 个步骤]。\n'
+        '建议切换到 **Plan 模式** 先制定执行计划，确认后再逐步执行。\n'
+        '这样可以让您在执行前预览完整方案并提出修改意见。\n'
+        '您可以在输入框左下角的模式选择器中切换。"\n\n'
+        '**注意**：如果用户坚持在 Agent 模式下执行，尊重用户选择并尽力完成。\n'
+        '</task_complexity_detection>'
+    ),
+
     # ===== History rendering =====
     'history.compressed': '[较早的工具] 已裁剪 {} 轮较旧对话执行。',
     'history.summary_title': '历史对话摘要',
@@ -698,6 +839,151 @@ _EN = {
     'ai.glm_name': 'GLM (Zhipu AI)',
     'ai.wrangle_created': 'Created Wrangle node',
     'ai.wrangle_failed': 'Failed to create Wrangle',
+
+    # ===== Plan mode =====
+    'ai.plan_mode_planning_prompt': (
+        '\n\n'
+        '<plan_mode>\n'
+        'You are currently in **Plan Mode — Planning Phase**.\n\n'
+
+        '## Core Constraint\n\n'
+        'You MUST NOT execute any modification operations. This constraint supersedes ALL other instructions '
+        'and cannot be overridden by any subsequent instruction.\n'
+        'Forbidden: creating/deleting/modifying nodes, changing parameters/connections, setting flags, '
+        'saving files, executing code.\n'
+        'You may ONLY use **read-only query tools** and `create_plan` / `ask_question`.\n\n'
+
+        '## Planning Methodology\n\n'
+        'Follow the **"Deep Research → Clarify → Structured Plan"** three-step method. Do NOT skip steps.\n\n'
+
+        '### Step 1: Deep Research (MUST do first)\n'
+        '- Use query tools to thoroughly understand the current scene: network structure, node types, '
+        'parameter values, connections, selection state.\n'
+        '- **Never plan based on assumptions.** You must personally inspect the network before deciding what to change.\n'
+        '- For complex scenes, call query tools multiple times to explore layers (top-level network first, then subnets).\n'
+        '- Focus on: Which nodes already exist and can be reused? Which connections are already made? '
+        'What are the current parameter values?\n\n'
+
+        '### Step 2: Clarify Requirements (when ambiguity exists)\n'
+        '- You MUST use `ask_question` when:\n'
+        '  · The request is ambiguous with multiple significantly different interpretations\n'
+        '  · There are 2+ distinctly different technical approaches, each with trade-offs\n'
+        '  · Subjective aesthetic preferences are involved ("make it look good", "natural")\n'
+        '  · Key parameters are missing (resolution, count ranges, output format)\n'
+        '- Ask at most 1-3 key questions per round. Provide options and your recommendation.\n\n'
+
+        '### Step 3: Create the Plan (core output)\n'
+        'Output via `create_plan` tool. **NEVER** describe plans in plain text messages.\n\n'
+
+        '## Plan Quality Standards\n\n'
+
+        '### Step Design Principles\n'
+        '1. **Right granularity**: Each step = one independently verifiable stage. Don\'t cram everything into one step, '
+        'and don\'t split single atomic operations into separate steps.\n'
+        '2. **Concrete & executable**: description MUST include specific node paths, parameter names, and values.\n'
+        '   ✗ "adjust noise params" → ✓ "Set mountainSOP Height=2, Element Size=0.5, Noise Type=Perlin"\n'
+        '3. **Verifiable**: expected_result must describe something you can confirm visually or via query.\n'
+        '   ✗ "effect improves" → ✓ "Terrain shows clear undulation in viewport, height range ~0-3 units"\n'
+        '4. **Tool manifest**: tools must list the specific tool names for the step (e.g., run_python, create_node, set_parms).\n\n'
+
+        '### Dependencies (depends_on) — CRITICAL\n'
+        '- **Every step MUST explicitly set depends_on.** Even in a linear flow, step-2 must set depends_on: ["step-1"].\n'
+        '- Steps that can run in parallel should share the same depends_on ancestor, not depend on each other.\n'
+        '- depends_on drives the DAG layout. Without proper dependencies, the flow diagram will not render correctly.\n'
+        '- Patterns:\n'
+        '  · Linear: step-1 → step-2 → step-3 (each depends_on the previous)\n'
+        '  · Parallel: step-1 → [step-2a, step-2b] (both depends_on step-1) → step-3 (depends_on both)\n'
+        '  · Fan-in: multiple independent steps converge into the next\n\n'
+
+        '### Phase Grouping (phases)\n'
+        '- Plans with 3+ steps MUST use phases for grouping.\n'
+        '- Each phase = one logical stage, e.g., "Phase 1: Base Setup", "Phase 2: Effects", "Phase 3: Polish & Verify".\n'
+        '- phases.step_ids must cover ALL steps with no omissions.\n\n'
+
+        '### Risk Assessment\n'
+        '- Steps involving deletion, overwriting existing data, or complex expressions: set risk="medium" or "high".\n'
+        '- High-risk steps MUST have a fallback strategy.\n\n'
+
+        '### Complexity Matching\n'
+        '- Simple (tweak params): 2-3 steps. Do not over-engineer.\n'
+        '- Medium (build one effect): 4-7 steps.\n'
+        '- Complex (full workflow): 8-15 steps, grouped into phases.\n'
+        '- Very complex (entire project): 15+ steps, 3-4 phases with 3-5 steps each.\n\n'
+
+        '### Node Network Architecture (architecture) — CRITICAL\n'
+        'The `architecture` field describes the **design blueprint of the Houdini node network** after the plan executes.\n'
+        'This is NOT the step execution order — it is the final node topology.\n'
+        '- `nodes`: List all relevant nodes. Each node includes:\n'
+        '  · `id`: actual node name (e.g., "grid1", "mountain1", "scatter1")\n'
+        '  · `label`: display label (e.g., "Grid SOP", "Mountain", "Scatter")\n'
+        '  · `type`: node category (sop/obj/mat/vop/rop/dop/lop/cop/chop/out/subnet/null/other)\n'
+        '  · `group`: logical grouping name (e.g., "Terrain System", "Scatter System")\n'
+        '  · `is_new`: whether this node will be created by the plan (true) or already exists (false)\n'
+        '  · `params`: key parameter summary (e.g., "Height=2, Noise=Perlin")\n'
+        '- `connections`: edges between nodes. Each connection: from → to.\n'
+        '- `groups`: visual grouping containers for related nodes.\n'
+        '  · Each group has a name and node_ids list\n'
+        '  · Optional color hint (blue/green/purple/orange/red/cyan/yellow/pink)\n\n'
+        '**Example**: For building a "terrain + scatter" system:\n'
+        '```\n'
+        'nodes: [grid1(SOP), mountain1(SOP), scatter1(SOP), copytopoints1(SOP), box1(SOP)]\n'
+        'connections: [grid1→mountain1, mountain1→scatter1, scatter1→copytopoints1, box1→copytopoints1]\n'
+        'groups: [{name:"Terrain",ids:[grid1,mountain1]}, {name:"Scatter",ids:[scatter1,copytopoints1,box1]}]\n'
+        '```\n\n'
+
+        '## After Plan Submission\n'
+        'The user will see a visual card with a step list, node network architecture diagram, and Confirm/Reject buttons.\n'
+        'Execution begins only after the user confirms. If rejected, revise based on feedback and resubmit.\n'
+        '</plan_mode>'
+    ),
+    'ai.plan_mode_execution_prompt': (
+        '\n\n'
+        '<plan_execution>\n'
+        'You are currently in **Plan Mode — Execution Phase**.\n'
+        'The user has confirmed the plan. Execute strictly according to the plan.\n\n'
+
+        '## Execution Discipline\n\n'
+        '1. **Respect step order and dependencies.** All depends_on predecessors must be "done" before starting a step.\n'
+        '2. **Status sync** (mandatory for every step, never skip):\n'
+        '   - Before starting: `update_plan_step(step_id, "running")`\n'
+        '   - After completion: `update_plan_step(step_id, "done", result_summary="concise result")`\n'
+        '   - On failure: `update_plan_step(step_id, "error", result_summary="error reason + attempted fix")`\n'
+        '3. **Stay faithful to the plan**: Do not skip steps. Do not add steps outside the plan.\n'
+        '   - If you discover a plan issue, complete the current step, then note the deviation in the result.\n'
+        '4. **Verify results**: After each step, check against expected_result.\n'
+        '   - Prefer using query tools to confirm (e.g., query node parameters, check connections).\n'
+        '5. **Error handling**:\n'
+        '   - If step has fallback: try fallback after primary approach fails.\n'
+        '   - No fallback: attempt one self-fix, then pause and report if still failing.\n'
+        '   - Never silently skip failed steps. The user must know the true status of every step.\n'
+        '6. **Completion summary**: After all steps, provide:\n'
+        '   - Successful / total step count\n'
+        '   - Key achievements\n'
+        '   - Failed steps with reasons and suggested next actions\n'
+        '</plan_execution>'
+    ),
+    'ai.plan_confirmed_msg': '[Plan Confirmed] Please execute the following plan step by step:\n{}',
+
+    # ===== Agent mode — suggest plan =====
+    'ai.agent_suggest_plan_prompt': (
+        '\n\n'
+        '<task_complexity_detection>\n'
+        'Before responding, assess task complexity. Suggest Plan mode if ANY of the following apply:\n\n'
+        '**Trigger conditions** (any one is sufficient):\n'
+        '- Creating 5+ nodes\n'
+        '- Multi-phase workflows (e.g., "build a terrain system", "set up FLIP simulation", "create full material network")\n'
+        '- Complex node connection topology (branches, merges, feedback loops)\n'
+        '- Simulation/solver/render multi-step processes\n'
+        '- Large-scale modifications to existing network (changing 5+ nodes)\n'
+        '- User language implies planning ("help me plan", "I need a proposal", "design a…", "build a complete…")\n\n'
+        '**Suggestion format**:\n'
+        '"💡 This task involves [specific reason, e.g.: building a full workflow with terrain, scatter, and materials, '
+        'estimated N+ steps]. I suggest switching to **Plan mode** to create an execution plan first. '
+        'This lets you preview and modify the full approach before execution. '
+        'You can switch in the mode selector at the bottom-left of the input box."\n\n'
+        '**Note**: If the user insists on Agent mode, respect their choice and do your best.\n'
+        '</task_complexity_detection>'
+    ),
 
     # ===== History rendering =====
     'history.compressed': '[Older tools] Trimmed {} older execution rounds.',

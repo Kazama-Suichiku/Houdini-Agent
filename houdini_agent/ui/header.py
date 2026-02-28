@@ -57,6 +57,9 @@ class HeaderMixin:
                 'gpt-5.3-codex',
                 'glm-4.7',
                 'glm-5',
+                'kimi-k2.5',
+                'MiniMax-M2.5',
+                'qwen3.5-plus',
             ],
         }
         self._model_context_limits = {
@@ -75,6 +78,10 @@ class HeaderMixin:
             'gemini-3-pro-image-preview': 128000,
             # Duojie - GLM (Anthropic 协议)
             'glm-5': 200000,
+            # Duojie - 其他模型
+            'kimi-k2.5': 128000,
+            'MiniMax-M2.5': 128000,
+            'qwen3.5-plus': 128000,
         }
         # 模型特性配置
         self._model_features = {
@@ -102,6 +109,10 @@ class HeaderMixin:
             'gemini-3-pro-image-preview': {'supports_prompt_caching': True, 'supports_vision': True},
             # Duojie - GLM (Anthropic 协议)
             'glm-5':                      {'supports_prompt_caching': True, 'supports_vision': False},
+            # Duojie - 其他模型
+            'kimi-k2.5':                  {'supports_prompt_caching': True, 'supports_vision': False},
+            'MiniMax-M2.5':               {'supports_prompt_caching': True, 'supports_vision': False},
+            'qwen3.5-plus':               {'supports_prompt_caching': True, 'supports_vision': False},
         }
         self._refresh_models('ollama')
         self.model_combo.setMinimumWidth(100)

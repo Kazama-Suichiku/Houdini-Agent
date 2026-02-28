@@ -3098,7 +3098,8 @@ class AIClient:
                           on_thinking: Optional[Callable[[str], None]] = None,
                           on_tool_call: Optional[Callable[[str, dict], None]] = None,
                           on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
-                          on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None) -> Dict[str, Any]:
+                          on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
+                          on_iteration_start: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
         """流式 Agent Loop
         
         Args:
@@ -3108,6 +3109,8 @@ class AIClient:
             on_thinking: 思考回调 (content) -> None
             on_tool_call: 工具调用开始回调 (name, args) -> None
             on_tool_result: 工具结果回调 (name, args, result) -> None
+            on_iteration_start: 每轮 API 请求开始时的回调 (iteration) -> None
+                                用于 UI 显示 "Generating..." 等待状态
         
         Returns:
             {"ok": bool, "content": str, "final_content": str,
@@ -3204,6 +3207,10 @@ class AIClient:
                 role_counts = Counter(m.get('role', '?') for m in working_messages)
                 summary = ', '.join(f"{r}={c}" for r, c in role_counts.items())
                 print(f"[AI Client] iteration={iteration}, messages={len(working_messages)} ({summary})")
+            
+            # ★ 通知 UI 新一轮 API 请求即将开始（用于显示 "Generating..." 状态）
+            if on_iteration_start:
+                on_iteration_start(iteration)
             
             # 流式请求
             for chunk in self.chat_stream(
@@ -3938,7 +3945,8 @@ class AIClient:
                               on_thinking: Optional[Callable[[str], None]] = None,
                               on_tool_call: Optional[Callable[[str, dict], None]] = None,
                               on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
-                              on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None) -> Dict[str, Any]:
+                              on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
+                              on_iteration_start: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
         """JSON 模式 Agent Loop（用于不支持 Function Calling 的模型）"""
         
         if not self._tool_executor:
@@ -4023,6 +4031,10 @@ class AIClient:
                         m['content'] = self._summarize_tool_content(c, 400)
                     elif role == 'assistant' and len(c) > 600:
                         m['content'] = c[:600] + '...[已截断]'
+            
+            # ★ 通知 UI 新一轮 API 请求即将开始（用于显示 "Generating..." 状态）
+            if on_iteration_start:
+                on_iteration_start(iteration)
             
             # 流式请求（不传 tools 参数）
             for chunk in self.chat_stream(

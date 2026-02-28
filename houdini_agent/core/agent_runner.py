@@ -56,6 +56,51 @@ class AgentRunnerMixin:
         'update_todo',
     })
 
+    # ★ Plan 模式规划阶段白名单：只读工具 + create_plan
+    _PLAN_PLANNING_TOOLS = frozenset({
+        # 查询 & 检查（复用 Ask 模式）
+        'get_network_structure',
+        'get_node_parameters',
+        'list_children',
+        'read_selection',
+        'search_node_types',
+        'semantic_search_nodes',
+        'find_nodes_by_param',
+        'get_node_inputs',
+        'check_errors',
+        'verify_and_summarize',
+        # 文档 & 搜索
+        'web_search',
+        'fetch_webpage',
+        'search_local_doc',
+        'get_houdini_node_doc',
+        # Skill
+        'list_skills',
+        # 任务管理
+        'add_todo',
+        'update_todo',
+        # 只读查询
+        'get_node_positions',
+        'list_network_boxes',
+        'perf_start_profile',
+        'perf_stop_and_report',
+        # ★ Plan 专用
+        'create_plan',
+        'ask_question',
+    })
+
+    # ★ Plan 模式执行阶段附加工具
+    _PLAN_EXECUTION_EXTRA_TOOLS = frozenset({
+        'update_plan_step',
+    })
+
+    # ★ Plan 模式静默工具（不在 UI 执行列表中显示）
+    _PLAN_SILENT_TOOLS = frozenset({
+        'create_plan',
+        'update_plan_step',
+        'ask_question',
+    })
+
     # ★ Ask 模式白名单：只读 / 查询 / 分析工具（不包含任何修改场景的操作）
     _ASK_MODE_TOOLS = frozenset({
         # 查询 & 检查
