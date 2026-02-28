@@ -1299,8 +1299,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         resp = self._agent_response or self._current_response
         if not text or not resp:
             return
-        # 过滤纯空白（只含换行/空格的 chunk）
-        if not text.strip():
+        # ★ 修复：不丢弃包含换行符的 chunk
+        # 纯换行符（\n\n）是 Markdown 段落分隔的关键信号，
+        # 丢弃它们会导致多段内容粘连在一起
+        if not text.strip() and '\n' not in text:
             return
         try:
             # ★ 内容开始流入 → 隐藏 "Generating..." 状态（如果正在显示）

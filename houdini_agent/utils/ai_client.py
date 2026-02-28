@@ -3189,6 +3189,7 @@ class AIClient:
             should_retry = False  # 错误恢复标志
             should_abort = False  # 不可恢复错误标志
             abort_error = ""
+            _round_content_started = False  # ★ 标记本轮是否已发出首个 content chunk
             
             # 发送前清洗消息（仅在新增 tool 消息后才需要，避免无谓的 O(n) 遍历）
             if _needs_sanitize:
@@ -3260,6 +3261,21 @@ class AIClient:
                     cleaned_chunk = content
                     for _pat in self._RE_CLEAN_PATTERNS:
                         cleaned_chunk = _pat.sub('', cleaned_chunk)
+                    
+                    # ★ 修复多轮 iteration 内容粘连：
+                    # 如果上一轮已有 content（full_content 非空），且本轮是首个 content chunk，
+                    # 自动注入 \n\n 段落分隔符，避免 AI 跨 iteration 的文字粘在一起
+                    if cleaned_chunk and not _round_content_started and full_content:
+                        # 检查 full_content 末尾是否已有足够换行
+                        if not full_content.endswith('\n\n'):
+                            sep = '\n\n' if not full_content.endswith('\n') else '\n'
+                            round_content += sep
+                            if on_content:
+                                on_content(sep)
+                        _round_content_started = True
+                    elif cleaned_chunk:
+                        _round_content_started = True
+                    
                     round_content += cleaned_chunk
                     if on_content and cleaned_chunk:
                         on_content(cleaned_chunk)

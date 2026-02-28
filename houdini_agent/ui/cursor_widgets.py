@@ -1197,7 +1197,10 @@ class AIResponse(QtWidgets.QWidget):
         3. 已完成段落冻结为 RichText Widget，不再变动
         4. 不完整的尾部保留在 QPlainTextEdit 中继续接收 delta
         """
-        if not text.strip():
+        # ★ 修复：不丢弃包含换行符的 chunk
+        # 纯换行符（\n\n）是 Markdown 段落分隔的关键信号，
+        # 丢弃它们会导致多段内容粘连在一起
+        if not text.strip() and '\n' not in text:
             return
         # 清除 U+FFFD 替换符（encoding 异常残留）
         if '\ufffd' in text:
