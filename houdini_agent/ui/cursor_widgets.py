@@ -5520,6 +5520,12 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setObjectName("chatInput")
         self.setMinimumHeight(self._MIN_H)
         self.setMaximumHeight(self._MAX_H)
+        
+        # ★ PySide2 IME 支持：显式启用输入法
+        # PySide2 在某些宿主环境（如 Houdini）中不会自动启用 IME，
+        # 导致中文/日文/韩文等输入法无法调起
+        self.setAttribute(QtCore.Qt.WA_InputMethodEnabled, True)
+        
         # 使用 textChanged，并延迟到下一事件循环执行（确保布局先完成）
         self.textChanged.connect(self._schedule_adjust)
         self.textChanged.connect(self._check_at_trigger)
@@ -5527,6 +5533,8 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self._at_active = False
         self._at_start_pos = -1
         self._completer_popup: 'NodeCompleterPopup | None' = None
+        # ★ IME 预编辑状态追踪
+        self._ime_composing = False
     
     def set_completer_popup(self, popup: 'NodeCompleterPopup'):
         """设置节点补全弹出框引用，用于键盘导航和自动关闭"""
@@ -5633,8 +5641,35 @@ class ChatInput(QtWidgets.QPlainTextEdit):
                 and self._completer_popup.isVisible()
                 and self._completer_popup.count() > 0)
 
+    def inputMethodEvent(self, event):
+        """★ IME 输入法事件处理（中文/日文/韩文等）
+        
+        PySide2 在 Houdini 环境下需要显式处理 inputMethodEvent，
+        否则中文输入法的预编辑（composing）和提交（commit）可能无法正常工作。
+        
+        IME 工作流程：
+        1. 用户开始输入拼音 → preeditString 不为空（composing 状态）
+        2. 用户选择候选词 → commitString 不为空，preeditString 清空
+        3. 用户按 Esc 取消 → preeditString 清空，commitString 为空
+        """
+        preedit = event.preeditString()
+        commit = event.commitString()
+        
+        # 更新 composing 状态
+        self._ime_composing = bool(preedit)
+        
+        # 交给父类处理实际的文本插入
+        super().inputMethodEvent(event)
+    
     def keyPressEvent(self, event):
         key = event.key()
+        
+        # ★ IME composing 中：不拦截任何按键，全部交给输入法处理
+        # 当用户正在输入拼音/选择候选词时，Enter/Esc 等键应由 IME 处理，
+        # 而不是触发"发送消息"或"取消补全"
+        if self._ime_composing:
+            super().keyPressEvent(event)
+            return
         
         # ── @ 补全活跃时的键盘处理 ──
         if self._at_active and self._is_completer_visible():
