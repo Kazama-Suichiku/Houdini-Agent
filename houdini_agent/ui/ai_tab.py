@@ -2036,11 +2036,28 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             # 通过信号在主线程更新 PlanViewer 步骤状态
             self._updatePlanStep.emit(step_id, status, result_summary or '')
             # 检查是否全部完成
+            all_steps = plan.get('steps', [])
+            done_count = sum(1 for s in all_steps if s.get('status') == 'done')
+            error_count = sum(1 for s in all_steps if s.get('status') == 'error')
+            total = len(all_steps)
+            
             if plan.get('status') == 'completed':
                 self._plan_phase = 'completed'
+                return {
+                    "success": True,
+                    "result": f"Step {step_id} updated to '{status}'. Plan complete! ({done_count}/{total} done, {error_count} errors)"
+                }
+            
+            # 返回进度信息，让 AI 知道还有多少步骤要做
+            pending_steps = [s for s in all_steps if s.get('status') == 'pending']
+            next_step_info = ""
+            if pending_steps:
+                ns = pending_steps[0]
+                next_step_info = f" Next: {ns['id']} \"{ns.get('title', ns.get('description', ns['id']))}\""
+            
             return {
                 "success": True,
-                "result": f"Step {step_id} updated to '{status}'"
+                "result": f"Step {step_id} updated to '{status}'. Progress: {done_count}/{total} done.{next_step_info}"
             }
         except Exception as e:
             return {"success": False, "error": f"Failed to update plan step: {e}"}
@@ -3454,6 +3471,58 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if plan_mode:
                 # ★ Plan 模式：使用 agent loop（规划或执行阶段均走此分支）
                 _max_iter = 999 if plan_executing else 20
+                
+                # ★ Plan 续接回调：检测 AI 提前终止但 Plan 未完成的情况
+                _plan_resume_callback = None
+                _plan_resume_count = 0       # 防止无限续接
+                _MAX_PLAN_RESUMES = 5        # 最多续接 5 次
+                if plan_executing:
+                    def _check_plan_incomplete():
+                        nonlocal _plan_resume_count
+                        if _plan_resume_count >= _MAX_PLAN_RESUMES:
+                            print(f"[AI Client] Plan 续接次数已达上限 ({_MAX_PLAN_RESUMES})，停止续接")
+                            return None
+                        try:
+                            if self._plan_manager is None:
+                                from ..utils.plan_manager import get_plan_manager
+                                self._plan_manager = get_plan_manager()
+                            plan = self._plan_manager.load_plan(self._session_id)
+                            if not plan:
+                                return None
+                            steps = plan.get('steps', [])
+                            if not steps:
+                                return None
+                            done_count = sum(1 for s in steps if s.get('status') == 'done')
+                            total = len(steps)
+                            if done_count >= total:
+                                return None  # 全部完成，正常结束
+                            
+                            # 找到未完成的步骤
+                            pending_steps = [s for s in steps if s.get('status') in ('pending', 'running')]
+                            if not pending_steps:
+                                return None
+                            
+                            _plan_resume_count += 1
+                            # 构造提醒消息
+                            pending_names = ', '.join(
+                                f'"{s.get("title", s.get("description", s["id"]))}"'
+                                for s in pending_steps[:5]
+                            )
+                            # 获取最新的 Plan 上下文
+                            plan_ctx = self._plan_manager.get_plan_for_context(self._session_id)
+                            resume_msg = (
+                                f"[Plan Incomplete] 计划尚未完成！已完成 {done_count}/{total} 步。\n"
+                                f"未完成步骤: {pending_names}\n"
+                                f"请立即继续执行下一个未完成的步骤。不要停止，不要总结，继续调用工具执行。\n"
+                            )
+                            if plan_ctx:
+                                resume_msg += f"\n{plan_ctx}"
+                            return resume_msg
+                        except Exception as e:
+                            print(f"[Plan] Incomplete check error: {e}")
+                            return None
+                    _plan_resume_callback = _check_plan_incomplete
+                
                 result = self.client.agent_loop_auto(
                     messages=messages,
                     model=model,
@@ -3479,6 +3548,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         self._toolArgsDelta.emit(name, delta, acc)
                     ),
                     on_iteration_start=_on_iter,
+                    on_plan_incomplete=_plan_resume_callback,
                 )
             elif use_agent:
                 # ★ Agent 模式：完整 agent loop，可创建/修改/删除节点

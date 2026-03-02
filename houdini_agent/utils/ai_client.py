@@ -3099,7 +3099,8 @@ class AIClient:
                           on_tool_call: Optional[Callable[[str, dict], None]] = None,
                           on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
                           on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
-                          on_iteration_start: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
+                          on_iteration_start: Optional[Callable[[int], None]] = None,
+                          on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None) -> Dict[str, Any]:
         """流式 Agent Loop
         
         Args:
@@ -3111,6 +3112,11 @@ class AIClient:
             on_tool_result: 工具结果回调 (name, args, result) -> None
             on_iteration_start: 每轮 API 请求开始时的回调 (iteration) -> None
                                 用于 UI 显示 "Generating..." 等待状态
+            on_plan_incomplete: Plan 未完成检测回调 () -> Optional[str]
+                                当 AI 返回纯文本（无 tool_calls）时调用此回调。
+                                如果 Plan 尚有未完成步骤，返回一条提醒消息字符串，
+                                agent loop 会将其注入为 user 消息并继续迭代。
+                                如果 Plan 已全部完成或不需要续接，返回 None。
         
         Returns:
             {"ok": bool, "content": str, "final_content": str,
@@ -3457,6 +3463,32 @@ class AIClient:
             
             # 如果没有工具调用，完成
             if not round_tool_calls:
+                # ★ Plan 续接检测：AI 输出了纯文本，但 Plan 可能还有未完成步骤
+                # 通过回调询问 UI 层 Plan 是否已完成
+                _plan_resume_msg = None
+                if on_plan_incomplete and iteration > 1:
+                    try:
+                        _plan_resume_msg = on_plan_incomplete()
+                    except Exception as _pe:
+                        print(f"[AI Client] on_plan_incomplete error: {_pe}")
+                
+                if _plan_resume_msg:
+                    # Plan 尚未完成 → 将 AI 的当前回复存入历史，注入提醒消息，继续循环
+                    print(f"[AI Client] ★ Plan 续接：AI 提前终止，注入提醒消息继续执行")
+                    full_content += round_content
+                    
+                    # 1. 将 AI 的纯文本回复作为 assistant 消息存入 working_messages
+                    _assistant_msg = {'role': 'assistant', 'content': round_content or ''}
+                    if round_thinking:
+                        _assistant_msg['reasoning_content'] = round_thinking
+                    working_messages.append(_assistant_msg)
+                    
+                    # 2. 注入 "Plan 未完成" 的提醒消息作为 user 消息
+                    working_messages.append({'role': 'user', 'content': _plan_resume_msg})
+                    _needs_sanitize = True
+                    _round_content_started = False
+                    continue  # 继续 while 循环，开始新一轮 API 请求
+                
                 full_content += round_content
                 # 计算 cache 命中率
                 prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
@@ -3962,7 +3994,8 @@ class AIClient:
                               on_tool_call: Optional[Callable[[str, dict], None]] = None,
                               on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
                               on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
-                              on_iteration_start: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
+                              on_iteration_start: Optional[Callable[[int], None]] = None,
+                              on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None) -> Dict[str, Any]:
         """JSON 模式 Agent Loop（用于不支持 Function Calling 的模型）"""
         
         if not self._tool_executor:
@@ -4203,6 +4236,21 @@ class AIClient:
                 if not cleaned_content.strip() and tool_calls_history:
                     # 有工具调用历史但无内容，继续循环等待总结
                     continue
+                
+                # ★ Plan 续接检测（JSON 模式）
+                _plan_resume_msg = None
+                if on_plan_incomplete and iteration > 1:
+                    try:
+                        _plan_resume_msg = on_plan_incomplete()
+                    except Exception as _pe:
+                        print(f"[AI Client] on_plan_incomplete error (json mode): {_pe}")
+                
+                if _plan_resume_msg:
+                    print(f"[AI Client] ★ Plan 续接 (JSON mode)：AI 提前终止，注入提醒消息继续执行")
+                    working_messages.append({'role': 'assistant', 'content': cleaned_content or ''})
+                    working_messages.append({'role': 'user', 'content': _plan_resume_msg})
+                    continue
+                
                 # 计算 cache 命中率
                 prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
                 if prompt_total > 0:
