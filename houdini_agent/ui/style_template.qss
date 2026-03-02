@@ -2134,5 +2134,83 @@ QPushButton#updateNotifyDismiss:hover {
 
 
 /* ============================================================
+   PLUGIN MANAGER
+   ============================================================ */
+
+QDialog#pluginManagerDlg, QDialog#pluginSettingsDlg {
+    background: qlineargradient(x1:0, y1:0, x2:0.3, y2:1,
+                    stop:0 #0f1019, stop:0.5 #0d0f1a, stop:1 #0a1018);
+    border: 1px solid rgba(255,255,255,12);
+    border-radius: 8px;
+}
+QLabel#pluginManagerTitle {
+    font-size: {FS_LG}px;
+    font-weight: bold;
+    color: #e2e8f0;
+    background: transparent;
+    padding: 4px 0;
+}
+QFrame#pluginRow {
+    background: rgba(16,18,32,200);
+    border: 1px solid rgba(255,255,255,8);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin: 2px 0;
+}
+QFrame#pluginRow:hover {
+    border: 1px solid rgba(255,255,255,16);
+    background: rgba(22,24,42,220);
+}
+QPushButton#pluginBtn {
+    font-size: {FS_XS}px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    background: rgba(255,255,255,8);
+    color: #94a3b8;
+    border: 1px solid rgba(255,255,255,12);
+}
+QPushButton#pluginBtn:hover {
+    background: rgba(255,255,255,14);
+    color: #e2e8f0;
+}
+QPushButton#pluginBtnPrimary {
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    padding: 4px 14px;
+    border-radius: 4px;
+    background: rgba(59,130,246,160);
+    color: #ffffff;
+    border: none;
+}
+QPushButton#pluginBtnPrimary:hover {
+    background: rgba(37,99,235,200);
+}
+QPushButton#pluginBtnSmall {
+    font-size: {FS_XS}px;
+    border-radius: 4px;
+    background: rgba(255,255,255,6);
+    color: #94a3b8;
+    border: 1px solid rgba(255,255,255,8);
+}
+QPushButton#pluginBtnSmall:hover {
+    background: rgba(255,255,255,12);
+    color: #e2e8f0;
+}
+QPushButton#pluginToolbarBtn {
+    font-size: {FS_SM}px;
+    border-radius: 4px;
+    background: rgba(255,255,255,6);
+    color: #94a3b8;
+    border: 1px solid rgba(255,255,255,8);
+    padding: 2px;
+}
+QPushButton#pluginToolbarBtn:hover {
+    background: rgba(168,139,250,40);
+    color: #a78bfa;
+    border: 1px solid rgba(168,139,250,60);
+}
+
+
+/* ============================================================
    END
    ============================================================ */

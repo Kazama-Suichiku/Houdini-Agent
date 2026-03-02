@@ -536,6 +536,19 @@ _ZH = {
     # ===== History rendering =====
     'history.compressed': '[较早的工具] 已裁剪 {} 轮较旧对话执行。',
     'history.summary_title': '历史对话摘要',
+
+    # ===== Plugin System =====
+    'plugin.menu_label': '插件管理',
+    'plugin.manager_title': '插件管理',
+    'plugin.open_folder': '打开插件目录',
+    'plugin.reload_all': '重载全部',
+    'plugin.reload': '重载',
+    'plugin.settings': '设置',
+    'plugin.toggle_tip': '启用/禁用此插件',
+    'plugin.no_plugins': '暂无插件\n将 .py 文件放入 plugins/ 目录即可',
+    'plugin.load_error': '加载插件列表失败',
+    'plugin.cancel': '取消',
+    'plugin.save': '保存',
 }
 
 
@@ -1008,6 +1021,19 @@ _EN = {
     # ===== History rendering =====
     'history.compressed': '[Older tools] Trimmed {} older execution rounds.',
     'history.summary_title': 'Conversation summary',
+
+    # ===== Plugin System =====
+    'plugin.menu_label': 'Plugins',
+    'plugin.manager_title': 'Plugin Manager',
+    'plugin.open_folder': 'Open Plugins Folder',
+    'plugin.reload_all': 'Reload All',
+    'plugin.reload': 'Reload',
+    'plugin.settings': 'Settings',
+    'plugin.toggle_tip': 'Enable/Disable this plugin',
+    'plugin.no_plugins': 'No plugins found\nPlace .py files in plugins/ directory',
+    'plugin.load_error': 'Failed to load plugins',
+    'plugin.cancel': 'Cancel',
+    'plugin.save': 'Save',
 }
 
 # 启动时自动恢复语言设置

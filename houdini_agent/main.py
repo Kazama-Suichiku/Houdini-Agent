@@ -16,6 +16,7 @@ def _reload_modules():
         'houdini_agent.utils.ultra_optimizer',
         'houdini_agent.utils.training_data_exporter',
         'houdini_agent.utils.updater',
+        'houdini_agent.utils.hooks',
         'houdini_agent.utils.ai_client',
         'houdini_agent.utils.mcp.client',
         'houdini_agent.utils.mcp',

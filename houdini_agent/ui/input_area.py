@@ -123,6 +123,12 @@ class InputAreaMixin:
         self.chk_confirm_mode.toggled.connect(self._on_confirm_mode_toggled)
         toolbar.addWidget(self.chk_confirm_mode)
         
+        # ★ 插件按钮容器（由 HookManager.PluginUIBridge 挂载按钮）
+        self._plugin_button_container = QtWidgets.QHBoxLayout()
+        self._plugin_button_container.setSpacing(2)
+        self._plugin_button_container.setContentsMargins(0, 0, 0, 0)
+        toolbar.addLayout(self._plugin_button_container)
+        
         toolbar.addStretch()
         
         # Token 统计

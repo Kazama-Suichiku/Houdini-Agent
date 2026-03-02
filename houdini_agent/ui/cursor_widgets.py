@@ -6465,3 +6465,350 @@ class UpdateNotificationBanner(QtWidgets.QFrame):
     def _on_dismiss(self):
         self.setVisible(False)
         self.dismissClicked.emit()
+
+
+# ============================================================
+# Plugin Manager Dialog — 插件管理面板
+# ============================================================
+
+class PluginManagerDialog(QtWidgets.QDialog):
+    """插件管理面板
+
+    从溢出菜单打开，列出所有插件，支持启用/禁用、重载、设置。
+    """
+
+    pluginStateChanged = QtCore.Signal()  # 插件状态变化时通知
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("pluginManagerDlg")
+        self.setWindowTitle(tr('plugin.manager_title'))
+        self.setMinimumSize(460, 340)
+        self.resize(500, 400)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+
+        # 标题
+        title = QtWidgets.QLabel(tr('plugin.manager_title'))
+        title.setObjectName("pluginManagerTitle")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e2e8f0; background: transparent;")
+        layout.addWidget(title)
+
+        # 分隔线
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        sep.setStyleSheet("color: rgba(255,255,255,8);")
+        layout.addWidget(sep)
+
+        # 插件列表滚动区域
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("pluginListScroll")
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self._list_container = QtWidgets.QWidget()
+        self._list_layout = QtWidgets.QVBoxLayout(self._list_container)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(4)
+        scroll.setWidget(self._list_container)
+        layout.addWidget(scroll, 1)
+
+        # 底部按钮栏
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.setSpacing(8)
+
+        btn_open_dir = QtWidgets.QPushButton(tr('plugin.open_folder'))
+        btn_open_dir.setObjectName("pluginBtn")
+        btn_open_dir.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_open_dir.clicked.connect(self._open_plugins_dir)
+        bottom.addWidget(btn_open_dir)
+
+        bottom.addStretch()
+
+        btn_reload_all = QtWidgets.QPushButton(tr('plugin.reload_all'))
+        btn_reload_all.setObjectName("pluginBtnPrimary")
+        btn_reload_all.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_reload_all.clicked.connect(self._reload_all)
+        bottom.addWidget(btn_reload_all)
+
+        layout.addLayout(bottom)
+
+        # 加载插件列表
+        self._refresh_list()
+
+    def _refresh_list(self):
+        """刷新插件列表"""
+        # 清空旧项
+        while self._list_layout.count():
+            item = self._list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        try:
+            from ..utils.hooks import list_plugins
+            plugins = list_plugins()
+        except Exception as e:
+            lbl = QtWidgets.QLabel(f"⚠ {tr('plugin.load_error')}: {e}")
+            lbl.setStyleSheet("color: #f87171; padding: 12px; background: transparent;")
+            self._list_layout.addWidget(lbl)
+            self._list_layout.addStretch()
+            return
+
+        if not plugins:
+            lbl = QtWidgets.QLabel(tr('plugin.no_plugins'))
+            lbl.setStyleSheet("color: #94a3b8; padding: 20px; background: transparent;")
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            self._list_layout.addWidget(lbl)
+        else:
+            for info in plugins:
+                row = self._create_plugin_row(info)
+                self._list_layout.addWidget(row)
+
+        self._list_layout.addStretch()
+
+    def _create_plugin_row(self, info: dict) -> QtWidgets.QWidget:
+        """创建单个插件行"""
+        row = QtWidgets.QFrame()
+        row.setObjectName("pluginRow")
+
+        h = QtWidgets.QHBoxLayout(row)
+        h.setContentsMargins(10, 8, 10, 8)
+        h.setSpacing(8)
+
+        # 左侧：名称 + 描述
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(2)
+
+        name = info.get("name", "Unknown")
+        version = info.get("version", "")
+        author = info.get("author", "")
+        enabled = info.get("_enabled", False)
+
+        name_lbl = QtWidgets.QLabel(f"<b>{name}</b>  <span style='color:#64748b'>v{version}</span>")
+        name_lbl.setStyleSheet("color: #e2e8f0; background: transparent; font-size: 13px;")
+        left.addWidget(name_lbl)
+
+        desc = info.get("description", "")
+        if author:
+            desc = f"by {author}  •  {desc}" if desc else f"by {author}"
+        if desc:
+            desc_lbl = QtWidgets.QLabel(desc)
+            desc_lbl.setStyleSheet("color: #94a3b8; background: transparent; font-size: 11px;")
+            desc_lbl.setWordWrap(True)
+            left.addWidget(desc_lbl)
+
+        h.addLayout(left, 1)
+
+        # 启用/禁用开关
+        toggle = QtWidgets.QCheckBox()
+        toggle.setChecked(enabled)
+        toggle.setToolTip(tr('plugin.toggle_tip'))
+        toggle.stateChanged.connect(
+            lambda state, n=name: self._on_toggle(n, state == QtCore.Qt.Checked))
+        h.addWidget(toggle)
+
+        # 设置按钮（仅有 settings 时显示）
+        if info.get("settings"):
+            btn_settings = QtWidgets.QPushButton("⚙")
+            btn_settings.setObjectName("pluginBtnSmall")
+            btn_settings.setFixedSize(26, 26)
+            btn_settings.setCursor(QtCore.Qt.PointingHandCursor)
+            btn_settings.setToolTip(tr('plugin.settings'))
+            btn_settings.clicked.connect(
+                lambda checked=False, n=name, i=info: self._open_settings(n, i))
+            h.addWidget(btn_settings)
+
+        # 重载按钮
+        btn_reload = QtWidgets.QPushButton("↻")
+        btn_reload.setObjectName("pluginBtnSmall")
+        btn_reload.setFixedSize(26, 26)
+        btn_reload.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_reload.setToolTip(tr('plugin.reload'))
+        btn_reload.clicked.connect(
+            lambda checked=False, n=name: self._on_reload(n))
+        h.addWidget(btn_reload)
+
+        return row
+
+    def _on_toggle(self, plugin_name: str, enabled: bool):
+        """启用/禁用插件"""
+        try:
+            from ..utils.hooks import enable_plugin, disable_plugin
+            if enabled:
+                enable_plugin(plugin_name)
+            else:
+                disable_plugin(plugin_name)
+            self.pluginStateChanged.emit()
+        except Exception as e:
+            print(f"[PluginManager] Toggle error: {e}")
+
+    def _on_reload(self, plugin_name: str):
+        """重载单个插件"""
+        try:
+            from ..utils.hooks import reload_plugin
+            reload_plugin(plugin_name)
+            self._refresh_list()
+            self.pluginStateChanged.emit()
+        except Exception as e:
+            print(f"[PluginManager] Reload error: {e}")
+
+    def _reload_all(self):
+        """重载全部插件"""
+        try:
+            from ..utils.hooks import reload_all_plugins
+            reload_all_plugins()
+            self._refresh_list()
+            self.pluginStateChanged.emit()
+        except Exception as e:
+            print(f"[PluginManager] Reload all error: {e}")
+
+    def _open_plugins_dir(self):
+        """打开 plugins 目录"""
+        try:
+            from ..utils.hooks import get_plugins_dir
+            import subprocess, sys
+            plugins_dir = get_plugins_dir()
+            plugins_dir.mkdir(parents=True, exist_ok=True)
+            if sys.platform == 'win32':
+                os.startfile(str(plugins_dir))
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', str(plugins_dir)])
+            else:
+                subprocess.Popen(['xdg-open', str(plugins_dir)])
+        except Exception as e:
+            print(f"[PluginManager] Open dir error: {e}")
+
+    def _open_settings(self, plugin_name: str, info: dict):
+        """打开插件设置对话框"""
+        dlg = PluginSettingsPage(
+            plugin_name=plugin_name,
+            settings_schema=info.get("settings", []),
+            parent=self,
+        )
+        dlg.exec_()
+
+
+class PluginSettingsPage(QtWidgets.QDialog):
+    """插件设置页 — 根据 settings schema 自动生成配置表单
+
+    settings schema 格式:
+        [
+            {"key": "log_level", "type": "string", "label": "Log Level", "default": "info", "options": [...]},
+            {"key": "enable_x", "type": "bool", "label": "Enable X", "default": True},
+        ]
+    """
+
+    def __init__(self, plugin_name: str, settings_schema: list, parent=None):
+        super().__init__(parent)
+        self.setObjectName("pluginSettingsDlg")
+        self.setWindowTitle(f"{tr('plugin.settings')} — {plugin_name}")
+        self.setMinimumWidth(380)
+        self._plugin_name = plugin_name
+        self._schema = settings_schema
+        self._widgets: dict = {}  # key -> widget
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+
+        # 标题
+        title = QtWidgets.QLabel(f"⚙ {plugin_name}")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #e2e8f0; background: transparent;")
+        layout.addWidget(title)
+
+        # 分隔线
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        sep.setStyleSheet("color: rgba(255,255,255,8);")
+        layout.addWidget(sep)
+
+        # 读取当前设置值
+        try:
+            from ..utils.hooks import get_plugin_setting
+        except ImportError:
+            get_plugin_setting = lambda pn, k, d=None: d
+
+        # 生成表单
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(8)
+        form.setContentsMargins(0, 0, 0, 0)
+
+        for item in settings_schema:
+            key = item.get("key", "")
+            label = item.get("label", key)
+            stype = item.get("type", "string")
+            default = item.get("default")
+            options = item.get("options")
+            current_val = get_plugin_setting(plugin_name, key, default)
+
+            if stype == "bool":
+                cb = QtWidgets.QCheckBox()
+                cb.setChecked(bool(current_val))
+                form.addRow(label, cb)
+                self._widgets[key] = cb
+
+            elif stype == "string" and options:
+                combo = QtWidgets.QComboBox()
+                for opt in options:
+                    combo.addItem(str(opt))
+                if current_val and str(current_val) in [str(o) for o in options]:
+                    combo.setCurrentText(str(current_val))
+                form.addRow(label, combo)
+                self._widgets[key] = combo
+
+            else:
+                # string / number
+                le = QtWidgets.QLineEdit()
+                le.setText(str(current_val) if current_val is not None else "")
+                le.setPlaceholderText(str(default) if default is not None else "")
+                form.addRow(label, le)
+                self._widgets[key] = le
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+        # 按钮
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+
+        btn_cancel = QtWidgets.QPushButton(tr('plugin.cancel'))
+        btn_cancel.setObjectName("pluginBtn")
+        btn_cancel.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_save = QtWidgets.QPushButton(tr('plugin.save'))
+        btn_save.setObjectName("pluginBtnPrimary")
+        btn_save.setCursor(QtCore.Qt.PointingHandCursor)
+        btn_save.clicked.connect(self._save)
+        btn_row.addWidget(btn_save)
+
+        layout.addLayout(btn_row)
+
+    def _save(self):
+        """保存设置"""
+        try:
+            from ..utils.hooks import set_plugin_setting
+        except ImportError:
+            self.reject()
+            return
+
+        for item in self._schema:
+            key = item.get("key", "")
+            stype = item.get("type", "string")
+            widget = self._widgets.get(key)
+            if not widget:
+                continue
+
+            if stype == "bool":
+                value = widget.isChecked()
+            elif isinstance(widget, QtWidgets.QComboBox):
+                value = widget.currentText()
+            else:
+                value = widget.text()
+
+            set_plugin_setting(self._plugin_name, key, value)
+
+        self.accept()

@@ -199,6 +199,8 @@ class HeaderMixin:
         menu.addAction("Update", self.btn_update.click)
         menu.addAction("Font (Aa)", self.btn_font_scale.click)
         menu.addSeparator()
+        menu.addAction(tr('plugin.menu_label'), self._open_plugin_manager)
+        menu.addSeparator()
         
         # 语言子菜单
         lang_menu = menu.addMenu("Language")
@@ -216,6 +218,26 @@ class HeaderMixin:
         menu.exec_(self.btn_overflow.mapToGlobal(
             QtCore.QPoint(0, self.btn_overflow.height())
         ))
+
+    def _open_plugin_manager(self):
+        """打开插件管理面板"""
+        try:
+            from .cursor_widgets import PluginManagerDialog
+            dlg = PluginManagerDialog(parent=self)
+            dlg.pluginStateChanged.connect(self._on_plugin_state_changed)
+            dlg.exec_()
+        except Exception as e:
+            print(f"[Header] Failed to open plugin manager: {e}")
+
+    def _on_plugin_state_changed(self):
+        """插件状态变化后的回调（重新挂载按钮等）"""
+        try:
+            from ..utils.hooks import get_hook_manager
+            bridge = get_hook_manager().get_ui_bridge()
+            if bridge:
+                bridge.mount_buttons()
+        except Exception:
+            pass
 
     def _set_lang_from_menu(self, lang: str):
         """从溢出菜单切换语言"""

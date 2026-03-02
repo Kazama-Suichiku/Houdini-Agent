@@ -281,6 +281,9 @@ class AITab(
         # ★ 启动时静默检查更新（延迟 5 秒，不阻塞初始化）
         QtCore.QTimer.singleShot(5000, self._silent_update_check)
         
+        # ★ 插件系统初始化（延迟 3 秒，不阻塞 UI）
+        QtCore.QTimer.singleShot(3000, self._init_plugin_system)
+        
         # ★ 语言切换时重建系统提示词 + 重新翻译 UI
         from .i18n import language_changed
         language_changed.changed.connect(self._rebuild_system_prompts)
@@ -330,6 +333,43 @@ class AITab(
 
         thread = threading.Thread(target=_init, daemon=True)
         thread.start()
+
+    # ==========================================================
+    # ★ 插件系统 (Hook / Plugin System)
+    # ==========================================================
+
+    def _init_plugin_system(self):
+        """初始化插件系统：加载插件、设置 UI Bridge、挂载按钮"""
+        try:
+            from ..utils.hooks import get_hook_manager, PluginUIBridge, load_all_plugins
+
+            manager = get_hook_manager()
+
+            # 创建 UI Bridge 并关联到 HookManager
+            bridge = PluginUIBridge()
+            # 设置按钮容器引用
+            if hasattr(self, '_plugin_button_container'):
+                bridge.set_button_container(self._plugin_button_container)
+            bridge.set_ai_tab(self)
+            manager.set_ui_bridge(bridge)
+
+            # 加载所有插件
+            load_all_plugins()
+
+            # 挂载插件按钮
+            bridge.mount_buttons()
+
+            print("[Hook] 插件系统初始化完成")
+        except Exception as e:
+            print(f"[Hook] 插件系统初始化失败 (非致命): {e}")
+
+    def _fire_session_hook(self, event: str, session_id: str):
+        """触发会话相关的 Hook 事件"""
+        try:
+            from ..utils.hooks import get_hook_manager
+            get_hook_manager().fire(event, session_id=session_id)
+        except Exception:
+            pass
 
     def _activate_long_term_memory(self, user_message: str, scene_context: dict = None) -> str:
         """动态记忆激活 — "我想起来了"
@@ -1604,6 +1644,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             pass  # 控件可能已销毁
 
     def _on_agent_done(self, result: dict):
+        # ★ Hook: on_session_end
+        self._fire_session_hook('on_session_end', self._agent_session_id or self._session_id)
+        
         # ★ 停止思考指示条
         try:
             self.thinking_bar.stop()
@@ -3053,6 +3096,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         if not self.client.has_api_key(provider):
             self._on_set_key()
             return
+
+        # ★ Hook: on_session_start
+        self._fire_session_hook('on_session_start', self._session_id)
 
         # 收集待发送的图片（在 clear 之前）
         has_images = bool(self._pending_images) and self._current_model_supports_vision()

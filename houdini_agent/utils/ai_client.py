@@ -3142,6 +3142,16 @@ class AIClient:
         # ★ 工具列表：支持外部覆盖（用于 Ask 模式等场景）
         effective_tools = tools_override if tools_override is not None else HOUDINI_TOOLS
         
+        # ★ Hook: 合并外部插件注册的工具
+        try:
+            from .hooks import get_hook_manager as _ghm
+            _hm = _ghm()
+            _ext_tools = _hm.get_external_tools()
+            if _ext_tools:
+                effective_tools = list(effective_tools) + _ext_tools
+        except Exception:
+            pass
+        
         # 累积 usage 统计（用于 cache 命中率统计）
         total_usage = {
             'prompt_tokens': 0,
@@ -3219,6 +3229,15 @@ class AIClient:
             if on_iteration_start:
                 on_iteration_start(iteration)
             
+            # ★ Hook: on_before_request — 允许插件修改 messages
+            try:
+                from .hooks import get_hook_manager as _ghm
+                working_messages = _ghm().fire_filter(
+                    'on_before_request', working_messages,
+                    model=model, provider=provider, iteration=iteration)
+            except Exception:
+                pass
+            
             # 流式请求
             for chunk in self.chat_stream(
                 messages=working_messages,
@@ -3285,6 +3304,13 @@ class AIClient:
                     round_content += cleaned_chunk
                     if on_content and cleaned_chunk:
                         on_content(cleaned_chunk)
+                    # ★ Hook: on_content_chunk — 插件实时过滤/转换内容
+                    if cleaned_chunk:
+                        try:
+                            from .hooks import get_hook_manager as _ghm
+                            _ghm().fire('on_content_chunk', content=cleaned_chunk, iteration=iteration)
+                        except Exception:
+                            pass
                 
                 elif chunk_type == 'thinking':
                     thinking_text = chunk.get('content', '')
@@ -3496,7 +3522,8 @@ class AIClient:
                     total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
                 else:
                     total_usage['cache_hit_rate'] = 0
-                return {
+                
+                _result = {
                     'ok': True,
                     'content': full_content,
                     'final_content': round_content,  # 最后一轮的回复（不含中间轮次）
@@ -3506,6 +3533,16 @@ class AIClient:
                     'iterations': iteration,
                     'usage': total_usage
                 }
+                
+                # ★ Hook: on_after_response — 通知插件 Agent Loop 结束
+                try:
+                    from .hooks import get_hook_manager as _ghm
+                    _ghm().fire('on_after_response',
+                               result=_result, model=model, provider=provider)
+                except Exception:
+                    pass
+                
+                return _result
             
             # 添加助手消息（确保 tool_call ID 完整）
             self._ensure_tool_call_ids(round_tool_calls)
@@ -4004,6 +4041,16 @@ class AIClient:
         # ★ 工具列表：支持外部覆盖（用于 Ask 模式等场景）
         effective_tools = tools_override if tools_override is not None else HOUDINI_TOOLS
         
+        # ★ Hook: 合并外部插件注册的工具
+        try:
+            from .hooks import get_hook_manager as _ghm
+            _hm = _ghm()
+            _ext_tools = _hm.get_external_tools()
+            if _ext_tools:
+                effective_tools = list(effective_tools) + _ext_tools
+        except Exception:
+            pass
+        
         # 添加 JSON 模式系统提示
         json_system_prompt = self._get_json_mode_system_prompt(effective_tools)
         working_messages = []
@@ -4462,7 +4509,8 @@ class AIClient:
             total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
         else:
             total_usage['cache_hit_rate'] = 0
-        return {
+        
+        _result = {
             'ok': True,
             'content': full_content if full_content.strip() else "(工具调用完成，但未生成回复)",
             'tool_calls_history': tool_calls_history,
@@ -4470,6 +4518,16 @@ class AIClient:
             'iterations': iteration,
             'usage': total_usage
         }
+        
+        # ★ Hook: on_after_response — 通知插件 Agent Loop 结束
+        try:
+            from .hooks import get_hook_manager as _ghm
+            _ghm().fire('on_after_response',
+                       result=_result, model=model, provider=provider)
+        except Exception:
+            pass
+        
+        return _result
     
     def agent_loop_auto(self,
                         messages: List[Dict[str, Any]],

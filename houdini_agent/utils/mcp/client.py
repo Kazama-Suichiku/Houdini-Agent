@@ -3395,8 +3395,31 @@ class HoudiniMCP:
         """
         print(f"[MCP Client] 执行工具: {tool_name}, 参数: {list(arguments.keys())}")
         
+        # ★ Hook: on_before_tool — 允许插件拦截/审计/修改参数
+        try:
+            from ..hooks import get_hook_manager as _ghm
+            _hm = _ghm()
+            _hm.fire('on_before_tool', tool_name=tool_name, args=arguments)
+        except Exception:
+            pass
+        
         handler_name = self._TOOL_DISPATCH.get(tool_name)
+        
+        # ★ 如果内部分派表中不存在，尝试外部插件注册的工具
         if handler_name is None:
+            try:
+                from ..hooks import get_hook_manager as _ghm
+                _hm = _ghm()
+                if _hm.has_external_tool(tool_name):
+                    result = _hm.execute_external_tool(tool_name, arguments)
+                    # ★ Hook: on_after_tool
+                    try:
+                        _hm.fire('on_after_tool', tool_name=tool_name, args=arguments, result=result)
+                    except Exception:
+                        pass
+                    return result
+            except Exception:
+                pass
             return self._tool_unknown(tool_name)
         
         handler = getattr(self, handler_name, None)
@@ -3408,6 +3431,12 @@ class HoudiniMCP:
             # 工具返回失败时，自动附加用法提示
             if not result.get("success") and result.get("error"):
                 result["error"] = self._append_usage_hint(tool_name, result["error"])
+            # ★ Hook: on_after_tool — 通知插件工具执行完成
+            try:
+                from ..hooks import get_hook_manager as _ghm
+                _ghm().fire('on_after_tool', tool_name=tool_name, args=arguments, result=result)
+            except Exception:
+                pass
             return result
         except Exception as e:
             import traceback
