@@ -2,9 +2,9 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, and a modern dark UI with bilingual support.
+An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, a plugin hook system for community extensions, user-defined context rules, and a modern dark UI with bilingual support.
 
-Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, query local documentation, create structured execution plans, and learn from past interactions — all within an iterative agent loop.
+Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, query local documentation, create structured execution plans, learn from past interactions, and be extended via plugins — all within an iterative agent loop. A centralized **ToolRegistry** unifies core tools, skills, and plugin tools with mode-based access control.
 
 ## Core Features
 
@@ -12,9 +12,9 @@ Built on the **OpenAI Function Calling** protocol, the agent can read node netwo
 
 The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Three modes are available:
 
-- **Agent mode** — Full access to all 38+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
-- **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a whitelist guard.
-- **Plan mode** — The AI enters a planning phase: it researches the current scene (read-only), clarifies requirements via `ask_question`, then generates a structured execution plan with DAG flow diagram. The user reviews and confirms before execution begins.
+- **Agent mode** — Full access to all 40+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
+- **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a `ToolRegistry` mode guard.
+- **Plan mode** — The AI enters a planning phase: it researches the current scene (read-only), clarifies requirements via `ask_question`, then generates a structured execution plan with DAG flow diagram. The user reviews and confirms before execution begins. An **auto-resume mechanism** detects premature AI termination and forces continuation until all steps are complete.
 
 ```
 User request → AI plans → call tools → inspect results → call more tools → … → final reply
@@ -27,6 +27,8 @@ User request → AI plans → call tools → inspect results → call more tools
 - **Stop anytime** — interrupt the running agent loop at any point
 - **Smart context management** — round-based conversation trimming that never truncates user/assistant messages, only compresses tool results
 - **Long-term memory** — brain-inspired three-layer memory system (episodic, semantic, procedural) with reward-driven learning and automatic reflection
+- **Plugin system** — external community extensions via `plugins/` directory with hook events, custom tools, UI buttons, and settings
+- **User Rules** — Cursor-style persistent context rules that are automatically injected into every AI request
 
 ### Supported AI Providers
 
@@ -63,8 +65,12 @@ User request → AI plans → call tools → inspect results → call more tools
 - `Ctrl+Enter` to send messages
 - **Font scaling** — `Ctrl+=`/`Ctrl+-` to zoom, "Aa" button for slider control
 - **Bilingual UI** — Chinese/English language switching via overflow menu, with all UI elements and system prompts dynamically retranslated
+- **Update notification banner** — lightweight banner above the input area when a new version is detected, with "Update Now" and dismiss buttons
+- **Plugin Manager** — tabbed dialog with Plugins, Tools, and Skills management (enable/disable, reload, settings)
+- **Rules Editor** — dialog for creating and managing persistent user context rules
+- **PySide2 IME support** — full Chinese/Japanese/Korean input method support on both Windows and macOS
 
-## Available Tools (38+)
+## Available Tools (40+)
 
 ### Node Operations
 
@@ -159,7 +165,7 @@ User request → AI plans → call tools → inspect results → call more tools
 
 ## Skills System
 
-Skills are pre-optimized Python scripts that run inside the Houdini environment for reliable geometry analysis. They are preferred over hand-written `execute_python` for common tasks.
+Skills are pre-optimized Python scripts that run inside the Houdini environment for reliable geometry analysis. They are preferred over hand-written `execute_python` for common tasks. Skills are automatically registered in the `ToolRegistry` as `skill:xxx` tools. Users can also add custom skills via a **user skill directory** (configurable in settings).
 
 | Skill | Description |
 |-------|-------------|
@@ -180,10 +186,19 @@ Houdini-Agent/
 ├── launcher.py                      # Entry point (auto-detects Houdini)
 ├── README.md
 ├── README_CN.md
+├── VERSION                          # Semantic version file (e.g. 1.3.4)
 ├── lib/                             # Bundled dependencies (requests, urllib3, certifi, tiktoken, …)
 ├── config/                          # Runtime config (auto-created, gitignored)
-│   └── houdini_ai.ini              # API keys & settings
+│   ├── houdini_ai.ini              # API keys & settings
+│   ├── plugins.json                # Plugin enable/disable state, tool disable list, plugin settings
+│   └── user_rules.json             # User-defined context rules (UI rules)
 ├── cache/                           # Conversation cache, doc index, HIP previews
+│   └── plans/                      # Plan mode data files (plan_{session_id}.json)
+├── rules/                           # File-based user rules (*.md, *.txt auto-loaded)
+├── plugins/                         # Community plugins directory
+│   ├── __init__.py                 # Plugin package marker
+│   ├── _example_plugin.py          # Example plugin template (not auto-loaded, starts with _)
+│   └── PLUGIN_DEV_GUIDE.md         # Plugin development documentation
 ├── Doc/                             # Offline documentation
 │   ├── houdini_knowledge_base.txt  # Houdini programming knowledge base
 │   ├── vex_attributes_reference.txt
@@ -214,7 +229,7 @@ Houdini-Agent/
     │   └── session_manager.py      # SessionManagerMixin — multi-session create/switch/close
     ├── ui/
     │   ├── ai_tab.py              # AI Agent tab (Mixin host, agent loop, context management, streaming UI)
-    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics, plan viewer)
+    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics, plan viewer, plugin manager, rules editor)
     │   ├── header.py              # HeaderMixin — top settings bar (provider, model, toggles)
     │   ├── input_area.py          # InputAreaMixin — input area, mode switches, @mention, confirm mode
     │   ├── chat_view.py           # ChatViewMixin — chat display, scrolling, toast messages
@@ -222,8 +237,8 @@ Houdini-Agent/
     │   ├── theme_engine.py        # QSS template rendering & font-size scaling
     │   ├── font_settings_dialog.py # Font zoom slider dialog
     │   └── style_template.qss    # Centralized QSS theme stylesheet
-    ├── skills/                     # Pre-built analysis scripts
-    │   ├── __init__.py            # Skill registry & loader
+    ├── skills/                     # Pre-built analysis scripts (auto-registered as skill:xxx tools)
+    │   ├── __init__.py            # Skill registry, loader & ToolRegistry integration
     │   ├── analyze_normals.py     # Normal quality detection
     │   ├── analyze_point_attrib.py # Geometry attribute statistics
     │   ├── bounding_box_info.py   # Bounding box info
@@ -239,15 +254,18 @@ Houdini-Agent/
         ├── token_optimizer.py     # Token budget & compression (tiktoken-powered)
         ├── ultra_optimizer.py     # System prompt & tool definition optimizer
         ├── training_data_exporter.py # Export conversations as training JSONL
-        ├── updater.py             # Auto-updater (GitHub Releases, ETag caching)
+        ├── updater.py             # Auto-updater (GitHub Releases, ETag caching, notification banner)
         ├── plan_manager.py        # Plan mode data model & persistence
+        ├── hooks.py               # Plugin hook system (HookManager, PluginContext, PluginLoader, decorator API)
+        ├── tool_registry.py       # Unified ToolRegistry — centralizes core/skill/plugin/user tools
+        ├── rules_manager.py       # User Rules manager (UI rules + file rules, prompt injection)
         ├── memory_store.py        # Three-layer memory (episodic/semantic/procedural) with SQLite
         ├── embedding.py           # Local text embedding (sentence-transformers / fallback)
         ├── reward_engine.py       # Reward scoring & memory importance updates
         ├── reflection.py          # Rule-based + LLM deep reflection module
         ├── growth_tracker.py      # Growth metrics & personality trait formation
         └── mcp/                   # Houdini MCP (Model Context Protocol) layer
-            ├── client.py          # Tool executor (node ops, shell, skills dispatch)
+            ├── client.py          # Tool executor (node ops, shell, skills dispatch, ToolRegistry fallback)
             ├── hou_core.py        # Low-level hou module wrappers
             ├── node_inputs.json   # Pre-cached input port info (210+ nodes)
             ├── server.py          # MCP server (reserved)
@@ -262,7 +280,7 @@ Houdini-Agent/
 - **Houdini 20.5+** (or 21+)
 - **Python 3.9+** (bundled with Houdini)
 - **PySide2 or PySide6** (bundled with Houdini — PySide2 for Houdini ≤20.5, PySide6 for Houdini 21+)
-- **Windows** (primary), Linux/macOS support possible
+- **Windows / macOS** (both tested), Linux support possible
 
 ### Installation
 
@@ -366,6 +384,50 @@ A five-module system that enables the agent to learn and improve over time:
 
 Memory is activated at query time: relevant episodic memories, semantic rules, and procedural strategies are retrieved via cosine similarity and injected into the system prompt.
 
+### Plugin System
+
+The agent supports external community extensions via a plugin architecture:
+
+- **HookManager** (singleton) — manages event registration and dispatch with priority ordering
+- **PluginLoader** — scans the `plugins/` directory for `.py` files, auto-loads enabled plugins
+- **PluginContext** — API object passed to each plugin's `register(ctx)` function, providing:
+  - `ctx.on(event, callback)` — register event hooks
+  - `ctx.register_tool(name, description, schema, handler)` — register custom AI-callable tools
+  - `ctx.register_button(icon, tooltip, callback)` — add toolbar buttons
+  - `ctx.insert_chat_card(widget)` — insert custom UI into the chat area
+  - `ctx.get_setting(key)` / `ctx.set_setting(key, value)` — persistent per-plugin settings
+- **Decorator API** — `@hook`, `@tool`, `@ui_button` decorators for declarative plugin development
+- **7 hook events**: `on_before_request`, `on_after_response`, `on_before_tool`, `on_after_tool`, `on_content_chunk`, `on_session_start`, `on_session_end`
+- **Plugin Manager UI** — tabbed dialog (Plugins / Tools / Skills) for enabling/disabling plugins, managing tool visibility, configuring user skill directories, and editing plugin settings
+
+Plugins are managed via `config/plugins.json`. See `plugins/PLUGIN_DEV_GUIDE.md` for development documentation.
+
+### ToolRegistry
+
+A centralized tool management system that unifies three capability sources:
+
+| Source | Description |
+|--------|-------------|
+| **Core** | Built-in Houdini tools (40+), dispatched by MCP Client |
+| **Skill** | Pre-built analysis scripts, auto-registered as `skill:xxx` |
+| **Plugin** | Community plugin tools, registered via `PluginContext.register_tool()` |
+
+Key features:
+- **Mode-based access control** — tools are tagged with allowed modes (`agent`, `ask`, `plan_planning`, `plan_executing`); mode guards automatically filter tool availability
+- **Tag classification** — tools auto-tagged as `readonly`, `geometry`, `network`, `system`, `docs`, `skill`, `task`, `plugin` for fine-grained filtering
+- **Enable/disable** — individual tools can be toggled on/off via the Plugin Manager UI; state persisted to `config/plugins.json`
+- **User skill directory** — users can point to a custom directory of skill scripts, which are auto-loaded and registered
+- **Thread-safe** — all registration/query operations are lock-protected
+
+### User Rules (Custom Context)
+
+Similar to Cursor Rules, users can define persistent context that is automatically injected into every AI request:
+
+- **UI Rules** — created and managed via the Rules Editor dialog; stored in `config/user_rules.json`; individually enable/disable
+- **File Rules** — `.md` and `.txt` files placed in the `rules/` directory are auto-loaded (files starting with `_` are treated as drafts and excluded)
+- **Prompt injection** — all enabled rules are merged and wrapped in `<user_rules>` tags, injected into the system prompt
+- Rules Editor features a warm khaki theme matching the main UI, with a list/editor split layout and empty state guidance
+
 ### Context Management
 
 - **Native tool message chain**: `assistant(tool_calls)` → `tool(result)` messages are passed directly to the model, preserving structured information
@@ -380,6 +442,8 @@ Memory is activated at query time: relevant episodic memories, semantic rules, a
 - Houdini node operations **must** run on the Qt main thread — dispatched via `BlockingQueuedConnection`
 - Non-Houdini tools (shell, web search, doc lookup) run directly in the **background thread** to keep the UI responsive
 - All UI updates use Qt signals for thread-safe cross-thread communication
+- **macOS crash prevention** — removed dangerous `QApplication.processEvents()` from `BlockingQueuedConnection` slots to prevent reentrant crashes; main-thread assertions added for debugging
+- Tool execution timeout set to 60 seconds to accommodate long-running operations
 
 ### Token Counting & Cost Estimation
 
@@ -480,12 +544,22 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ### Updating
 - Click the **Update** button in the toolbar to check for new versions
-- The plugin checks GitHub on startup (silently) and highlights the button if an update is available
-- Updates preserve your `config/`, `cache/`, and `trainData/` directories
+- The plugin checks GitHub on startup (silently) and shows an **update notification banner** above the input area if a new version is available
+- One-click "Update Now" from the banner or toolbar button
+- Updates preserve your `config/`, `cache/`, `trainData/`, `plugins/`, and `rules/` directories
 - After updating, the plugin restarts automatically
 
 ## Version History
 
+- **v1.3.4** — **ToolRegistry & plugin system overhaul**: New centralized `ToolRegistry` singleton unifying core tools, skills, and plugin tools with mode-based access control (`agent`/`ask`/`plan_planning`/`plan_executing`) and tag classification (`readonly`/`geometry`/`network`/`system`/`docs`/`skill`/`task`/`plugin`). Skills auto-registered as `skill:xxx` tools. User skill directory support (configurable in settings). Plugin Manager refactored to 3-tab UI (Plugins/Tools/Skills) with per-tool enable/disable toggles. Decorator API (`@hook`/`@tool`/`@ui_button`) now properly applied via `_apply_decorators`. MCP Client fallback dispatch to ToolRegistry for `skill:xxx` tools. Mode-based safety guards in `_execute_tool_with_todo` migrated to `ToolRegistry.is_tool_allowed_in_mode()`. macOS thread safety fix: removed `processEvents()` from `BlockingQueuedConnection` slot preventing reentrant crashes; added main-thread assertion; increased tool timeout to 60s. Rules Editor UI redesigned with `QStackedWidget` for empty/editor states, warm khaki theme, and polished layout.
+- **v1.3.3** — **Plugin & IME fixes**: Fixed Plugin Manager "Open Plugins Folder" button (`import os` missing). Comprehensive PySide2 IME fix for macOS Chinese input — overrode `inputMethodQuery` to provide cursor rectangle/surrounding text/position to macOS NSTextInputClient; set `StrongFocus` policy and `ImhNone` hints; enhanced `focusInEvent` to force IME reactivation; added `commitString` fallback in `inputMethodEvent`. Warm khaki theme applied to Plugin Manager and Rules Editor dialogs (previously cold blue/gray). Added `PLUGIN_DEV_GUIDE.md` plugin development documentation.
+- **v1.3.2** — **User Rules system**: Cursor-like custom context rules — UI rules via Rules Editor dialog (create/edit/delete/enable/disable, stored in `config/user_rules.json`) + file rules from `rules/` directory (`.md`/`.txt` auto-loaded). All enabled rules merged and injected as `<user_rules>` into system prompt. Rules integrated into system prompt construction pipeline.
+- **v1.3.1** — **Plugin Hook System**: External community extension architecture — `HookManager` singleton with event registration/dispatch (7 events: before/after request, tool, content, session), `PluginLoader` scanning `plugins/` directory, `PluginContext` API (hooks, tools, buttons, settings, chat cards), external tool registration (AI Function Calling), `PluginManagerDialog` with enable/disable/reload/settings UI, `PluginSettingsPage` with auto-generated forms from schema, decorator API (`@hook`/`@tool`/`@ui_button`), example plugin template, glassmorphism styles, i18n support.
+- **v1.3.0** — **Plan mode auto-resume**: Fixed AI prematurely terminating Plan execution. Added `on_plan_incomplete` callback in `agent_loop_stream` — when AI returns pure text but plan has pending steps, injects a "resume" user message with latest plan progress, forcing continuation. Enhanced Plan execution prompt with strict "never stop early" discipline. `update_plan_step` returns richer progress summary (e.g. "3/10 steps completed"). Max 3 resume attempts per session to prevent infinite loops.
+- **v1.2.9** — **Update notification & Plan DAG fix**: New `UpdateNotificationBanner` widget — lightweight banner above input area (not in chat flow) with "Update Now" and dismiss buttons. Plan mode DAG architecture diagram now displays fully without height cap (removed 400px `setFixedHeight` limit).
+- **v1.2.8** — **Undo snapshot fix**: Fixed container node undo — child nodes now fully restored by calling `createNode` with `run_init_scripts=False` and `load_contents=False`, then recursively restoring children from snapshot. Fixed "Undo All" creating duplicate nodes — removed redundant double-execution in `_undo_all_ops`.
+- **v1.2.7** — **PySide2 IME support**: Enabled Chinese input method in `ChatInput` — explicitly set `WA_InputMethodEnabled`, track IME composing state via `_ime_composing` flag, prevent `keyPressEvent` from intercepting IME candidate confirmation.
+- **v1.2.6** — **Streaming content fix**: Fixed multi-turn agent loop content sticking together — preserved newline-only chunks in streaming pipeline, auto-injected `\n\n` separators between AI iterations.
 - **v1.2.5** — **README & Release update**: Comprehensive README overhaul — documented Plan mode (3 tools: `create_plan`, `update_plan_step`, `ask_question`; interactive PlanViewer with DAG flow diagram), brain-inspired long-term memory system (5 modules: memory store, embedding, reward engine, reflection, growth tracker), bilingual i18n system, updated tool count to 38+, expanded Duojie model list (13 models including Claude, Gemini, GLM, Kimi, MiniMax, Qwen), updated project structure with all new files, and added architecture sections for Plan Mode, Memory System, and i18n.
 - **v1.2.4** — **Modern UI: warm khaki theme & compact layout**: Visual refresh — CursorTheme palette shifted to warm khaki tones with pill-style toggles. Header and input area redesigned for compact single-line layout. Provider/model selectors, Web/Think toggles, and overflow menu consolidated into one row. Hidden buttons moved to overflow menu for cleaner appearance.
 - **v1.2.3** — **Bilingual i18n system & temperature tuning**: Full internationalization — `i18n.py` module with `tr()` function, 800+ translation entries for Chinese and English. Language toggle in overflow menu with instant UI retranslation (header, input area, session tabs, system prompts). Persistent language preference via QSettings. Temperature parameter tuning for different providers and models.
