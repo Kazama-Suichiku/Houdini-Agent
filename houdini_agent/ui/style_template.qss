@@ -2089,5 +2089,50 @@ QLabel#richImage {
 
 
 /* ============================================================
+   32. UPDATE NOTIFICATION BANNER
+   ============================================================ */
+
+QFrame#updateNotifyBanner {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(59,130,246,25), stop:1 rgba(99,102,241,18));
+    border: 1px solid rgba(59,130,246,45);
+    border-radius: 8px;
+    margin: 0 0 2px 0;
+}
+QLabel#updateNotifyInfo {
+    font-size: {FS_SM}px;
+    color: #93c5fd;
+    background: transparent;
+    border: none;
+}
+QPushButton#updateNotifyBtn {
+    font-size: {FS_XS}px;
+    font-weight: bold;
+    padding: 2px 12px;
+    border-radius: 4px;
+    background: rgba(59,130,246,180);
+    color: #ffffff;
+    border: none;
+}
+QPushButton#updateNotifyBtn:hover {
+    background: rgba(37,99,235,220);
+}
+QPushButton#updateNotifyBtn:pressed {
+    background: rgba(29,78,216,255);
+}
+QPushButton#updateNotifyDismiss {
+    background: transparent;
+    border: none;
+    color: #475569;
+    font-size: 11px;
+    border-radius: 9px;
+}
+QPushButton#updateNotifyDismiss:hover {
+    color: #94a3b8;
+    background: rgba(255,255,255,8);
+}
+
+
+/* ============================================================
    END
    ============================================================ */

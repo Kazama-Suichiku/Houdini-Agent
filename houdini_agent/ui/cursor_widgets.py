@@ -6399,3 +6399,64 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         if n >= 1000:
             return f"{n / 1000:.1f}K"
         return str(n)
+
+
+# ============================================================
+# 更新通知横幅（启动时检测到新版本 → 输入区上方横幅）
+# ============================================================
+
+class UpdateNotificationBanner(QtWidgets.QFrame):
+    """更新通知横幅 — 在输入区域上方显示新版本提示
+    
+    轻量横幅，不打断聊天对话流。
+    用户可点击"立即更新"或关闭横幅。
+    """
+    
+    updateClicked = QtCore.Signal()   # 点击"立即更新"
+    dismissClicked = QtCore.Signal()  # 点击"关闭"
+    
+    def __init__(self, remote_version: str, release_name: str = "",
+                 local_version: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("updateNotifyBanner")
+        self.setVisible(False)  # 默认隐藏，由外部调用 show()
+        
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(10, 5, 6, 5)
+        row.setSpacing(8)
+        
+        # 图标
+        icon_lbl = QtWidgets.QLabel("🚀")
+        icon_lbl.setFixedWidth(18)
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        row.addWidget(icon_lbl)
+        
+        # 版本信息文字
+        info_text = tr('update.notify_banner', local_version, remote_version)
+        if release_name:
+            info_text += f"  —  {release_name}"
+        info_lbl = QtWidgets.QLabel(info_text)
+        info_lbl.setObjectName("updateNotifyInfo")
+        info_lbl.setWordWrap(False)
+        row.addWidget(info_lbl, 1)
+        
+        # "立即更新" 按钮
+        update_btn = QtWidgets.QPushButton(tr('update.notify_update_now'))
+        update_btn.setObjectName("updateNotifyBtn")
+        update_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        update_btn.setFixedHeight(22)
+        update_btn.clicked.connect(self.updateClicked.emit)
+        row.addWidget(update_btn)
+        
+        # 关闭按钮
+        dismiss_btn = QtWidgets.QPushButton("✕")
+        dismiss_btn.setObjectName("updateNotifyDismiss")
+        dismiss_btn.setFixedSize(18, 18)
+        dismiss_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        dismiss_btn.setToolTip(tr('update.notify_dismiss_tip'))
+        dismiss_btn.clicked.connect(self._on_dismiss)
+        row.addWidget(dismiss_btn)
+    
+    def _on_dismiss(self):
+        self.setVisible(False)
+        self.dismissClicked.emit()

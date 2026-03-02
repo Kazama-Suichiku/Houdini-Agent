@@ -331,6 +331,9 @@ _ZH = {
     'update.new_ver_tip': '发现新版本 v{}，点击更新',
     'update.restart_fail_title': '重启失败',
     'update.restart_fail_msg': '自动重启失败，请手动关闭并重新打开插件。\n\n错误: {}',
+    'update.notify_banner': 'v{} → v{} 新版本可用',
+    'update.notify_update_now': '立即更新',
+    'update.notify_dismiss_tip': '关闭此通知',
 
     # ===== Agent Runner - Ask Mode =====
     'ask.restricted': "[Ask 模式] 工具 '{}' 不可用。当前为只读模式，无法执行修改操作。请切换到 Agent 模式。",
@@ -789,6 +792,9 @@ _EN = {
     'update.new_ver_tip': 'New version v{} available. Click to update',
     'update.restart_fail_title': 'Restart Failed',
     'update.restart_fail_msg': 'Auto-restart failed. Please manually close and reopen the plugin.\n\nError: {}',
+    'update.notify_banner': 'v{} → v{} new version available',
+    'update.notify_update_now': 'Update Now',
+    'update.notify_dismiss_tip': 'Dismiss',
 
     # ===== Agent Runner - Ask Mode =====
     'ask.restricted': "[Ask Mode] Tool '{}' is not available. Read-only mode cannot perform modifications. Switch to Agent mode.",

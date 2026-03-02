@@ -53,6 +53,7 @@ from .cursor_widgets import (
     ToolStatusBar,
     NodeCompleterPopup,
     StreamingCodePreview,
+    UpdateNotificationBanner,
 )
 import re
 
@@ -6468,7 +6469,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
     @QtCore.Slot(dict)
     def _on_silent_check_result(self, result: dict):
-        """[主线程] 静默检查结果 → 如果有更新，高亮 Update 按钮"""
+        """[主线程] 静默检查结果 → 如果有更新，高亮按钮 + 显示通知横幅"""
         # 断开静默回调，防止和手动点击冲突
         try:
             self._updateCheckDone.disconnect(self._on_silent_check_result)
@@ -6477,14 +6478,50 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         if result.get('has_update') and result.get('remote_version'):
             remote_ver = result['remote_version']
-            # 用醒目样式标记按钮
-            self.btn_update.setText(f"🔄 v{remote_ver}")
-            self.btn_update.setToolTip(f"发现新版本 v{remote_ver}，点击更新")
+            local_ver = result.get('local_version', '?')
+            release_name = result.get('release_name', '')
+            
+            # 1) 用醒目样式标记按钮
+            self.btn_update.setText(tr('update.new_ver', remote_ver))
+            self.btn_update.setToolTip(tr('update.new_ver_tip', remote_ver))
             self.btn_update.setProperty("state", "available")
             self.btn_update.style().unpolish(self.btn_update)
             self.btn_update.style().polish(self.btn_update)
-            # 保存检查结果，供手动点击时直接使用
+            
+            # 2) 保存检查结果，供手动点击时直接使用
             self._cached_update_result = result
+            
+            # 3) ★ 在输入区域上方显示更新通知横幅（不打断聊天流）
+            try:
+                if hasattr(self, '_update_banner') and self._update_banner:
+                    self._update_banner.setVisible(True)
+                else:
+                    self._update_banner = UpdateNotificationBanner(
+                        remote_version=remote_ver,
+                        release_name=release_name,
+                        local_version=local_ver,
+                    )
+                    self._update_banner.updateClicked.connect(self._on_banner_update)
+                    # 插入到输入区域布局的最顶部（batch_bar 之前）
+                    input_layout = self._batch_bar.parent().layout()
+                    if input_layout:
+                        input_layout.insertWidget(0, self._update_banner)
+                    self._update_banner.setVisible(True)
+            except Exception:
+                pass  # 横幅创建失败不影响主流程
+    
+    def _on_banner_update(self):
+        """通知横幅的"立即更新"按钮被点击"""
+        # 隐藏横幅
+        if hasattr(self, '_update_banner') and self._update_banner:
+            self._update_banner.setVisible(False)
+        # 触发更新流程
+        cached = getattr(self, '_cached_update_result', None)
+        if cached and cached.get('has_update'):
+            self._on_update_check_result(cached)
+            self._cached_update_result = None
+        else:
+            self._on_check_update()
 
     def _on_check_update(self):
         """点击 Update 按钮 → 后台检查更新（如果有缓存结果直接使用）"""
