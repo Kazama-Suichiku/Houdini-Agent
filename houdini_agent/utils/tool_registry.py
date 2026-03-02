@@ -299,6 +299,124 @@ class ToolRegistry:
             )
         self._initialized = True
 
+    # ---------- 意图感知工具过滤 ----------
+
+    # 工具按功能分组
+    _INTENT_TOOL_GROUPS: Dict[str, Set[str]] = {
+        'query': {
+            'get_network_structure', 'get_node_parameters', 'list_children',
+            'check_errors', 'read_selection', 'get_node_inputs',
+            'get_node_positions', 'list_network_boxes',
+            'verify_and_summarize',
+        },
+        'create': {
+            'create_node', 'create_nodes_batch', 'create_wrangle_node',
+            'connect_nodes', 'copy_node',
+        },
+        'modify': {
+            'set_node_parameter', 'batch_set_parameters', 'set_display_flag',
+        },
+        'code': {
+            'execute_python', 'execute_shell',
+        },
+        'search': {
+            'web_search', 'fetch_webpage', 'search_local_doc',
+            'search_node_types', 'semantic_search_nodes',
+            'find_nodes_by_param', 'get_houdini_node_doc',
+        },
+        'layout': {
+            'layout_nodes', 'create_network_box',
+        },
+        'task': {
+            'add_todo', 'update_todo',
+        },
+        'perf': {
+            'perf_start_profile', 'perf_stop_and_report',
+        },
+        'file': {
+            'save_hip', 'undo_redo',
+        },
+        'plan': {
+            'create_plan', 'update_plan_step', 'ask_question',
+        },
+        'skill': set(),  # 动态填充
+    }
+
+    # 意图关键词（中英文）
+    _INTENT_KEYWORDS: Dict[str, List[str]] = {
+        'query': ['what', 'show', 'list', 'check', 'look', 'display', 'view', 'see',
+                  '查看', '检查', '分析', '看看', '显示', '状态', '有什么', '哪些'],
+        'create': ['create', 'build', 'make', 'add', 'generate', 'construct',
+                   '创建', '搭建', '添加', '生成', '建', '做', '造'],
+        'modify': ['change', 'set', 'modify', 'update', 'adjust', 'tweak',
+                   '修改', '设置', '调整', '改', '变'],
+        'code': ['python', 'script', 'code', 'run', 'execute', 'vex', 'wrangle',
+                 '脚本', '代码', '运行', '执行'],
+        'search': ['search', 'find', 'where', 'document', 'doc', 'web', 'online',
+                   '搜索', '查找', '文档', '网上', '在线'],
+        'layout': ['layout', 'organize', 'arrange', 'position', 'move',
+                   '排列', '布局', '整理', '位置'],
+        'perf': ['performance', 'profile', 'benchmark', 'speed', 'slow',
+                 '性能', '速度', '慢', '优化'],
+        'file': ['save', 'undo', 'redo', '保存', '撤销', '重做'],
+    }
+
+    def classify_intent(self, user_message: str) -> Set[str]:
+        """根据用户消息关键词推断意图类别
+
+        Returns:
+            命中的意图集合，如 {'query', 'create'}
+        """
+        if not user_message:
+            return set()
+        msg_lower = user_message.lower()
+        matched = set()
+        for intent, keywords in self._INTENT_KEYWORDS.items():
+            for kw in keywords:
+                if kw in msg_lower:
+                    matched.add(intent)
+                    break  # 一个关键词命中即可
+        return matched
+
+    def get_tools_for_intent(self, intents: Set[str], mode: str = 'agent') -> List[dict]:
+        """根据意图集获取相关工具 schema
+
+        始终包含 'query' 和 'task' 组（基础工具），额外包含匹配意图的工具组。
+        只返回该 mode 下允许且启用的工具。
+        """
+        # 始终包含基础工具组
+        active_groups = {'query', 'task'} | intents
+
+        # 收集目标工具名集合
+        target_names: Set[str] = set()
+        for group in active_groups:
+            target_names |= self._INTENT_TOOL_GROUPS.get(group, set())
+
+        # 添加所有 skill 工具（skill 通常应始终可用）
+        with self._lock:
+            for name, meta in self._tools.items():
+                if meta.source == 'skill' and meta.enabled:
+                    target_names.add(name)
+
+        # 过滤：必须在指定 mode 中且启用
+        with self._lock:
+            result = []
+            for meta in self._tools.values():
+                if not meta.enabled:
+                    continue
+                if mode not in meta.modes:
+                    continue
+                if meta.name in target_names:
+                    result.append(meta.schema)
+            return result
+
+    def is_tool_allowed_in_mode(self, tool_name: str, mode: str) -> bool:
+        """检查工具是否被允许在指定模式下使用"""
+        meta = self._tools.get(tool_name)
+        if not meta:
+            return False
+        return meta.enabled and mode in meta.modes
+
     @property
     def initialized(self) -> bool:
         return self._initialized

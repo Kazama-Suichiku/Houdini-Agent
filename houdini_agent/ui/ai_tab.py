@@ -96,6 +96,7 @@ class AITab(
     _addPythonShell = QtCore.Signal(str, str)  # (code, result_json)
     _addSystemShell = QtCore.Signal(str, str)  # (command, result_json)
     _executeToolRequest = QtCore.Signal(str, dict)  # 工具执行请求信号（线程安全）
+    _executeToolBatchRequest = QtCore.Signal(list)   # 批量工具执行请求：[(tool_name, kwargs), ...]
     _addThinking = QtCore.Signal(str)  # 思考内容更新信号（线程安全）
     _finalizeThinkingSignal = QtCore.Signal()  # 结束思考区块（线程安全）
     _resumeThinkingSignal = QtCore.Signal()    # 恢复思考区块（线程安全）
@@ -119,6 +120,7 @@ class AITab(
         self.client = AIClient()
         self.mcp = HoudiniMCP()
         self.client.set_tool_executor(self._execute_tool_with_todo)
+        self.client.set_batch_tool_executor(self._execute_tools_batch_in_main_thread)
         
         # 状态
         self._conversation_history: List[Dict[str, Any]] = []
@@ -175,6 +177,11 @@ class AITab(
         self._reflection_module = None
         self._growth_tracker = None
         self._memory_initialized = False
+        
+        # ★ 睡眠机制计数器
+        self._sleep_msg_counter = 0       # 当前 session 累计用户消息数
+        self._sleep_in_progress = False   # 防止并发睡眠
+        
         self._init_memory_system()
         
         # 思考长度限制（已禁用，允许完整思考）
@@ -224,6 +231,7 @@ class AITab(
         self._addPythonShell.connect(self._on_add_python_shell)
         self._addSystemShell.connect(self._on_add_system_shell)
         self._executeToolRequest.connect(self._on_execute_tool_main_thread, QtCore.Qt.BlockingQueuedConnection)
+        self._executeToolBatchRequest.connect(self._on_execute_tool_batch_main_thread, QtCore.Qt.BlockingQueuedConnection)
         self._addThinking.connect(self._on_add_thinking)
         self._finalizeThinkingSignal.connect(self._finalize_thinking_main_thread)
         self._resumeThinkingSignal.connect(self._resume_thinking_main_thread)
@@ -410,8 +418,12 @@ class AITab(
                         f"[Past Experience] {status} {ep.task_description[:80]} "
                         f"→ {ep.result_summary[:60]}"
                     )
-                    # 增加激活次数（通过 tags 追踪）
-                    store.increment_semantic_activation(ep.id) if hasattr(store, 'increment_semantic_activation') else None
+                    # ★ 修复：episodic 激活应更新 importance，而非调用 semantic 表的方法
+                    try:
+                        new_imp = min(5.0, ep.importance * 1.05)  # 轻微强化
+                        store.update_episodic_importance(ep.id, new_imp)
+                    except Exception:
+                        pass
 
             # 2. 检索相关 semantic (抽象知识) — TopK=5
             rules = store.search_semantic(query, top_k=5, min_confidence=0.3)
@@ -429,16 +441,47 @@ class AITab(
             if not parts:
                 return ""
 
-            # 限制注入量（最多 500 字符，避免浪费 token）
+            # 限制注入量（最多 800 字符，提供更完整的记忆上下文）
             result = "[Long-Term Memory]\n" + "\n".join(parts)
-            if len(result) > 500:
-                result = result[:500] + "..."
+            if len(result) > 800:
+                result = result[:800] + "..."
 
             return result
 
         except Exception as e:
             print(f"[Memory] 记忆激活失败: {e}")
             return ""
+
+    @staticmethod
+    def _collect_recent_rounds(history: list, n_rounds: int) -> list:
+        """从对话历史中收集最近 N 轮（以 user 消息为分界）的消息
+
+        Args:
+            history: 完整对话历史
+            n_rounds: 要收集的轮数
+
+        Returns:
+            最近 N 轮的消息副本列表
+        """
+        if not history:
+            return []
+
+        # 按 user 消息划分轮次
+        rounds = []
+        current_round = []
+        for m in history:
+            if m.get('role') == 'user' and current_round:
+                rounds.append(current_round)
+                current_round = []
+            current_round.append(m)
+        if current_round:
+            rounds.append(current_round)
+
+        # 取最近 n_rounds 轮
+        recent = rounds[-n_rounds:] if len(rounds) >= n_rounds else rounds
+        # 展平为消息列表（深拷贝避免修改原始数据）
+        import copy
+        return [copy.copy(m) for rnd in recent for m in rnd]
 
     def _reflect_after_task(self, result: dict, agent_params: dict):
         """任务完成后的反思钩子 — 在后台线程执行
@@ -2080,6 +2123,45 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 return result
             except queue.Empty:
                 return {"success": False, "error": tr('ai.main_exec_timeout')}
+
+    def _execute_tools_batch_in_main_thread(self, batch: list) -> list:
+        """在主线程批量执行只读工具（减少 N 次信号往返为 1 次）
+
+        Args:
+            batch: [(tool_name, kwargs), ...]
+
+        Returns:
+            [result_dict, ...]（与 batch 顺序一致）
+        """
+        with self._tool_lock:
+            while not self._tool_result_queue.empty():
+                try:
+                    self._tool_result_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            self._executeToolBatchRequest.emit(batch)
+
+            try:
+                results = self._tool_result_queue.get(timeout=60.0)
+                return results if isinstance(results, list) else [results]
+            except queue.Empty:
+                return [{"success": False, "error": tr('ai.main_exec_timeout')}] * len(batch)
+
+    def _on_execute_tool_batch_main_thread(self, batch: list):
+        """在主线程批量执行只读工具的槽函数
+
+        所有工具在主线程依次执行（它们是快速的只读查询），
+        然后将结果列表一次性放入队列返回给调用线程。
+        """
+        results = []
+        for tool_name, kwargs in batch:
+            try:
+                result = self._mcp_client.execute_tool(tool_name, **kwargs)
+            except Exception as e:
+                result = {"success": False, "error": str(e)}
+            results.append(result)
+        self._tool_result_queue.put(results)
     
     # ------------------------------------------------------------------
     # Plan 模式工具处理
@@ -2898,6 +2980,31 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 self._addStatus.emit(f"Note: {reason}")
             return
         
+        # ★ 深度睡眠：_manage_context 压缩前整理全部上下文为长期记忆
+        if self._memory_initialized and self._reflection_module and not self._sleep_in_progress:
+            _params = getattr(self, '_last_agent_params', {})
+            if _params:
+                self._addStatus.emit("😴 深度睡眠：正在整理全部上下文为长期记忆...")
+                try:
+                    self._sleep_in_progress = True
+                    deep_result = self._reflection_module.deep_sleep(
+                        session_id=self._session_id,
+                        all_messages=list(history),
+                        ai_client=self.client,
+                        model=_params.get('model', 'deepseek-chat'),
+                        provider=_params.get('provider', 'deepseek'),
+                    )
+                    if deep_result.get("success"):
+                        n_rules = len(deep_result.get("new_rules", []))
+                        n_strats = len(deep_result.get("new_strategies", []))
+                        self._addStatus.emit(
+                            f"😴 深度睡眠完成: {n_rules} 条经验 + {n_strats} 条策略已写入长期记忆"
+                        )
+                except Exception as e:
+                    print(f"[Sleep] _manage_context 深度睡眠异常: {e}")
+                finally:
+                    self._sleep_in_progress = False
+        
         old_tokens = current_tokens
         
         # --- 按 user 消息划分轮次 ---
@@ -3425,12 +3532,69 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 # 将上下文提醒作为系统消息添加到末尾
                 messages.append({'role': 'system', 'content': f"[Context] {context_reminder}"})
             
+            # ================================================================
+            # ★ 睡眠机制：浅睡眠（每 N 轮用户提问触发）
+            # ================================================================
+            if self._memory_initialized and self._reflection_module:
+                self._sleep_msg_counter += 1
+                from ..utils.reflection import LIGHT_SLEEP_INTERVAL
+                if self._sleep_msg_counter % LIGHT_SLEEP_INTERVAL == 0 and not self._sleep_in_progress:
+                    # 收集最近 N 轮的消息用于浅睡眠总结
+                    _sleep_messages = self._collect_recent_rounds(
+                        self._conversation_history, LIGHT_SLEEP_INTERVAL
+                    )
+                    if _sleep_messages:
+                        _sleep_sid = self._session_id
+                        _sleep_model = model
+                        _sleep_provider = provider
+                        _sleep_client = self.client
+                        _sleep_reflection = self._reflection_module
+                        def _do_light_sleep():
+                            self._sleep_in_progress = True
+                            try:
+                                result = _sleep_reflection.light_sleep(
+                                    session_id=_sleep_sid,
+                                    recent_messages=_sleep_messages,
+                                    ai_client=_sleep_client,
+                                    model=_sleep_model,
+                                    provider=_sleep_provider,
+                                )
+                                if result.get("success"):
+                                    self._addStatus.emit("💤 浅睡眠完成，经验已写入长期记忆")
+                            finally:
+                                self._sleep_in_progress = False
+                        sleep_thread = threading.Thread(target=_do_light_sleep, daemon=True)
+                        sleep_thread.start()
+            
             # Cursor 风格预发送压缩：只压缩 tool 结果，保留 user/assistant 完整
             if self._auto_optimize:
                 current_tokens = self.token_optimizer.calculate_message_tokens(messages)
                 should_compress, _ = self.token_optimizer.should_compress(current_tokens, context_limit)
                 
                 if should_compress:
+                    # ★ 深度睡眠：压缩前将完整上下文写入长期记忆
+                    if self._memory_initialized and self._reflection_module and not self._sleep_in_progress:
+                        self._addStatus.emit("😴 深度睡眠：正在整理全部上下文为长期记忆...")
+                        try:
+                            self._sleep_in_progress = True
+                            deep_result = self._reflection_module.deep_sleep(
+                                session_id=self._session_id,
+                                all_messages=self._conversation_history,
+                                ai_client=self.client,
+                                model=model,
+                                provider=provider,
+                            )
+                            if deep_result.get("success"):
+                                n_rules = len(deep_result.get("new_rules", []))
+                                n_strats = len(deep_result.get("new_strategies", []))
+                                self._addStatus.emit(
+                                    f"😴 深度睡眠完成: {n_rules} 条经验 + {n_strats} 条策略已写入长期记忆"
+                                )
+                        except Exception as e:
+                            print(f"[Sleep] 深度睡眠异常: {e}")
+                        finally:
+                            self._sleep_in_progress = False
+                    
                     old_tokens = current_tokens
                     # 分离系统提示和上下文提醒
                     first_system = messages[0] if messages and messages[0].get('role') == 'system' else None
@@ -3564,15 +3728,54 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     ask_filtered = [t for t in ask_filtered
                                     if t['function']['name'] not in ('web_search', 'fetch_webpage')]
                 tools = UltraOptimizer.optimize_tool_definitions(ask_filtered)
-            elif use_web:
-                if self._cached_optimized_tools is None:
-                    self._cached_optimized_tools = UltraOptimizer.optimize_tool_definitions(HOUDINI_TOOLS)
-                tools = self._cached_optimized_tools
             else:
-                if self._cached_optimized_tools_no_web is None:
-                    filtered = [t for t in HOUDINI_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')]
-                    self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
-                tools = self._cached_optimized_tools_no_web
+                # ★ Agent 模式：意图感知工具过滤（节省 tool schema tokens）
+                # 当用户消息较短时，根据意图只发送相关工具
+                _intent_filtered = False
+                if use_agent:
+                    try:
+                        from ..utils.tool_registry import get_tool_registry as _gtr_intent
+                        _reg_intent = _gtr_intent()
+                        # 提取最后一条用户消息
+                        _last_user_msg = ''
+                        for _m in reversed(messages):
+                            if _m.get('role') == 'user':
+                                _last_user_msg = _m.get('content', '')
+                                if isinstance(_last_user_msg, list):
+                                    _last_user_msg = ' '.join(
+                                        p.get('text', '') for p in _last_user_msg
+                                        if isinstance(p, dict) and p.get('type') == 'text'
+                                    )
+                                break
+                        _intents = _reg_intent.classify_intent(_last_user_msg)
+                        # 只有在成功识别意图且不是超长消息（复杂任务应全量工具）时做过滤
+                        if _intents and len(_last_user_msg) < 200:
+                            _mode = 'agent'
+                            _intent_tools = _reg_intent.get_tools_for_intent(_intents, _mode)
+                            if len(_intent_tools) >= 5:  # 至少保留 5 个工具
+                                # 确保 execute_python 始终可用（万能工具）
+                                _intent_names = {t.get('function', {}).get('name', '') for t in _intent_tools}
+                                if 'execute_python' not in _intent_names:
+                                    for _t in HOUDINI_TOOLS:
+                                        if _t.get('function', {}).get('name') == 'execute_python':
+                                            _intent_tools.append(_t)
+                                            break
+                                tools = UltraOptimizer.optimize_tool_definitions(_intent_tools)
+                                _intent_filtered = True
+                                print(f"[AI Tab] 意图过滤: {_intents} → {len(tools)} 工具")
+                    except Exception as e:
+                        print(f"[AI Tab] 意图过滤失败: {e}")
+
+                if not _intent_filtered:
+                    if use_web:
+                        if self._cached_optimized_tools is None:
+                            self._cached_optimized_tools = UltraOptimizer.optimize_tool_definitions(HOUDINI_TOOLS)
+                        tools = self._cached_optimized_tools
+                    else:
+                        if self._cached_optimized_tools_no_web is None:
+                            filtered = [t for t in HOUDINI_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                            self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
+                        tools = self._cached_optimized_tools_no_web
             
             # ★ 合并外部工具（HookManager 插件工具 + ToolRegistry Skill 工具）
             try:
@@ -3665,6 +3868,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     enable_thinking=use_think,
                     supports_vision=supports_vision,
                     tools_override=tools,
+                    context_limit=context_limit,
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
                     on_tool_call=lambda n, a: (
@@ -3694,6 +3898,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     enable_thinking=use_think,
                     supports_vision=supports_vision,
                     tools_override=tools,
+                    context_limit=context_limit,
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
                     on_tool_call=lambda n, a: (
@@ -3720,6 +3925,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     enable_thinking=use_think,
                     supports_vision=supports_vision,
                     tools_override=tools,  # ★ 只传入只读工具
+                    context_limit=context_limit,
                     on_content=lambda c: self._on_content_with_limit(c),
                     on_thinking=lambda t: self._on_thinking_chunk(t),
                     on_tool_call=lambda n, a: (

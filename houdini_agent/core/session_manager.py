@@ -194,6 +194,10 @@ class SessionManagerMixin:
         self._current_response = None
         self._token_stats = new_token_stats
         self._pending_ops.clear()
+        
+        # ★ 重置睡眠计数器（新会话重新计数）
+        if hasattr(self, '_sleep_msg_counter'):
+            self._sleep_msg_counter = 0
         self._update_batch_bar()
         self.scroll_area = scroll_area
         self.chat_container = chat_container

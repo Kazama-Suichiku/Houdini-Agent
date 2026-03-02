@@ -1347,6 +1347,7 @@ class AIClient:
         self._ssl_context = self._create_ssl_context()
         self._web_searcher = WebSearcher()
         self._tool_executor: Optional[Callable[[str, dict], dict]] = None
+        self._batch_tool_executor: Optional[Callable[[list], list]] = None
         
         # Ollama 配置
         self._ollama_base_url = "http://localhost:11434"
@@ -1384,6 +1385,14 @@ class AIClient:
         executor 签名: (tool_name: str, **kwargs) -> dict
         """
         self._tool_executor = executor
+
+    def set_batch_tool_executor(self, executor: Callable[[list], list]):
+        """设置批量工具执行器（用于只读工具并行批处理）
+
+        executor 签名: (batch: [(tool_name, kwargs), ...]) -> [result_dict, ...]
+        如果未设置，批量执行会退化为逐个调用 _tool_executor。
+        """
+        self._batch_tool_executor = executor
 
     # ----------------------------------------------------------
     # 工具结果分页：按行分段，让 AI 自主判断是否需要更多
@@ -1756,6 +1765,444 @@ class AIClient:
         else:
             error = result.get('error', '未知错误')
             return error[:500] if len(error) > 500 else error
+
+    # ----------------------------------------------------------
+    # ★ 分级工具结果压缩（用于上下文压缩阶段，比 _summarize_tool_content 更智能）
+    # ----------------------------------------------------------
+
+    # 工具名 → 压缩钩子映射（tool_call_id 上的 assistant.tool_calls 保留名称信息）
+    _TIERED_COMPRESS_NEVER = frozenset({'check_errors'})  # 错误信息永不压缩
+
+    @classmethod
+    def _tiered_compress_tool(cls, tool_name: str, content: str, max_len: int = 300) -> str:
+        """根据工具类型做分级压缩，保留最有用的信息而非简单截断。
+
+        与 _summarize_tool_content（通用路径/数量提取）不同，本方法针对具体工具
+        定制压缩策略，在上下文管理阶段使用。
+        """
+        if not content or len(content) <= max_len:
+            return content
+
+        # check_errors: 永不压缩（错误消息是最重要的反馈）
+        if tool_name in cls._TIERED_COMPRESS_NEVER:
+            return content
+
+        # get_network_structure: 保留节点名/类型/连接，去掉位置坐标
+        if tool_name == 'get_network_structure':
+            lines = content.split('\n')
+            kept = []
+            for line in lines:
+                # 跳过纯位置信息行
+                if re.match(r'\s*(位置|position|pos)\s*[:：]', line, re.IGNORECASE):
+                    continue
+                # 跳过空行和装饰线
+                stripped = line.strip()
+                if not stripped or stripped.startswith('---') or stripped.startswith('==='):
+                    continue
+                kept.append(line)
+            result = '\n'.join(kept)
+            if len(result) > max_len:
+                result = result[:max_len] + '...[结构已压缩]'
+            return result
+
+        # get_node_parameters: 保留非默认/已修改参数，折叠默认值
+        if tool_name == 'get_node_parameters':
+            lines = content.split('\n')
+            kept = []
+            default_count = 0
+            for line in lines:
+                # 含 "默认" 或 "(default)" 的参数行被折叠
+                if re.search(r'\(default\)|默认值|unchanged', line, re.IGNORECASE):
+                    default_count += 1
+                    continue
+                kept.append(line)
+            if default_count > 0:
+                kept.append(f'  ...({default_count} 个默认参数已省略)')
+            result = '\n'.join(kept)
+            if len(result) > max_len:
+                result = result[:max_len] + '...[参数已压缩]'
+            return result
+
+        # execute_python: 保留 stdout，截断 traceback（保留首行错误）
+        if tool_name == 'execute_python':
+            # 如果有 traceback，只保留最后的错误行
+            tb_idx = content.find('Traceback (most recent call last)')
+            if tb_idx >= 0:
+                before_tb = content[:tb_idx].strip()
+                # 提取 traceback 最后一行（实际错误描述）
+                tb_lines = content[tb_idx:].strip().split('\n')
+                error_line = tb_lines[-1] if tb_lines else ''
+                result = before_tb
+                if error_line:
+                    result += f'\n[Error] {error_line}'
+                if len(result) > max_len:
+                    result = result[:max_len] + '...[已压缩]'
+                return result
+            # 无 traceback：正常截断
+            if len(content) > max_len:
+                return content[:max_len] + '...[输出已压缩]'
+            return content
+
+        # search_node_types / semantic_search_nodes: 保留 Top N 结果
+        if tool_name in ('search_node_types', 'semantic_search_nodes'):
+            lines = content.split('\n')
+            # 保留前 5 个有实质内容的行
+            kept = [l for l in lines if l.strip()][:5]
+            total = len([l for l in lines if l.strip()])
+            result = '\n'.join(kept)
+            if total > 5:
+                result += f'\n...共 {total} 条结果，已显示前 5 条'
+            if len(result) > max_len:
+                result = result[:max_len] + '...[搜索结果已压缩]'
+            return result
+
+        # web_search: 保留标题 + 摘要，丢弃 URL
+        if tool_name == 'web_search':
+            # 移除 URL 行（http:// 或 https:// 开头）
+            lines = content.split('\n')
+            kept = [l for l in lines if not re.match(r'\s*https?://', l.strip())]
+            result = '\n'.join(kept)
+            if len(result) > max_len:
+                result = result[:max_len] + '...[搜索已压缩]'
+            return result
+
+        # 默认：使用通用智能摘要
+        return cls._summarize_tool_content(content, max_len)
+
+    # ----------------------------------------------------------
+    # ★ 过时工具结果检测与标记
+    # ----------------------------------------------------------
+
+    # 可被后续同名调用"覆盖"的工具（查询类）
+    _STALEABLE_TOOLS = frozenset({
+        'get_network_structure', 'get_node_parameters', 'list_children',
+        'check_errors', 'get_node_inputs', 'read_selection',
+    })
+
+    @classmethod
+    def _mark_stale_tool_results(cls, working_messages: list) -> int:
+        """检测并压缩过时的工具结果。
+
+        当同一个查询工具以相同/重叠参数被多次调用时，早期的结果已过时
+        （AI 已有更新的数据）。将早期结果替换为简短标记以节省 token。
+
+        Returns:
+            被标记为过时的工具结果数量
+        """
+        # 收集 tool 消息的 (tool_call_id → 工具名, 参数) 映射
+        # 需要从 assistant 的 tool_calls 中提取工具名和参数
+        tc_id_to_info: Dict[str, Tuple[str, str]] = {}  # tc_id → (tool_name, key_arg)
+        for msg in working_messages:
+            if msg.get('role') == 'assistant' and 'tool_calls' in msg:
+                for tc in msg.get('tool_calls', []):
+                    tc_id = tc.get('id', '')
+                    fn = tc.get('function', {})
+                    name = fn.get('name', '')
+                    args_str = fn.get('arguments', '{}')
+                    # 提取关键参数（通常是 node_path 或 network_path）
+                    try:
+                        args = json.loads(args_str)
+                    except Exception:
+                        args = {}
+                    key_arg = args.get('node_path', '') or args.get('network_path', '') or args.get('box_name', '')
+                    if tc_id and name:
+                        tc_id_to_info[tc_id] = (name, key_arg)
+
+        # 从后往前扫描 tool 消息，记录每个 (tool_name, key_arg) 最后出现的位置
+        latest_seen: Dict[str, int] = {}  # "(tool_name):(key_arg)" → 最后出现的消息索引
+        tool_msg_indices = []
+        for i, msg in enumerate(working_messages):
+            if msg.get('role') == 'tool':
+                tc_id = msg.get('tool_call_id', '')
+                info = tc_id_to_info.get(tc_id)
+                if info:
+                    tool_msg_indices.append((i, info[0], info[1]))
+
+        # 反向记录最后出现位置
+        for idx, tool_name, key_arg in reversed(tool_msg_indices):
+            sig = f"{tool_name}:{key_arg}"
+            if sig not in latest_seen:
+                latest_seen[sig] = idx
+
+        # 标记较早的重复查询为过时
+        stale_count = 0
+        for idx, tool_name, key_arg in tool_msg_indices:
+            if tool_name not in cls._STALEABLE_TOOLS:
+                continue
+            sig = f"{tool_name}:{key_arg}"
+            if sig in latest_seen and latest_seen[sig] != idx:
+                # 此消息不是最新的 → 过时
+                content = working_messages[idx].get('content', '')
+                if content and not content.startswith('[Stale]'):
+                    working_messages[idx]['content'] = (
+                        f'[Stale] 此 {tool_name} 结果已被后续查询更新，详见最新结果。'
+                    )
+                    stale_count += 1
+
+        return stale_count
+
+    # ----------------------------------------------------------
+    # ★ 主动式上下文压缩（agent_loop 内使用）
+    # ----------------------------------------------------------
+
+    @classmethod
+    def _estimate_messages_tokens(cls, messages: list, tools: Optional[list] = None) -> int:
+        """快速估算消息列表 + 工具定义的 token 数。
+
+        使用启发式方法，避免每轮都调用 tiktoken（性能开销）。
+        """
+        total = 0
+        for msg in messages:
+            content = msg.get('content') or ''
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'text':
+                        total += len(part.get('text', '')) // 3
+                    elif isinstance(part, dict) and part.get('type') == 'image_url':
+                        total += 765
+                    elif isinstance(part, str):
+                        total += len(part) // 3
+            else:
+                # 快速估算：英文 ~4 chars/token, 中文 ~1.5 chars/token
+                # 综合取 ~3 chars/token
+                total += len(content) // 3
+            # tool_calls 开销
+            tcs = msg.get('tool_calls')
+            if tcs:
+                for tc in tcs:
+                    fn = tc.get('function', {})
+                    total += len(fn.get('name', '')) + len(fn.get('arguments', '')) // 3 + 8
+            total += 4  # 消息格式开销
+
+        # 工具定义 token（每个工具 ~100-200 tokens）
+        if tools:
+            for t in tools:
+                fn = t.get('function', {})
+                total += len(fn.get('description', '')) // 4
+                params = fn.get('parameters', {})
+                total += len(json.dumps(params)) // 4 if params else 0
+                total += 30  # 函数结构开销
+
+        return total
+
+    def _smart_compress_in_loop(self, working_messages: list,
+                                tool_calls_history: list,
+                                context_limit: int,
+                                supports_vision: bool = True) -> list:
+        """主动式上下文压缩，在 agent loop 内每轮迭代前调用。
+
+        分层压缩策略：
+        1. 标记过时工具结果 → 替换为简短标记
+        2. 对旧轮次工具结果做分级压缩（按工具类型）
+        3. 剥离旧轮次图片
+        4. 仍超限则按轮次裁剪
+
+        与 _progressive_trim 的区别：
+        - _progressive_trim 是错误恢复（被动），本方法是主动预防
+        - 本方法使用分级压缩而非简单截断
+        - 本方法不会删除最近轮次的数据
+        """
+        if not working_messages:
+            return working_messages
+
+        target = int(context_limit * 0.75)  # 压缩目标：75% 容量
+
+        # ── 第 1 步：标记过时的工具结果 ──
+        stale_count = self._mark_stale_tool_results(working_messages)
+        if stale_count > 0:
+            print(f"[AI Client] 🔄 标记了 {stale_count} 个过时工具结果")
+
+        current = self._estimate_messages_tokens(working_messages)
+        if current <= target:
+            return working_messages
+
+        # ── 第 2 步：剥离旧轮次图片 ──
+        n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
+        if n_stripped > 0:
+            print(f"[AI Client] 🖼 剥离了 {n_stripped} 张旧图片")
+            current = self._estimate_messages_tokens(working_messages)
+            if current <= target:
+                return working_messages
+
+        # ── 第 3 步：分级压缩旧轮次的工具结果 ──
+        sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
+        body = working_messages[1:] if sys_msg else working_messages[:]
+
+        # 划分轮次（以 user 消息为分界）
+        rounds: list = []
+        cur_round: list = []
+        for m in body:
+            if m.get('role') == 'user' and cur_round:
+                rounds.append(cur_round)
+                cur_round = []
+            cur_round.append(m)
+        if cur_round:
+            rounds.append(cur_round)
+
+        n_rounds = len(rounds)
+        protect_n = max(2, n_rounds // 2)  # 保护最近 50% 的轮次
+
+        # 从最老的轮次开始，使用分级压缩
+        # 先从 assistant.tool_calls 中提取工具名映射
+        tc_id_to_name: Dict[str, str] = {}
+        for m in body:
+            if m.get('role') == 'assistant' and 'tool_calls' in m:
+                for tc in m.get('tool_calls', []):
+                    tc_id = tc.get('id', '')
+                    fn_name = tc.get('function', {}).get('name', '')
+                    if tc_id and fn_name:
+                        tc_id_to_name[tc_id] = fn_name
+
+        for r_idx in range(n_rounds - protect_n):
+            for m in rounds[r_idx]:
+                if m.get('role') == 'tool':
+                    c = m.get('content') or ''
+                    if len(c) > 200:
+                        # 获取工具名（从 tool_call_id 反查）
+                        tc_id = m.get('tool_call_id', '')
+                        t_name = tc_id_to_name.get(tc_id, '')
+                        m['content'] = self._tiered_compress_tool(t_name, c, 200)
+
+        current = self._estimate_messages_tokens(
+            ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd]
+        )
+        if current <= target:
+            body = [m for rnd in rounds for m in rnd]
+            return ([sys_msg] if sys_msg else []) + body
+
+        # ── 第 4 步：仍超限 → 尝试 LLM 摘要（如果轮次足够多） ──
+        if len(rounds) >= 6:
+            try:
+                llm_result = self._llm_summarize_history(
+                    ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
+                    tool_calls_history, int(target / 0.75),  # 传入原始 context_limit
+                )
+                llm_tokens = self._estimate_messages_tokens(llm_result)
+                if llm_tokens < current:
+                    return llm_result
+            except Exception as e:
+                print(f"[AI Client] LLM 摘要失败，回退裁剪: {e}")
+
+        # ── 第 5 步：仍超限 → 裁剪最老的轮次 ──
+        while len(rounds) > 2 and current > target:
+            rounds.pop(0)
+            current = self._estimate_messages_tokens(
+                ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd]
+            )
+
+        body = [m for rnd in rounds for m in rnd]
+        result = ([sys_msg] if sys_msg else []) + body
+
+        # 添加裁剪提示
+        n_dropped = n_rounds - len(rounds)
+        if n_dropped > 0:
+            # 在系统消息后插入裁剪提示
+            insert_idx = 1 if sys_msg else 0
+            # 附带操作历史摘要
+            history_lines = []
+            if tool_calls_history:
+                op_history = [h for h in tool_calls_history
+                              if h['tool_name'] not in self._QUERY_TOOLS]
+                for h in op_history[-6:]:
+                    r = h.get('result', {})
+                    status = 'ok' if (isinstance(r, dict) and r.get('success')) else 'err'
+                    r_str = str(r.get('result', '') if isinstance(r, dict) else r)[:50]
+                    history_lines.append(f"  [{status}] {h['tool_name']}: {r_str}")
+
+            hint = f'[Context] 已自动压缩 {n_dropped} 个早期对话轮次以保持上下文窗口。'
+            if history_lines:
+                hint += '\n已完成的操作:\n' + '\n'.join(history_lines)
+            hint += '\n请继续当前任务，不要提及此压缩。'
+            result.insert(insert_idx, {'role': 'system', 'content': hint})
+
+        print(f"[AI Client] 🗜️ 主动压缩: {n_rounds} 轮 → {len(rounds)} 轮, "
+              f"~{self._estimate_messages_tokens(result)} tokens (目标 {target})")
+
+        return result
+
+    def _llm_summarize_history(self, working_messages: list,
+                                tool_calls_history: list,
+                                context_limit: int,
+                                model: str = '',
+                                provider: str = '') -> list:
+        """使用 LLM 生成上下文摘要，替换旧轮次。
+
+        仅在 _smart_compress_in_loop 裁剪后仍然过长时调用。
+        使用廉价模型生成摘要，避免阻塞主 agent loop 过久。
+
+        Returns:
+            替换后的消息列表
+        """
+        try:
+            from houdini_agent.utils.token_optimizer import LLMSummarizer
+
+            # 分离系统消息和正文
+            sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
+            body = working_messages[1:] if sys_msg else working_messages[:]
+
+            # 划分轮次
+            rounds = []
+            cur = []
+            for m in body:
+                if m.get('role') == 'user' and cur:
+                    rounds.append(cur)
+                    cur = []
+                cur.append(m)
+            if cur:
+                rounds.append(cur)
+
+            n_rounds = len(rounds)
+            if n_rounds < 4:
+                return working_messages  # 太少，不值得摘要
+
+            # 摘要前半部分（保留最近 3 轮完整）
+            to_summarize = rounds[:-3]
+            to_keep = rounds[-3:]
+
+            # 确定摘要模型（优先用 deepseek-chat，否则用当前模型）
+            summary_model = 'deepseek-chat'
+            summary_provider = 'deepseek'
+            # 检查是否有 deepseek key
+            if not self._get_api_key('deepseek'):
+                summary_model = model or 'gpt-5.2'
+                summary_provider = provider or 'openai'
+
+            summary_text = LLMSummarizer.summarize_rounds(
+                ai_client=self,
+                rounds=to_summarize,
+                model=summary_model,
+                provider=summary_provider,
+            )
+
+            if not summary_text:
+                print("[AI Client] LLM 摘要生成失败，使用裁剪策略")
+                return working_messages
+
+            # 构建新消息列表：系统消息 + 摘要 + 保留的最近轮次
+            result = []
+            if sys_msg:
+                result.append(sys_msg)
+
+            result.append({
+                'role': 'system',
+                'content': (
+                    f'[对话历史摘要] 以下是早期 {len(to_summarize)} 轮对话的摘要，'
+                    '请基于此上下文继续当前任务：\n\n' + summary_text
+                )
+            })
+
+            for rnd in to_keep:
+                result.extend(rnd)
+
+            new_tokens = self._estimate_messages_tokens(result)
+            print(f"[AI Client] 📝 LLM 摘要: {n_rounds} 轮 → 摘要 + {len(to_keep)} 轮, "
+                  f"~{new_tokens} tokens")
+
+            return result
+
+        except Exception as e:
+            print(f"[AI Client] LLM 摘要异常: {e}")
+            return working_messages
 
     def _create_ssl_context(self):
         """创建 SSL 上下文。验证失败时回退到未验证模式（带警告）。"""
@@ -3109,7 +3556,8 @@ class AIClient:
                           on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
                           on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
                           on_iteration_start: Optional[Callable[[int], None]] = None,
-                          on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None) -> Dict[str, Any]:
+                          on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None,
+                          context_limit: int = 128000) -> Dict[str, Any]:
         """流式 Agent Loop
         
         Args:
@@ -3126,6 +3574,7 @@ class AIClient:
                                 如果 Plan 尚有未完成步骤，返回一条提醒消息字符串，
                                 agent loop 会将其注入为 user 消息并继续迭代。
                                 如果 Plan 已全部完成或不需要续接，返回 None。
+            context_limit: 上下文 token 上限（默认 128000），用于主动压缩判断
         
         Returns:
             {"ok": bool, "content": str, "final_content": str,
@@ -3213,18 +3662,24 @@ class AIClient:
                 working_messages = self._sanitize_working_messages(working_messages)
                 _needs_sanitize = False
             
-            # ⚠️ Cursor 风格：同一轮 agent turn 内，所有消息完整保留
-            # - assistant 消息永不截断
-            # - tool 结果也完整保留（AI 需要完整的查询结果来做决策）
-            # - 只有在 context_length_exceeded 错误时才由 _progressive_trim 处理
-            # 不做任何同轮内压缩——这是 Cursor 的核心设计
-            
             # 诊断：仅打印消息数量摘要（完整内容通过"导出训练数据"功能获取）
             if iteration > 1:
                 from collections import Counter
                 role_counts = Counter(m.get('role', '?') for m in working_messages)
                 summary = ', '.join(f"{r}={c}" for r, c in role_counts.items())
                 print(f"[AI Client] iteration={iteration}, messages={len(working_messages)} ({summary})")
+            
+            # ★ 主动式上下文压缩（每轮迭代前，从第 4 轮开始检查）
+            # 不等到 context_length_exceeded 错误才压缩，而是提前检测并压缩
+            if iteration > 3 and len(working_messages) > 15:
+                est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
+                if est_tokens > context_limit * 0.85:
+                    print(f"[AI Client] ⚠️ 上下文 ~{est_tokens} tokens（阈值 {int(context_limit * 0.85)}），启动主动压缩")
+                    working_messages = self._smart_compress_in_loop(
+                        working_messages, tool_calls_history,
+                        context_limit, supports_vision
+                    )
+                    _needs_sanitize = True
             
             # ★ 通知 UI 新一轮 API 请求即将开始（用于显示 "Generating..." 状态）
             if on_iteration_start:
@@ -3658,9 +4113,87 @@ class AIClient:
                 else:  # execute_shell
                     results_ordered[idx] = self._tool_executor(tname, **targs)
 
-            # --- 串行执行未缓存的 Houdini 工具（需主线程） ---
-            for idx, (tid, tname, targs, _tc) in uncached_houdini:
+            # --- 执行未缓存的 Houdini 工具（需主线程） ---
+            # ★ 只读工具批量执行：减少 N 次信号往返为 1 次
+            _BATCH_READONLY = frozenset({
+                'get_network_structure', 'get_node_parameters', 'list_children',
+                'read_selection', 'search_node_types', 'semantic_search_nodes',
+                'find_nodes_by_param', 'get_node_inputs', 'check_errors',
+                'search_local_doc', 'get_houdini_node_doc', 'list_skills',
+                'get_node_positions', 'list_network_boxes',
+                'perf_start_profile', 'perf_stop_and_report',
+            })
+            # 分离只读和写入工具
+            readonly_batch = [(i, pc) for i, pc in uncached_houdini if pc[1] in _BATCH_READONLY]
+            mutating_calls = [(i, pc) for i, pc in uncached_houdini if pc[1] not in _BATCH_READONLY]
+
+            # 批量执行只读工具（如果有 batch executor 且 >1 个只读调用）
+            if len(readonly_batch) > 1 and self._batch_tool_executor:
+                batch_input = [(tname, targs) for _, (_, tname, targs, _) in readonly_batch]
+                try:
+                    batch_results = self._batch_tool_executor(batch_input)
+                    for (idx, _), result in zip(readonly_batch, batch_results):
+                        results_ordered[idx] = result
+                except Exception as e:
+                    print(f"[AI Client] 批量执行失败，回退串行: {e}")
+                    for idx, (tid, tname, targs, _tc) in readonly_batch:
+                        results_ordered[idx] = self._tool_executor(tname, **targs)
+            else:
+                # 单个只读工具或无 batch executor → 串行
+                for idx, (tid, tname, targs, _tc) in readonly_batch:
+                    results_ordered[idx] = self._tool_executor(tname, **targs)
+
+            # 写入工具始终串行（有副作用，顺序敏感）
+            for idx, (tid, tname, targs, _tc) in mutating_calls:
                 results_ordered[idx] = self._tool_executor(tname, **targs)
+
+            # ★ 早期终止：跳过冗余查询
+            # 当已执行的工具结果已提供足够信息时，跳过剩余同类查询
+            _early_skip_count = 0
+            if len(parsed_calls) > 2:
+                # 收集已有结果中的信息
+                _check_errors_paths = set()
+                _empty_network_paths = set()
+                for idx, (_, tname, targs, _) in enumerate(parsed_calls):
+                    if results_ordered[idx] is None:
+                        continue
+                    result = results_ordered[idx]
+                    # check_errors 发现错误 → 同路径的 get_node_parameters 不再需要
+                    if tname == 'check_errors' and result.get('success'):
+                        r_text = result.get('result', '')
+                        if '错误' in r_text or 'error' in r_text.lower():
+                            path = targs.get('node_path', '')
+                            if path:
+                                _check_errors_paths.add(path)
+                    # get_network_structure 返回空 → 同路径的子查询不需要
+                    if tname == 'get_network_structure' and result.get('success'):
+                        r_text = result.get('result', '')
+                        if '节点数量: 0' in r_text or 'Nodes: 0' in r_text or not r_text.strip():
+                            path = targs.get('network_path', '') or targs.get('node_path', '')
+                            if path:
+                                _empty_network_paths.add(path)
+
+                # 标记可跳过的工具（仅对尚未执行的 readonly 调用）
+                for idx, (tid, tname, targs, _tc) in enumerate(parsed_calls):
+                    if results_ordered[idx] is not None:
+                        continue  # 已有结果
+                    path = targs.get('node_path', '') or targs.get('network_path', '')
+                    # 规则 1：check_errors 已发现错误 → 跳过同路径的 get_node_parameters
+                    if tname == 'get_node_parameters' and path in _check_errors_paths:
+                        results_ordered[idx] = {
+                            "success": True,
+                            "result": f"[已跳过] {path} 已有错误信息，请先修复错误。"
+                        }
+                        _early_skip_count += 1
+                    # 规则 2：网络为空 → 跳过 list_children / get_node_parameters
+                    elif tname in ('list_children', 'get_node_parameters') and path in _empty_network_paths:
+                        results_ordered[idx] = {
+                            "success": True,
+                            "result": f"[已跳过] {path} 网络为空，无子节点。"
+                        }
+                        _early_skip_count += 1
+                if _early_skip_count > 0:
+                    print(f"[AI Client] ⏭️ 早期终止: 跳过 {_early_skip_count} 个冗余查询")
             
             # --- 缓存维护 ---
             # 如果本轮有操作类工具（创建/删除/连接节点等），清除网络结构相关缓存
@@ -4033,7 +4566,8 @@ class AIClient:
                               on_tool_result: Optional[Callable[[str, dict, dict], None]] = None,
                               on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
                               on_iteration_start: Optional[Callable[[int], None]] = None,
-                              on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None) -> Dict[str, Any]:
+                              on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None,
+                              context_limit: int = 128000) -> Dict[str, Any]:
         """JSON 模式 Agent Loop（用于不支持 Function Calling 的模型）"""
         
         if not self._tool_executor:
@@ -4106,8 +4640,17 @@ class AIClient:
             _call_start = time.time()  # 记录本次 API 调用起始时间（对齐 Cursor 延迟统计）
             round_content = ""
             
-            # ⚠️ 主动防御：每轮迭代前压缩过长的消息内容
-            if iteration > 1 and len(working_messages) > 20:
+            # ★ 主动式上下文压缩（从第 4 轮开始检查，替代旧的简单截断逻辑）
+            if iteration > 3 and len(working_messages) > 15:
+                est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
+                if est_tokens > context_limit * 0.85:
+                    print(f"[AI Client] ⚠️ JSON模式上下文 ~{est_tokens} tokens（阈值 {int(context_limit * 0.85)}），启动主动压缩")
+                    working_messages = self._smart_compress_in_loop(
+                        working_messages, tool_calls_history,
+                        context_limit, supports_vision
+                    )
+            elif iteration > 1 and len(working_messages) > 20:
+                # 轻量级防御：仅在未触发主动压缩时做简单截断
                 protect_start = max(1, len(working_messages) - 6)
                 for i, m in enumerate(working_messages):
                     if i == 0 or i >= protect_start:
@@ -4348,11 +4891,47 @@ class AIClient:
                 else:  # execute_shell
                     exec_results[idx] = self._tool_executor(tname, **targs)
 
-            # 串行 Houdini 工具
-            for idx, tc in houdini_tc:
+            # Houdini 工具（只读批量 / 写入串行）
+            _BATCH_READONLY_JSON = frozenset({
+                'get_network_structure', 'get_node_parameters', 'list_children',
+                'read_selection', 'search_node_types', 'semantic_search_nodes',
+                'find_nodes_by_param', 'get_node_inputs', 'check_errors',
+                'search_local_doc', 'get_houdini_node_doc', 'list_skills',
+                'get_node_positions', 'list_network_boxes',
+                'perf_start_profile', 'perf_stop_and_report',
+            })
+            readonly_batch_j = [(i, tc) for i, tc in houdini_tc if tc['name'] in _BATCH_READONLY_JSON]
+            mutating_calls_j = [(i, tc) for i, tc in houdini_tc if tc['name'] not in _BATCH_READONLY_JSON]
+
+            if len(readonly_batch_j) > 1 and self._batch_tool_executor:
+                batch_input = [(tc['name'], tc['arguments']) for _, tc in readonly_batch_j]
+                try:
+                    batch_results = self._batch_tool_executor(batch_input)
+                    for (idx, _), result in zip(readonly_batch_j, batch_results):
+                        exec_results[idx] = result
+                except Exception as e:
+                    print(f"[AI Client] JSON模式批量执行失败，回退串行: {e}")
+                    for idx, tc in readonly_batch_j:
+                        tname, targs = tc['name'], tc['arguments']
+                        try:
+                            exec_results[idx] = self._tool_executor(tname, **targs)
+                        except Exception as ex:
+                            exec_results[idx] = {"success": False, "error": str(ex)}
+            else:
+                for idx, tc in readonly_batch_j:
+                    tname, targs = tc['name'], tc['arguments']
+                    if not self._tool_executor:
+                        exec_results[idx] = {"success": False, "error": f"工具执行器未设置: {tname}"}
+                    else:
+                        try:
+                            exec_results[idx] = self._tool_executor(tname, **targs)
+                        except Exception as e:
+                            exec_results[idx] = {"success": False, "error": str(e)}
+
+            for idx, tc in mutating_calls_j:
                 tname, targs = tc['name'], tc['arguments']
                 if not self._tool_executor:
-                    exec_results[idx] = {"success": False, "error": f"工具执行器未设置，无法执行工具: {tname}"}
+                    exec_results[idx] = {"success": False, "error": f"工具执行器未设置: {tname}"}
                 else:
                     try:
                         exec_results[idx] = self._tool_executor(tname, **targs)

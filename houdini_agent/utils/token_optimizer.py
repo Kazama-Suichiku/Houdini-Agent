@@ -620,3 +620,122 @@ class TokenOptimizer:
             report['suggestions'].append(f"有 {len(tool_results)} 条工具结果，建议压缩")
         
         return report
+
+
+# ============================================================
+# LLM 驱动的对话摘要器
+# ============================================================
+
+class LLMSummarizer:
+    """使用廉价模型生成结构化的对话摘要，替代简单截断。
+
+    与 TokenOptimizer._generate_balanced_summary 的区别：
+    - 后者是基于规则的片段拼接（前 150 字符 + 最后 100 字符）
+    - 本类使用 LLM 理解语义并生成结构化摘要
+    """
+
+    # 摘要提示词模板
+    SUMMARY_PROMPT = """Summarize the following conversation history concisely, in the same language as the conversation.
+Extract the following information and output as structured text:
+
+1. **User Goals**: What the user wanted to achieve
+2. **Completed Actions**: What operations were performed and their results (only outcomes, not tool call details)
+3. **Current State**: The current state of the Houdini scene or project
+4. **Key Decisions**: Important decisions made during the conversation
+5. **Errors & Resolutions**: Any errors encountered and how they were resolved
+
+IMPORTANT:
+- Be concise but comprehensive (aim for ~200-400 words)
+- Do NOT include raw tool call details or JSON
+- Focus on OUTCOMES, not process
+- Include all node paths mentioned
+- If errors occurred, include the resolution
+
+Conversation to summarize:
+---
+{conversation}
+---"""
+
+    @staticmethod
+    def format_rounds_for_summary(rounds: list, max_total_chars: int = 8000) -> str:
+        """将多轮对话格式化为可供摘要的纯文本。
+
+        Args:
+            rounds: 每轮为一个消息列表 [[msg1, msg2, ...], [msg3, ...], ...]
+            max_total_chars: 最大字符数（防止摘要输入过长）
+        """
+        lines = []
+        total_chars = 0
+        for r_idx, r in enumerate(rounds):
+            for msg in r:
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')
+                if not content:
+                    # 对于有 tool_calls 的 assistant 消息
+                    if role == 'assistant' and 'tool_calls' in msg:
+                        tc_names = [tc.get('function', {}).get('name', '?')
+                                    for tc in msg.get('tool_calls', [])]
+                        content = f"[Called tools: {', '.join(tc_names)}]"
+                    else:
+                        continue
+
+                # 截断过长的单条消息
+                if len(content) > 500:
+                    content = content[:500] + '...'
+
+                prefix = {'user': 'User', 'assistant': 'AI', 'tool': 'Tool Result', 'system': 'System'}.get(role, role)
+                line = f"[{prefix}]: {content}"
+                if total_chars + len(line) > max_total_chars:
+                    lines.append(f"... (earlier rounds omitted, {len(rounds) - r_idx} rounds remain)")
+                    return '\n'.join(lines)
+                lines.append(line)
+                total_chars += len(line) + 1
+
+        return '\n'.join(lines)
+
+    @classmethod
+    def summarize_rounds(cls, ai_client, rounds: list,
+                         model: str = 'deepseek-chat',
+                         provider: str = 'deepseek') -> Optional[str]:
+        """使用廉价模型生成对话摘要。
+
+        Args:
+            ai_client: AIClient 实例
+            rounds: 要摘要的对话轮次
+            model: 用于摘要的模型（应使用廉价/快速模型）
+            provider: 模型提供方
+
+        Returns:
+            摘要文本，失败时返回 None
+        """
+        if not rounds:
+            return None
+
+        try:
+            conversation_text = cls.format_rounds_for_summary(rounds)
+            if not conversation_text.strip():
+                return None
+
+            prompt = cls.SUMMARY_PROMPT.format(conversation=conversation_text)
+
+            # 使用 chat（非流式）调用廉价模型
+            summary_messages = [
+                {'role': 'user', 'content': prompt}
+            ]
+
+            result = ai_client.chat(
+                messages=summary_messages,
+                model=model,
+                provider=provider,
+                temperature=0.1,
+                max_tokens=600,
+                timeout=15,  # 15 秒超时，避免阻塞主 agent loop
+            )
+
+            if result and result.get('content'):
+                return result['content'].strip()
+            return None
+
+        except Exception as e:
+            print(f"[LLMSummarizer] 摘要生成失败: {e}")
+            return None
