@@ -6812,3 +6812,378 @@ class PluginSettingsPage(QtWidgets.QDialog):
             set_plugin_setting(self._plugin_name, key, value)
 
         self.accept()
+
+
+# ============================================================
+# Rules Editor Dialog — 用户自定义规则编辑器
+# ============================================================
+
+class RulesEditorDialog(QtWidgets.QDialog):
+    """用户自定义规则编辑器对话框
+
+    左侧：规则列表（UI 规则 + 文件规则）
+    右侧：标题 + 内容编辑区
+    底部工具栏：新增 / 删除 / 启用禁用 / 打开目录
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("rulesEditorDlg")
+        self.setWindowTitle(tr('rules.title'))
+        self.setMinimumSize(680, 480)
+        self.resize(750, 520)
+        self._current_rule_id: Optional[str] = None
+        self._rules: list = []             # 所有规则的工作副本
+        self._dirty = False                # 是否有未保存的修改
+
+        self._build_ui()
+        self._load_rules()
+
+    def _build_ui(self):
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(10)
+
+        # ---- 标题行 ----
+        title_row = QtWidgets.QHBoxLayout()
+        title_lbl = QtWidgets.QLabel(tr('rules.title'))
+        title_lbl.setObjectName("rulesEditorTitle")
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+
+        # 规则计数
+        self._count_label = QtWidgets.QLabel("")
+        self._count_label.setObjectName("rulesCountLabel")
+        title_row.addWidget(self._count_label)
+        root.addLayout(title_row)
+
+        # ---- 主体：左列表 + 右编辑区 ----
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.setObjectName("rulesSplitter")
+
+        # -- 左侧：规则列表 --
+        left = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+
+        self._list_widget = QtWidgets.QListWidget()
+        self._list_widget.setObjectName("rulesList")
+        self._list_widget.setMinimumWidth(180)
+        self._list_widget.currentRowChanged.connect(self._on_rule_selected)
+        left_layout.addWidget(self._list_widget)
+
+        # 左侧按钮行
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(4)
+
+        self._btn_add = QtWidgets.QPushButton(tr('rules.add'))
+        self._btn_add.setObjectName("pluginBtnPrimary")
+        self._btn_add.setCursor(QtCore.Qt.PointingHandCursor)
+        self._btn_add.clicked.connect(self._on_add)
+        btn_row.addWidget(self._btn_add)
+
+        self._btn_delete = QtWidgets.QPushButton(tr('rules.delete'))
+        self._btn_delete.setObjectName("pluginBtn")
+        self._btn_delete.setCursor(QtCore.Qt.PointingHandCursor)
+        self._btn_delete.clicked.connect(self._on_delete)
+        btn_row.addWidget(self._btn_delete)
+
+        btn_row.addStretch()
+
+        self._btn_open_dir = QtWidgets.QPushButton(tr('rules.open_folder'))
+        self._btn_open_dir.setObjectName("pluginBtn")
+        self._btn_open_dir.setCursor(QtCore.Qt.PointingHandCursor)
+        self._btn_open_dir.clicked.connect(self._on_open_dir)
+        btn_row.addWidget(self._btn_open_dir)
+
+        left_layout.addLayout(btn_row)
+        splitter.addWidget(left)
+
+        # -- 右侧：编辑区 --
+        right = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+
+        # 标题输入
+        self._title_edit = QtWidgets.QLineEdit()
+        self._title_edit.setObjectName("rulesTitleEdit")
+        self._title_edit.setPlaceholderText(tr('rules.placeholder_title'))
+        self._title_edit.textChanged.connect(self._on_title_changed)
+        right_layout.addWidget(self._title_edit)
+
+        # 内容编辑（多行）
+        self._content_edit = QtWidgets.QPlainTextEdit()
+        self._content_edit.setObjectName("rulesContentEdit")
+        self._content_edit.setPlaceholderText(tr('rules.placeholder_content'))
+        self._content_edit.textChanged.connect(self._on_content_changed)
+        right_layout.addWidget(self._content_edit)
+
+        # 来源/状态标签
+        self._source_label = QtWidgets.QLabel("")
+        self._source_label.setObjectName("rulesSourceLabel")
+        right_layout.addWidget(self._source_label)
+
+        # 启用/禁用 + 保存按钮
+        action_row = QtWidgets.QHBoxLayout()
+        self._btn_toggle = QtWidgets.QPushButton(tr('rules.disable'))
+        self._btn_toggle.setObjectName("pluginBtn")
+        self._btn_toggle.setCursor(QtCore.Qt.PointingHandCursor)
+        self._btn_toggle.clicked.connect(self._on_toggle_enabled)
+        action_row.addWidget(self._btn_toggle)
+        action_row.addStretch()
+        right_layout.addLayout(action_row)
+
+        splitter.addWidget(right)
+
+        # 设置分割比例
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        root.addWidget(splitter)
+
+        # ---- 空状态占位 ----
+        self._empty_label = QtWidgets.QLabel(tr('rules.empty_hint'))
+        self._empty_label.setObjectName("rulesEmptyHint")
+        self._empty_label.setAlignment(QtCore.Qt.AlignCenter)
+        self._empty_label.setWordWrap(True)
+        # 将 empty label 作为 right 的覆盖层
+        self._empty_label.setParent(right)
+        self._empty_label.setGeometry(right.rect())
+
+        # 初始禁用右侧
+        self._set_editor_enabled(False)
+
+    def _load_rules(self):
+        """从 rules_manager 加载所有规则"""
+        try:
+            from ..utils.rules_manager import get_all_rules
+            self._rules = get_all_rules(force_reload=True)
+        except Exception as e:
+            print(f"[RulesEditor] Failed to load rules: {e}")
+            self._rules = []
+
+        self._refresh_list()
+
+    def _refresh_list(self):
+        """刷新左侧规则列表"""
+        self._list_widget.blockSignals(True)
+        self._list_widget.clear()
+
+        for r in self._rules:
+            title = r.get("title", "") or tr('rules.untitled')
+            source = r.get("source", "ui")
+            enabled = r.get("enabled", True)
+
+            # 构造显示文本
+            prefix = ""
+            if source == "file":
+                prefix = "[F] "
+            if not enabled:
+                prefix += "(" + tr('rules.disable') + ") "
+
+            item = QtWidgets.QListWidgetItem(prefix + title)
+            # 禁用的规则灰色显示
+            if not enabled:
+                item.setForeground(QtCore.Qt.gray)
+            self._list_widget.addItem(item)
+
+        self._list_widget.blockSignals(False)
+
+        # 更新计数
+        enabled_count = sum(1 for r in self._rules if r.get("enabled", True))
+        self._count_label.setText(tr('rules.count', enabled_count))
+
+        # 空状态
+        has_rules = len(self._rules) > 0
+        self._empty_label.setVisible(not has_rules)
+
+        # 恢复选中
+        if self._current_rule_id:
+            for i, r in enumerate(self._rules):
+                if r.get("id") == self._current_rule_id:
+                    self._list_widget.setCurrentRow(i)
+                    break
+        elif has_rules:
+            self._list_widget.setCurrentRow(0)
+
+    def _on_rule_selected(self, row: int):
+        """选中规则时更新右侧编辑区"""
+        if row < 0 or row >= len(self._rules):
+            self._current_rule_id = None
+            self._set_editor_enabled(False)
+            return
+
+        rule = self._rules[row]
+        self._current_rule_id = rule.get("id")
+        is_file = rule.get("source") == "file"
+
+        # 更新编辑区
+        self._title_edit.blockSignals(True)
+        self._content_edit.blockSignals(True)
+
+        self._title_edit.setText(rule.get("title", ""))
+        self._content_edit.setPlainText(rule.get("content", ""))
+
+        self._title_edit.blockSignals(False)
+        self._content_edit.blockSignals(False)
+
+        # 文件规则只读
+        self._title_edit.setReadOnly(is_file)
+        self._content_edit.setReadOnly(is_file)
+
+        # 源标签
+        if is_file:
+            fp = rule.get("file_path", "")
+            self._source_label.setText(f"{tr('rules.file_readonly')}  {fp}")
+        else:
+            self._source_label.setText("")
+
+        # 启用/禁用按钮
+        enabled = rule.get("enabled", True)
+        if is_file:
+            self._btn_toggle.setVisible(False)
+        else:
+            self._btn_toggle.setVisible(True)
+            self._btn_toggle.setText(
+                tr('rules.disable') if enabled else tr('rules.enable')
+            )
+
+        self._set_editor_enabled(True)
+
+    def _set_editor_enabled(self, enabled: bool):
+        """启用/禁用右侧编辑器"""
+        self._title_edit.setVisible(enabled)
+        self._content_edit.setVisible(enabled)
+        self._source_label.setVisible(enabled)
+        self._btn_toggle.setVisible(enabled)
+
+    def _on_title_changed(self, text: str):
+        """标题变更时实时保存"""
+        if self._current_rule_id and not self._current_rule_id.startswith("file:"):
+            for r in self._rules:
+                if r.get("id") == self._current_rule_id:
+                    r["title"] = text
+                    self._dirty = True
+                    break
+            self._auto_save()
+            # 更新列表显示
+            row = self._list_widget.currentRow()
+            if 0 <= row < self._list_widget.count():
+                item = self._list_widget.item(row)
+                if item:
+                    item.setText(text or tr('rules.untitled'))
+
+    def _on_content_changed(self):
+        """内容变更时实时保存"""
+        if self._current_rule_id and not self._current_rule_id.startswith("file:"):
+            text = self._content_edit.toPlainText()
+            for r in self._rules:
+                if r.get("id") == self._current_rule_id:
+                    r["content"] = text
+                    self._dirty = True
+                    break
+            self._auto_save()
+
+    def _auto_save(self):
+        """自动保存 UI 规则"""
+        if not self._dirty:
+            return
+        try:
+            from ..utils.rules_manager import save_all_ui_rules
+            ui_rules = [r for r in self._rules if r.get("source", "ui") == "ui"]
+            save_all_ui_rules(ui_rules)
+            self._dirty = False
+        except Exception as e:
+            print(f"[RulesEditor] Auto-save failed: {e}")
+
+    def _on_add(self):
+        """新增一条 UI 规则"""
+        try:
+            from ..utils.rules_manager import add_rule
+            rule = add_rule(title=tr('rules.untitled'), content="")
+            rule["source"] = "ui"
+            self._rules.append(rule)
+            self._current_rule_id = rule["id"]
+            self._refresh_list()
+            # 选中新建的规则
+            self._list_widget.setCurrentRow(len(self._rules) - 1)
+        except Exception as e:
+            print(f"[RulesEditor] Add rule failed: {e}")
+
+    def _on_delete(self):
+        """删除当前选中的 UI 规则"""
+        if not self._current_rule_id:
+            return
+        if self._current_rule_id.startswith("file:"):
+            return  # 文件规则不允许在 UI 中删除
+
+        # 确认
+        current_rule = None
+        for r in self._rules:
+            if r.get("id") == self._current_rule_id:
+                current_rule = r
+                break
+        if not current_rule:
+            return
+
+        title = current_rule.get("title", tr('rules.untitled'))
+        reply = QtWidgets.QMessageBox.question(
+            self, tr('rules.delete'),
+            tr('rules.delete_confirm', title),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            from ..utils.rules_manager import delete_rule
+            delete_rule(self._current_rule_id)
+            self._rules = [r for r in self._rules if r.get("id") != self._current_rule_id]
+            self._current_rule_id = None
+            self._refresh_list()
+        except Exception as e:
+            print(f"[RulesEditor] Delete rule failed: {e}")
+
+    def _on_toggle_enabled(self):
+        """切换当前规则的启用/禁用状态"""
+        if not self._current_rule_id or self._current_rule_id.startswith("file:"):
+            return
+
+        for r in self._rules:
+            if r.get("id") == self._current_rule_id:
+                new_enabled = not r.get("enabled", True)
+                r["enabled"] = new_enabled
+                self._dirty = True
+                self._auto_save()
+                self._refresh_list()
+                # 更新按钮文本
+                self._btn_toggle.setText(
+                    tr('rules.disable') if new_enabled else tr('rules.enable')
+                )
+                break
+
+    def _on_open_dir(self):
+        """打开 rules/ 目录"""
+        try:
+            from ..utils.rules_manager import get_rules_dir, ensure_rules_dir
+            import os, subprocess
+            import sys as _sys
+            ensure_rules_dir()
+            rules_dir = get_rules_dir()
+            if _sys.platform == 'win32':
+                os.startfile(str(rules_dir))
+            elif _sys.platform == 'darwin':
+                subprocess.Popen(['open', str(rules_dir)])
+            else:
+                subprocess.Popen(['xdg-open', str(rules_dir)])
+        except Exception as e:
+            print(f"[RulesEditor] Open dir failed: {e}")
+
+    def resizeEvent(self, event):
+        """调整空状态提示的位置"""
+        super().resizeEvent(event)
+        # 让 empty_label 覆盖右侧编辑区域
+        if hasattr(self, '_empty_label') and self._empty_label.parent():
+            self._empty_label.setGeometry(self._empty_label.parent().rect())

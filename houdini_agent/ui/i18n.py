@@ -537,6 +537,24 @@ _ZH = {
     'history.compressed': '[较早的工具] 已裁剪 {} 轮较旧对话执行。',
     'history.summary_title': '历史对话摘要',
 
+    # ===== User Rules =====
+    'rules.menu_label': '自定义规则',
+    'rules.title': '自定义规则',
+    'rules.add': '新建规则',
+    'rules.delete': '删除',
+    'rules.delete_confirm': '确定要删除规则「{}」吗？',
+    'rules.enable': '启用',
+    'rules.disable': '禁用',
+    'rules.from_file': '来自文件',
+    'rules.open_folder': '打开规则目录',
+    'rules.untitled': '未命名规则',
+    'rules.placeholder_title': '规则标题',
+    'rules.placeholder_content': '在此输入规则内容...\n\n例如：\n- 回复使用中文\n- 节点命名使用下划线风格\n- VEX 代码中添加注释',
+    'rules.empty_hint': '暂无规则\n\n可在此创建 UI 规则，\n或将 .md / .txt 文件放入 rules/ 目录',
+    'rules.file_readonly': '(文件规则，只读)',
+    'rules.saved': '规则已保存',
+    'rules.count': '{} 条规则生效中',
+
     # ===== Plugin System =====
     'plugin.menu_label': '插件管理',
     'plugin.manager_title': '插件管理',
@@ -1021,6 +1039,24 @@ _EN = {
     # ===== History rendering =====
     'history.compressed': '[Older tools] Trimmed {} older execution rounds.',
     'history.summary_title': 'Conversation summary',
+
+    # ===== User Rules =====
+    'rules.menu_label': 'Rules',
+    'rules.title': 'User Rules',
+    'rules.add': 'New Rule',
+    'rules.delete': 'Delete',
+    'rules.delete_confirm': 'Are you sure you want to delete rule "{}"?',
+    'rules.enable': 'Enable',
+    'rules.disable': 'Disable',
+    'rules.from_file': 'From file',
+    'rules.open_folder': 'Open Rules Folder',
+    'rules.untitled': 'Untitled Rule',
+    'rules.placeholder_title': 'Rule title',
+    'rules.placeholder_content': 'Enter rule content here...\n\nExamples:\n- Always reply in Chinese\n- Use underscore naming for nodes\n- Add comments in VEX code',
+    'rules.empty_hint': 'No rules yet\n\nCreate UI rules here,\nor place .md / .txt files in rules/ directory',
+    'rules.file_readonly': '(file rule, read-only)',
+    'rules.saved': 'Rules saved',
+    'rules.count': '{} rule(s) active',
 
     # ===== Plugin System =====
     'plugin.menu_label': 'Plugins',

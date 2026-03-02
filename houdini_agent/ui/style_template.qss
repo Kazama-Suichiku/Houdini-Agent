@@ -2212,5 +2212,104 @@ QPushButton#pluginToolbarBtn:hover {
 
 
 /* ============================================================
+   RULES EDITOR DIALOG
+   ============================================================ */
+
+QDialog#rulesEditorDlg {
+    background: qlineargradient(x1:0, y1:0, x2:0.3, y2:1,
+                    stop:0 #0f1019, stop:0.5 #0d0f1a, stop:1 #0a1018);
+    border: 1px solid rgba(255,255,255,12);
+    border-radius: 8px;
+}
+QLabel#rulesEditorTitle {
+    font-size: {FS_LG}px;
+    font-weight: bold;
+    color: #e2e8f0;
+    background: transparent;
+    padding: 4px 0;
+}
+QLabel#rulesCountLabel {
+    font-size: {FS_XS}px;
+    color: #64748b;
+    background: transparent;
+}
+QListWidget#rulesList {
+    background: rgba(16,18,32,200);
+    border: 1px solid rgba(255,255,255,8);
+    border-radius: 6px;
+    outline: none;
+    padding: 4px;
+    font-size: {FS_SM}px;
+    color: #e2e8f0;
+}
+QListWidget#rulesList::item {
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin: 1px 0;
+}
+QListWidget#rulesList::item:hover {
+    background: rgba(255,255,255,6);
+}
+QListWidget#rulesList::item:selected {
+    background: rgba(59,130,246,30);
+    border: 1px solid rgba(59,130,246,50);
+}
+QLineEdit#rulesTitleEdit {
+    background: rgba(16,18,32,200);
+    border: 1px solid rgba(255,255,255,10);
+    border-radius: 5px;
+    padding: 6px 8px;
+    color: #e2e8f0;
+    font-size: {FS_MD}px;
+    font-weight: bold;
+}
+QLineEdit#rulesTitleEdit:focus {
+    border: 1px solid rgba(59,130,246,80);
+}
+QLineEdit#rulesTitleEdit[readOnly="true"] {
+    background: rgba(16,18,32,120);
+    color: #94a3b8;
+}
+QPlainTextEdit#rulesContentEdit {
+    background: rgba(16,18,32,200);
+    border: 1px solid rgba(255,255,255,10);
+    border-radius: 5px;
+    padding: 8px;
+    color: #e2e8f0;
+    font-size: {FS_SM}px;
+    font-family: "Consolas", "Courier New", monospace;
+    selection-background-color: rgba(59,130,246,60);
+}
+QPlainTextEdit#rulesContentEdit:focus {
+    border: 1px solid rgba(59,130,246,80);
+}
+QPlainTextEdit#rulesContentEdit[readOnly="true"] {
+    background: rgba(16,18,32,120);
+    color: #94a3b8;
+}
+QLabel#rulesSourceLabel {
+    font-size: {FS_XS}px;
+    color: #64748b;
+    background: transparent;
+    padding: 2px 0;
+}
+QLabel#rulesEmptyHint {
+    color: #475569;
+    font-size: {FS_SM}px;
+    background: transparent;
+    padding: 20px;
+}
+QSplitter#rulesSplitter::handle {
+    background: rgba(255,255,255,6);
+    width: 2px;
+    margin: 4px 6px;
+    border-radius: 1px;
+}
+QSplitter#rulesSplitter::handle:hover {
+    background: rgba(59,130,246,40);
+}
+
+
+/* ============================================================
    END
    ============================================================ */

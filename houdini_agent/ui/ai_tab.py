@@ -553,6 +553,14 @@ class AITab(
         except Exception:
             return ""
 
+    def _get_user_rules_injection(self) -> str:
+        """获取用户自定义规则文本（附加到 system prompt 末尾）"""
+        try:
+            from ..utils.rules_manager import get_rules_for_prompt
+            return get_rules_for_prompt()
+        except Exception:
+            return ""
+
     def _build_system_prompt(self, with_thinking: bool = True) -> str:
         """构建系统提示
         
@@ -3215,6 +3223,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             personality_text = self._get_personality_injection()
             if personality_text:
                 sys_prompt = sys_prompt + "\n\n" + personality_text
+            
+            # ★ 用户自定义规则注入（类似 Cursor Rules）
+            rules_text = self._get_user_rules_injection()
+            if rules_text:
+                sys_prompt = sys_prompt + "\n\n" + rules_text
             
             messages = [{'role': 'system', 'content': sys_prompt}]
             

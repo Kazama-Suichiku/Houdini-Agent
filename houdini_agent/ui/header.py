@@ -199,6 +199,7 @@ class HeaderMixin:
         menu.addAction("Update", self.btn_update.click)
         menu.addAction("Font (Aa)", self.btn_font_scale.click)
         menu.addSeparator()
+        menu.addAction(tr('rules.menu_label'), self._open_rules_editor)
         menu.addAction(tr('plugin.menu_label'), self._open_plugin_manager)
         menu.addSeparator()
         
@@ -218,6 +219,15 @@ class HeaderMixin:
         menu.exec_(self.btn_overflow.mapToGlobal(
             QtCore.QPoint(0, self.btn_overflow.height())
         ))
+
+    def _open_rules_editor(self):
+        """打开用户自定义规则编辑器"""
+        try:
+            from .cursor_widgets import RulesEditorDialog
+            dlg = RulesEditorDialog(parent=self)
+            dlg.exec_()
+        except Exception as e:
+            print(f"[Header] Failed to open rules editor: {e}")
 
     def _open_plugin_manager(self):
         """打开插件管理面板"""
