@@ -35,6 +35,7 @@ class HeaderMixin:
         self.provider_combo.addItem("OpenAI", 'openai')
         self.provider_combo.addItem("Duojie", 'duojie')
         self.provider_combo.addItem("OpenRouter", 'openrouter')
+        self.provider_combo.addItem("Google AI Studio", 'google_ai_studio')
         self.provider_combo.setMinimumWidth(70)
         self.provider_combo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         row.addWidget(self.provider_combo)
@@ -80,6 +81,12 @@ class HeaderMixin:
                 'qwen/qwen3-235b-a22b',
                 'mistralai/mistral-large-2512',
             ],
+            'google_ai_studio': [
+                'gemini-3.1-pro-preview',
+                'gemini-3-flash-preview',
+                'gemini-2.5-pro',
+                'gemini-2.5-flash',
+            ],
         }
         self._model_context_limits = {
             'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
@@ -118,6 +125,10 @@ class HeaderMixin:
             'meta-llama/llama-4-maverick': 1048576,
             'qwen/qwen3-235b-a22b': 131072,
             'mistralai/mistral-large-2512': 262144,
+            'gemini-3.1-pro-preview': 1048576,
+            'gemini-3-flash-preview': 1048576,
+            'gemini-2.5-pro': 1048576,
+            'gemini-2.5-flash': 1048576,
         }
         # 模型特性配置
         self._model_features = {
@@ -166,6 +177,10 @@ class HeaderMixin:
             'meta-llama/llama-4-maverick':        {'supports_prompt_caching': True, 'supports_vision': True},
             'qwen/qwen3-235b-a22b':               {'supports_prompt_caching': True, 'supports_vision': False},
             'mistralai/mistral-large-2512':       {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-3.1-pro-preview':             {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-3-flash-preview':             {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-2.5-pro':                     {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-2.5-flash':                   {'supports_prompt_caching': True, 'supports_vision': True},
         }
         self._refresh_models('ollama')
         self.model_combo.setMinimumWidth(100)
