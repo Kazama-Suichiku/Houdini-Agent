@@ -4829,7 +4829,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
     def _on_set_key(self):
         provider = self._current_provider()
-        names = {'openai': 'OpenAI', 'deepseek': 'DeepSeek', 'glm': 'GLM（智谱AI）', 'ollama': 'Ollama', 'openrouter': 'OpenRouter'}
+        names = {
+            'openai': 'OpenAI',
+            'deepseek': 'DeepSeek',
+            'glm': 'GLM（智谱AI）',
+            'ollama': 'Ollama',
+            'openrouter': 'OpenRouter',
+            'google_ai_studio': 'Google AI Studio',
+        }
         
         key, ok = QtWidgets.QInputDialog.getText(
             self, f"Set {names.get(provider, provider)} API Key",

@@ -1351,6 +1351,7 @@ class AIClient:
     DUOJIE_API_URL = "https://api.duojie.games/v1/chat/completions"  # 拼好饭中转站（OpenAI 协议）
     DUOJIE_ANTHROPIC_API_URL = "https://api.duojie.games/v1/messages"  # 拼好饭中转站（Anthropic 协议）
     OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"  # OpenRouter（OpenAI 兼容）
+    GOOGLE_AI_STUDIO_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"  # Google AI Studio（OpenAI 兼容）
     
     # 使用 Anthropic 协议的 Duojie 模型
     _DUOJIE_ANTHROPIC_MODELS = frozenset({'glm-4.7', 'glm-5'})
@@ -1372,6 +1373,7 @@ class AIClient:
             'ollama': 'ollama',  # Ollama 不需要真正的 API key，但需要非空值
             'duojie': self._read_api_key('duojie'),
             'openrouter': self._read_api_key('openrouter'),
+            'google_ai_studio': self._read_api_key('google_ai_studio'),
         }
         self._ssl_context = self._create_ssl_context()
         self._web_searcher = WebSearcher()
@@ -2259,6 +2261,7 @@ class AIClient:
             'glm': ['GLM_API_KEY', 'ZHIPU_API_KEY', 'DCC_AI_GLM_API_KEY'],
             'duojie': ['DUOJIE_API_KEY', 'DCC_AI_DUOJIE_API_KEY'],
             'openrouter': ['OPENROUTER_API_KEY', 'DCC_AI_OPENROUTER_API_KEY'],
+            'google_ai_studio': ['GOOGLE_AI_STUDIO_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'DCC_AI_GOOGLE_AI_STUDIO_API_KEY'],
         }
         for env_var in env_map.get(provider, []):
             key = os.environ.get(env_var)
@@ -2270,6 +2273,7 @@ class AIClient:
                 'openai': 'openai_api_key', 'deepseek': 'deepseek_api_key',
                 'glm': 'glm_api_key', 'duojie': 'duojie_api_key',
                 'openrouter': 'openrouter_api_key',
+                'google_ai_studio': 'google_ai_studio_api_key',
             }
             return cfg.get(key_map.get(provider, '')) or None
         return None
@@ -2294,7 +2298,7 @@ class AIClient:
             cfg, _ = load_config('ai', dcc_type='houdini')
             cfg = cfg or {}
             key_map = {'openai': 'openai_api_key', 'deepseek': 'deepseek_api_key', 'glm': 'glm_api_key',
-                       'openrouter': 'openrouter_api_key'}
+                       'openrouter': 'openrouter_api_key', 'google_ai_studio': 'google_ai_studio_api_key'}
             cfg[key_map.get(provider, f'{provider}_api_key')] = key
             ok, _ = save_config('ai', cfg, dcc_type='houdini')
             return ok
@@ -2311,6 +2315,30 @@ class AIClient:
         if len(key) <= 10:
             return '*' * len(key)
         return key[:5] + '...' + key[-4:]
+
+    @staticmethod
+    def _extract_text_content(content: Any) -> str:
+        """Extract plain text from OpenAI-compatible `content` payloads."""
+        if content is None:
+            return ''
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            text = content.get('text')
+            return text if isinstance(text, str) else ''
+        if isinstance(content, list):
+            chunks = []
+            for part in content:
+                if isinstance(part, str):
+                    if part:
+                        chunks.append(part)
+                    continue
+                if isinstance(part, dict):
+                    text = part.get('text')
+                    if isinstance(text, str) and text:
+                        chunks.append(text)
+            return ''.join(chunks)
+        return ''
 
     def _is_anthropic_protocol(self, provider: str, model: str) -> bool:
         """判断是否应使用 Anthropic Messages 协议（而非 OpenAI 协议）"""
@@ -2330,6 +2358,8 @@ class AIClient:
             return self.DUOJIE_API_URL
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
+        elif provider == 'google_ai_studio':
+            return self.GOOGLE_AI_STUDIO_API_URL
         return self.OPENAI_API_URL
 
     def _get_vendor_name(self, provider: str) -> str:
@@ -2337,6 +2367,7 @@ class AIClient:
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）', 'ollama': 'Ollama',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
+            'google_ai_studio': 'Google AI Studio',
         }
         return names.get(provider, provider)
     
@@ -2393,7 +2424,7 @@ class AIClient:
                     json={'model': self._get_default_model(provider), 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1},
                     headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
                     timeout=15,
-                    proxies={'http': None, 'https': None}
+                    
                 )
                 return {'ok': True, 'url': self._get_api_url(provider), 'status': response.status_code}
         except Exception as e:
@@ -2406,6 +2437,7 @@ class AIClient:
             'glm': 'glm-4.7',
             'ollama': 'qwen2.5:14b',
             'openrouter': 'anthropic/claude-sonnet-4.6',
+            'google_ai_studio': 'gemini-2.5-flash',
         }
         return defaults.get(provider, 'gpt-5.2')
 
@@ -2751,7 +2783,7 @@ class AIClient:
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),
-                    proxies={'http': None, 'https': None}
+                    
                 ) as response:
                     response.encoding = 'utf-8'
                     print(f"[AI Client] Anthropic response status: {response.status_code}")
@@ -3019,7 +3051,7 @@ class AIClient:
             try:
                 response = self._http_session.post(
                     api_url, json=payload, headers=headers,
-                    timeout=timeout, proxies={'http': None, 'https': None}
+                    timeout=timeout
                 )
                 response.raise_for_status()
                 obj = response.json()
@@ -3163,7 +3195,7 @@ class AIClient:
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),  # (连接超时, 读取超时)
-                    proxies={'http': None, 'https': None}
+                    
                 ) as response:
                     # 强制 UTF-8 编码（requests 对 text/event-stream 默认 ISO-8859-1，会导致中文乱码）
                     response.encoding = 'utf-8'
@@ -3258,9 +3290,10 @@ class AIClient:
                             if _enable_thinking:
                                 results.append({"type": "thinking", "content": _thinking_text})
                         
-                        # 普通内容
-                        if 'content' in delta and delta['content']:
-                            results.append({"type": "content", "content": delta['content']})
+                        # 普通内容（兼容 string / structured content）
+                        _content_text = self._extract_text_content(delta.get('content'))
+                        if _content_text:
+                            results.append({"type": "content", "content": _content_text})
                         
                         # 工具调用
                         if delta.get('tool_calls'):
@@ -3552,17 +3585,18 @@ class AIClient:
                     json=payload,
                     headers=headers,
                     timeout=timeout,
-                    proxies={'http': None, 'https': None}
+                    
                 )
                 response.raise_for_status()
                 obj = response.json()
                 
                 choice = obj.get('choices', [{}])[0]
                 message = choice.get('message', {})
+                content_text = self._extract_text_content(message.get('content'))
                 
                 return {
                     'ok': True,
-                    'content': message.get('content'),
+                    'content': content_text,
                     'tool_calls': message.get('tool_calls'),
                     'finish_reason': choice.get('finish_reason'),
                     'usage': self._parse_usage(obj.get('usage', {})),
