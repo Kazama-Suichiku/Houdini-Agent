@@ -27,9 +27,12 @@ def _skill_info_to_openai_schema(info: dict, skill_name: str) -> dict:
     """将 SKILL_INFO 转换为 OpenAI function calling schema"""
     properties = {}
     required = []
+    # JSON Schema 不支持 'float'，需映射为 'number'
+    _TYPE_MAP = {"float": "number", "int": "integer", "bool": "boolean"}
     for param_name, param_def in info.get("parameters", {}).items():
+        raw_type = param_def.get("type", "string")
         prop: Dict[str, Any] = {
-            "type": param_def.get("type", "string"),
+            "type": _TYPE_MAP.get(raw_type, raw_type),
             "description": param_def.get("description", ""),
         }
         if "enum" in param_def:

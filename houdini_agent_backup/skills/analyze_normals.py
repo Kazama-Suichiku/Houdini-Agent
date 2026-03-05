@@ -23,12 +23,12 @@ SKILL_INFO = {
             "required": True,
         },
         "tolerance": {
-            "type": "float",
+            "type": "number",
             "description": "归一化容差（默认 0.001，长度偏离 1.0 超过此值视为未归一化）",
             "required": False,
         },
         "flip_angle_threshold": {
-            "type": "float",
+            "type": "number",
             "description": "翻转检测角度阈值（度，默认 120，相邻面法线夹角超过此值视为翻转）",
             "required": False,
         },
