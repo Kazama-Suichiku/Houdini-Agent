@@ -1324,6 +1324,28 @@ HOUDINI_TOOLS = [
                 "required": ["query"]
             }
         }
+    },
+    # ★ 视口截图工具（视觉验证）
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_viewport",
+            "description": "截取当前 Houdini 3D 视口的快照图片。用于查验节点的运行结果、检查几何体是否正确、验证材质/灯光效果等。截取的图片会自动传给你进行视觉分析。建议在完成关键操作后调用此工具来验证效果。注意：需要模型支持视觉(vision)功能。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "width": {
+                        "type": "integer",
+                        "description": "截图宽度(像素)，默认960，范围160-1920"
+                    },
+                    "height": {
+                        "type": "integer",
+                        "description": "截图高度(像素)，默认540，范围120-1080"
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -1441,6 +1463,7 @@ class AIClient:
         'search_local_doc', 'get_houdini_node_doc', 'get_node_inputs',
         'execute_python', 'execute_shell', 'web_search', 'fetch_webpage',
         'run_skill', 'list_skills',
+        'capture_viewport',
     })
     _OP_TOOLS = frozenset({
         'create_node', 'create_nodes_batch', 'connect_nodes',
@@ -4355,6 +4378,20 @@ class AIClient:
                 })
                 _needs_sanitize = True  # 新增 tool 消息，下轮需要清洗
 
+                # ★ 视口截图注入：如果工具返回了 _viewport_image，
+                # 追加一条包含图片的 user 消息，让模型可以视觉分析
+                if supports_vision and result.get('_viewport_image'):
+                    _img_b64 = result['_viewport_image']
+                    _img_mt = result.get('_image_media_type', 'image/jpeg')
+                    working_messages.append({
+                        'role': 'user',
+                        'content': [
+                            {"type": "text", "text": "[viewport snapshot attached — please analyze the current viewport state, check for visual issues or confirm the result is correct]"},
+                            {"type": "image_url", "image_url": {"url": f"data:{_img_mt};base64,{_img_b64}"}}
+                        ]
+                    })
+                    print(f"[AI Client] 📸 视口截图已注入消息 ({len(_img_b64)//1024}KB base64)")
+
             if should_break_tool_limit:
                 return {
                     'ok': True,
@@ -5118,10 +5155,26 @@ class AIClient:
             
             # 使用 system 角色传递工具结果，避免与用户消息混淆
             # 注意：部分模型不支持多个 system 消息，此处使用明确的 [TOOL_RESULT] 标记
-            working_messages.append({
-                'role': 'user',
-                'content': f'[TOOL_RESULT]\n{prompt}'
-            })
+            # ★ 检查是否有视口截图需要注入
+            _viewport_imgs = []
+            if supports_vision:
+                for tc in tool_calls:
+                    _r = exec_results.get(tool_calls.index(tc))
+                    if isinstance(_r, dict) and _r.get('_viewport_image'):
+                        _viewport_imgs.append((_r['_viewport_image'], _r.get('_image_media_type', 'image/jpeg')))
+            
+            if _viewport_imgs:
+                # 多模态消息：文本 + 图片
+                _content_parts = [{"type": "text", "text": f"[TOOL_RESULT]\n{prompt}\n[viewport snapshot attached — please analyze the current viewport state]"}]
+                for _vimg_b64, _vimg_mt in _viewport_imgs:
+                    _content_parts.append({"type": "image_url", "image_url": {"url": f"data:{_vimg_mt};base64,{_vimg_b64}"}})
+                    print(f"[AI Client] 📸 视口截图已注入消息 (JSON mode, {len(_vimg_b64)//1024}KB)")
+                working_messages.append({'role': 'user', 'content': _content_parts})
+            else:
+                working_messages.append({
+                    'role': 'user',
+                    'content': f'[TOOL_RESULT]\n{prompt}'
+                })
             
             # 保存当前轮次的内容（使用预编译正则清理XML标签）
             cleaned_round = round_content

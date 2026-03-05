@@ -762,6 +762,7 @@ Mandatory Verification Before Task Completion (MUST execute, cannot skip):
 2. If verify_and_summarize reports issues, fix them and call again until passed
 3. Note: No need to call get_network_structure before verify_and_summarize — it has built-in network checks
 4. check_errors is only for checking node cooking errors. Tool call failure messages are already in the return result, no need to call check_errors
+5. After completing geometry or visual operations, if the model supports vision, call capture_viewport to take a viewport screenshot and visually verify the result looks correct (e.g., geometry shape, scale, distribution, material appearance). This is especially useful for scatter, copy-to-points, terrain, and other visual-dependent workflows
 
 Tool Priority: create_wrangle_node (VEX preferred) > create_nodes_batch > create_node
 Node Inputs: 0=primary input, 1=second input | from_path=upstream, to_path=downstream
@@ -2720,6 +2721,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
     _COOK_BEFORE_READ_TOOLS = frozenset({
         'get_network_structure', 'get_node_parameters', 'list_children',
         'check_errors', 'verify_and_summarize',
+        'capture_viewport',  # 截图前需确保几何体已 cook
     })
 
     @QtCore.Slot(str, dict)
@@ -3990,6 +3992,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                         tools.append(meta.schema)
             except Exception:
                 pass
+            
+            # ★ 非视觉模型：移除 capture_viewport（截图无法分析）
+            if not supports_vision:
+                tools = [t for t in tools if t.get('function', {}).get('name') != 'capture_viewport']
             
             # ★ Plan 模式的静默工具集合（不在 UI 中显示的工具）
             _silent = self._SILENT_TOOLS | self._PLAN_SILENT_TOOLS if plan_mode else self._SILENT_TOOLS

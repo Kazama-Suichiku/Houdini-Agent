@@ -70,6 +70,7 @@ _READONLY_TOOLS = frozenset({
     'search_local_doc', 'get_houdini_node_doc', 'list_skills',
     'get_node_positions', 'list_network_boxes',
     'perf_start_profile', 'perf_stop_and_report',
+    'capture_viewport',
 })
 
 
@@ -309,6 +310,7 @@ class ToolRegistry:
             'get_node_positions', 'list_network_boxes',
             'verify_and_summarize',
             'search_memory',
+            'capture_viewport',
         },
         'create': {
             'create_node', 'create_nodes_batch', 'create_wrangle_node',

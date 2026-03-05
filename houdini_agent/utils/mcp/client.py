@@ -3444,6 +3444,8 @@ class HoudiniMCP:
         "perf_stop_and_report": "_tool_perf_stop_and_report",
         # 长期记忆主动搜索
         "search_memory": "_tool_search_memory",
+        # 视口截图
+        "capture_viewport": "_tool_capture_viewport",
     }
 
     # Python 代码安全黑名单
@@ -3641,6 +3643,131 @@ class HoudiniMCP:
 
         except Exception as e:
             return {"success": False, "error": f"记忆搜索失败: {str(e)}"}
+
+    # ========================================
+    # 视口截图
+    # ========================================
+
+    def _tool_capture_viewport(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """截取当前 Houdini 3D 视口的快照，返回 base64 编码的图片。
+        
+        使用 flipbook 机制截取当前帧的单帧图片，供 AI 视觉分析节点运行结果。
+        ★ 必须在主线程执行（涉及 hou UI 操作）。
+        """
+        if hou is None:
+            return {"success": False, "error": "Houdini 环境不可用"}
+        
+        width = args.get("width", 960)
+        height = args.get("height", 540)
+        # 限制分辨率范围
+        width = max(160, min(width, 1920))
+        height = max(120, min(height, 1080))
+        
+        try:
+            import tempfile
+            import base64
+            
+            # 获取 Scene Viewer
+            viewer = None
+            try:
+                desktop = hou.ui.curDesktop()
+                if desktop:
+                    viewer = desktop.paneTabOfType(hou.paneTabType.SceneViewer)
+            except Exception:
+                pass
+            
+            if viewer is None:
+                try:
+                    viewer = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
+                except Exception:
+                    pass
+            
+            if viewer is None:
+                return {"success": False, "error": "找不到 Scene Viewer 面板，请确保有打开的 3D 视口"}
+            
+            # 获取当前帧
+            current_frame = int(hou.frame())
+            
+            # 生成临时文件路径
+            tmp_dir = tempfile.gettempdir()
+            tmp_file = os.path.join(tmp_dir, f"houdini_viewport_{int(time.time() * 1000)}.jpg")
+            
+            # 使用 flipbook 截取单帧
+            try:
+                flip_settings = viewer.flipbookSettings().stash()
+                flip_settings.output(tmp_file)
+                flip_settings.frameRange((current_frame, current_frame))
+                flip_settings.resolution((width, height))
+                flip_settings.outputToMPlay(False)
+                
+                # 执行单帧截图
+                viewport = viewer.curViewport()
+                viewer.flipbook(viewport, flip_settings)
+            except Exception as e:
+                # 某些 Houdini 版本可能不支持 flipbook API
+                return {"success": False, "error": f"Flipbook 截图失败: {e}"}
+            
+            # 读取生成的图片
+            if not os.path.exists(tmp_file):
+                # flipbook 可能使用帧号作为文件名后缀
+                import glob
+                pattern = tmp_file.replace('.jpg', '*.jpg')
+                candidates = sorted(glob.glob(pattern))
+                if candidates:
+                    tmp_file = candidates[0]
+                else:
+                    return {"success": False, "error": "截图文件未生成，请检查视口状态"}
+            
+            # 读取并编码
+            with open(tmp_file, 'rb') as f:
+                img_bytes = f.read()
+            
+            if len(img_bytes) == 0:
+                return {"success": False, "error": "截图文件为空"}
+            
+            b64_data = base64.b64encode(img_bytes).decode('utf-8')
+            
+            # 清理临时文件
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+            
+            # 获取视口信息
+            viewport_name = ""
+            try:
+                viewport_name = viewer.curViewport().name()
+            except Exception:
+                pass
+            
+            cam_info = ""
+            try:
+                vp = viewer.curViewport()
+                cam = vp.camera()
+                if cam:
+                    cam_info = f", camera={cam.path()}"
+            except Exception:
+                pass
+            
+            size_kb = len(img_bytes) / 1024
+            
+            return {
+                "success": True,
+                "result": (
+                    f"已截取视口快照: {width}x{height}, frame={current_frame}, "
+                    f"viewport={viewport_name}{cam_info}, "
+                    f"size={size_kb:.1f}KB"
+                ),
+                # ★ 特殊字段：包含 base64 图片数据，
+                # agent_loop_stream 中检测到此字段会将图片注入消息
+                "_viewport_image": b64_data,
+                "_image_media_type": "image/jpeg",
+            }
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": f"视口截图失败: {str(e)}"}
 
     def _tool_unknown(self, tool_name: str) -> Dict[str, Any]:
         """处理未知工具名称，提供建议"""

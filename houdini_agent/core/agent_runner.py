@@ -87,6 +87,8 @@ class AgentRunnerMixin:
         'perf_stop_and_report',
         # 记忆搜索（只读）
         'search_memory',
+        # 视口截图（只读）
+        'capture_viewport',
         # ★ Plan 专用
         'create_plan',
         'ask_question',
@@ -136,6 +138,8 @@ class AgentRunnerMixin:
         'perf_stop_and_report',
         # 记忆搜索（只读）
         'search_memory',
+        # 视口截图（只读）
+        'capture_viewport',
     })
 
     # ---------- 自动 AI 标题生成 ----------
