@@ -3925,53 +3925,18 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                                     if t['function']['name'] not in ('web_search', 'fetch_webpage')]
                 tools = UltraOptimizer.optimize_tool_definitions(ask_filtered)
             else:
-                # ★ Agent 模式：意图感知工具过滤（节省 tool schema tokens）
-                # 当用户消息较短时，根据意图只发送相关工具
-                _intent_filtered = False
-                if use_agent:
-                    try:
-                        from ..utils.tool_registry import get_tool_registry as _gtr_intent
-                        _reg_intent = _gtr_intent()
-                        # 提取最后一条用户消息
-                        _last_user_msg = ''
-                        for _m in reversed(messages):
-                            if _m.get('role') == 'user':
-                                _last_user_msg = _m.get('content', '')
-                                if isinstance(_last_user_msg, list):
-                                    _last_user_msg = ' '.join(
-                                        p.get('text', '') for p in _last_user_msg
-                                        if isinstance(p, dict) and p.get('type') == 'text'
-                                    )
-                                break
-                        _intents = _reg_intent.classify_intent(_last_user_msg)
-                        # 只有在成功识别意图且不是超长消息（复杂任务应全量工具）时做过滤
-                        if _intents and len(_last_user_msg) < 200:
-                            _mode = 'agent'
-                            _intent_tools = _reg_intent.get_tools_for_intent(_intents, _mode)
-                            if len(_intent_tools) >= 5:  # 至少保留 5 个工具
-                                # 确保 execute_python 始终可用（万能工具）
-                                _intent_names = {t.get('function', {}).get('name', '') for t in _intent_tools}
-                                if 'execute_python' not in _intent_names:
-                                    for _t in HOUDINI_TOOLS:
-                                        if _t.get('function', {}).get('name') == 'execute_python':
-                                            _intent_tools.append(_t)
-                                            break
-                                tools = UltraOptimizer.optimize_tool_definitions(_intent_tools)
-                                _intent_filtered = True
-                                print(f"[AI Tab] 意图过滤: {_intents} → {len(tools)} 工具")
-                    except Exception as e:
-                        print(f"[AI Tab] 意图过滤失败: {e}")
-
-                if not _intent_filtered:
-                    if use_web:
-                        if self._cached_optimized_tools is None:
-                            self._cached_optimized_tools = UltraOptimizer.optimize_tool_definitions(HOUDINI_TOOLS)
-                        tools = self._cached_optimized_tools
-                    else:
-                        if self._cached_optimized_tools_no_web is None:
-                            filtered = [t for t in HOUDINI_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')]
-                            self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
-                        tools = self._cached_optimized_tools_no_web
+                # ★ Agent 模式：使用全量工具
+                # 注意：不做意图过滤。Agent 需要多轮迭代，可能先查询再创建再验证，
+                # 意图过滤会导致后续迭代缺少必要工具（如 capture_viewport、create_node 等）。
+                if use_web:
+                    if self._cached_optimized_tools is None:
+                        self._cached_optimized_tools = UltraOptimizer.optimize_tool_definitions(HOUDINI_TOOLS)
+                    tools = self._cached_optimized_tools
+                else:
+                    if self._cached_optimized_tools_no_web is None:
+                        filtered = [t for t in HOUDINI_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                        self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
+                    tools = self._cached_optimized_tools_no_web
             
             # ★ 合并外部工具（HookManager 插件工具 + ToolRegistry Skill 工具）
             try:
