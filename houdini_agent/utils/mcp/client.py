@@ -3659,6 +3659,7 @@ class HoudiniMCP:
         
         width = args.get("width", 960)
         height = args.get("height", 540)
+        output_path = args.get("output_path", "")
         # 限制分辨率范围
         width = max(160, min(width, 1920))
         height = max(120, min(height, 1080))
@@ -3751,13 +3752,29 @@ class HoudiniMCP:
             
             size_kb = len(img_bytes) / 1024
             
+            result_msg = (
+                f"已截取视口快照: {width}x{height}, frame={current_frame}, "
+                f"viewport={viewport_name}{cam_info}, "
+                f"size={size_kb:.1f}KB"
+            )
+            
+            # 如果指定了 output_path，保存到文件
+            if output_path:
+                try:
+                    # 支持 $HIP 等 Houdini 变量展开
+                    expanded_path = hou.text.expandString(output_path) if hasattr(hou, 'text') else output_path
+                    save_dir = os.path.dirname(expanded_path)
+                    if save_dir and not os.path.exists(save_dir):
+                        os.makedirs(save_dir, exist_ok=True)
+                    with open(expanded_path, 'wb') as f:
+                        f.write(img_bytes)
+                    result_msg += f"\n截图已保存到: {expanded_path}"
+                except Exception as e:
+                    result_msg += f"\n保存到 {output_path} 失败: {e}"
+            
             return {
                 "success": True,
-                "result": (
-                    f"已截取视口快照: {width}x{height}, frame={current_frame}, "
-                    f"viewport={viewport_name}{cam_info}, "
-                    f"size={size_kb:.1f}KB"
-                ),
+                "result": result_msg,
                 # ★ 特殊字段：包含 base64 图片数据，
                 # agent_loop_stream 中检测到此字段会将图片注入消息
                 "_viewport_image": b64_data,

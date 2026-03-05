@@ -1330,7 +1330,7 @@ HOUDINI_TOOLS = [
         "type": "function",
         "function": {
             "name": "capture_viewport",
-            "description": "截取当前 Houdini 3D 视口的快照图片。用于查验节点的运行结果、检查几何体是否正确、验证材质/灯光效果等。截取的图片会自动传给你进行视觉分析。建议在完成关键操作后调用此工具来验证效果。注意：需要模型支持视觉(vision)功能。",
+            "description": "截取当前 Houdini 3D 视口的快照图片。用于查验节点的运行结果、检查几何体是否正确、验证材质/灯光效果等。截取的图片会自动传给你进行视觉分析。建议在完成关键操作后调用此工具来验证效果。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1341,6 +1341,10 @@ HOUDINI_TOOLS = [
                     "height": {
                         "type": "integer",
                         "description": "截图高度(像素)，默认540，范围120-1080"
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "可选：保存截图到指定文件路径（如 $HIP/snapshot.jpg）。未指定时截图仅传给模型做视觉分析。"
                     }
                 },
                 "required": []

@@ -3958,9 +3958,23 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             except Exception:
                 pass
             
-            # ★ 非视觉模型：移除 capture_viewport（截图无法分析）
+            # ★ 非视觉模型：capture_viewport 降级为仅保存文件（不注入图片）
+            # 不再移除工具——AI 仍可截图保存让用户自行查看
             if not supports_vision:
-                tools = [t for t in tools if t.get('function', {}).get('name') != 'capture_viewport']
+                _degraded_tools = []
+                for _t in tools:
+                    if _t.get('function', {}).get('name') == 'capture_viewport':
+                        import copy
+                        _t_copy = copy.deepcopy(_t)
+                        _t_copy['function']['description'] = (
+                            "截取当前 Houdini 3D 视口快照并保存到文件。"
+                            "当前模型不支持图片分析，截图将保存到 output_path 指定的路径供用户查看。"
+                            "必须指定 output_path 参数。"
+                        )
+                        _degraded_tools.append(_t_copy)
+                    else:
+                        _degraded_tools.append(_t)
+                tools = _degraded_tools
             
             # ★ Plan 模式的静默工具集合（不在 UI 中显示的工具）
             _silent = self._SILENT_TOOLS | self._PLAN_SILENT_TOOLS if plan_mode else self._SILENT_TOOLS
