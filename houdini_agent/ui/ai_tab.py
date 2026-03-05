@@ -1716,6 +1716,41 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         except RuntimeError:
             pass  # 控件可能已销毁
 
+    def _cook_displayed_nodes_if_manual(self):
+        """★ 在 Manual 保护模式下，对当前工作区的 display 节点做针对性 cook
+        
+        v1.4.4 修复：Agent 运行期间处于 Manual 模式时，修改工具不触发 cook，
+        导致读取工具（get_network_structure、check_errors 等）返回 stale 数据，
+        AI 误以为操作未生效。
+        
+        策略：只 cook 当前 /obj 下各 geo 容器中设置了 Display Flag 的节点。
+        这是最小范围的 cook，只刷新 AI 关注的节点数据而不触发全场景 cook。
+        """
+        if getattr(self, '_pre_agent_update_mode', None) is None:
+            return  # 不在 Agent cook 保护模式下，无需处理
+        try:
+            import hou  # type: ignore
+            if hou.updateModeSetting() != hou.updateMode.Manual:
+                return  # 当前不是 Manual 模式，无需处理
+            
+            # 收集所有需要 cook 的 display 节点
+            cooked = 0
+            for child in hou.node('/obj').children():
+                # 只处理 geo 类型容器（SOP 网络）
+                if child.type().name() not in ('geo', 'subnet'):
+                    continue
+                try:
+                    display_node = child.displayNode()
+                    if display_node is not None:
+                        display_node.cook(force=True)
+                        cooked += 1
+                except Exception:
+                    pass  # 单个节点 cook 失败不影响其他
+            if cooked:
+                print(f"[Cook Guard] Manual 模式下针对性 cook 了 {cooked} 个 display 节点")
+        except Exception as e:
+            print(f"[Cook Guard] 针对性 cook 失败: {e}")
+
     def _restore_update_mode(self):
         """★ 恢复 Houdini 更新模式（Agent 结束/错误/停止时调用）
         
@@ -2233,6 +2268,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         所有工具在主线程依次执行（它们是快速的只读查询），
         然后将结果列表一次性放入队列返回给调用线程。
         """
+        # ★ 读取前 Cook（v1.4.4）：批量读取也需要确保数据新鲜
+        needs_cook = any(tn in self._COOK_BEFORE_READ_TOOLS for tn, _ in batch)
+        if needs_cook:
+            self._cook_displayed_nodes_if_manual()
+        
         results = []
         for tool_name, kwargs in batch:
             try:
@@ -2665,6 +2705,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         'batch_set_parameters', 'execute_python', 'run_skill',
     })
 
+    # ★ 需要在 Manual 保护模式下做针对性 cook 的读取工具
+    # 这些工具需要读取节点最新计算结果（几何体、错误状态等），
+    # 如果不 cook，AI 会看到 stale 数据从而误判操作结果
+    _COOK_BEFORE_READ_TOOLS = frozenset({
+        'get_network_structure', 'get_node_parameters', 'list_children',
+        'check_errors', 'verify_and_summarize',
+    })
+
     @QtCore.Slot(str, dict)
     def _on_execute_tool_main_thread(self, tool_name: str, kwargs: dict):
         """在主线程执行工具（槽函数）
@@ -2710,6 +2758,12 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     hou.setUpdateMode(hou.updateMode.Manual)
             except Exception:
                 pass
+        
+        # ★ 读取前 Cook（v1.4.4）：当 Agent 处于 Manual 保护模式下，
+        # 读取工具执行前先对当前显示节点做一次针对性 cook，
+        # 确保 AI 能看到修改后的最新结果（而非 stale 数据）
+        if tool_name in self._COOK_BEFORE_READ_TOOLS:
+            self._cook_displayed_nodes_if_manual()
         
         # ★ 对不自带 checkpoint 追踪的修改工具，做 before/after 快照
         should_snapshot = (
