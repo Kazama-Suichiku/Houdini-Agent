@@ -218,6 +218,7 @@ class AITab(
         # 工具执行线程安全机制（使用队列和锁避免竞争）
         self._tool_result_queue: queue.Queue = queue.Queue()
         self._tool_lock = threading.Lock()  # 确保一次只有一个工具调用
+        self._main_thread_busy = False  # ★ 主线程忙标记（防止超时后堆积信号死锁）
         
         # 连接信号
         self._appendContent.connect(self._on_append_content)
@@ -1714,9 +1715,30 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         except RuntimeError:
             pass  # 控件可能已销毁
 
+    def _restore_update_mode(self):
+        """★ 恢复 Houdini 更新模式（Agent 结束/错误/停止时调用）
+        
+        v1.4.3 Cook 保护策略：
+        Agent 运行期间，修改工具会将 Houdini 切换为 Manual 模式以防止
+        cook 阻塞主线程。Agent 结束后在此统一恢复用户原始的更新模式，
+        此时 Houdini 会自动触发一次 cook 展示最终结果。
+        """
+        _user_mode = getattr(self, '_pre_agent_update_mode', None)
+        if _user_mode is not None:
+            try:
+                import hou  # type: ignore
+                hou.setUpdateMode(_user_mode)
+            except Exception:
+                pass
+            self._pre_agent_update_mode = None
+    
     def _on_agent_done(self, result: dict):
         # ★ Hook: on_session_end
         self._fire_session_hook('on_session_end', self._agent_session_id or self._session_id)
+        
+        # ★ 恢复 Houdini 更新模式 & 清除主线程忙标记
+        self._main_thread_busy = False
+        self._restore_update_mode()
         
         # ★ 停止思考指示条
         try:
@@ -1920,6 +1942,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._maybe_generate_title(agent_sid, history)
 
     def _on_agent_error(self, error: str):
+        # ★ 恢复 Houdini 更新模式 & 清除主线程忙标记
+        self._main_thread_busy = False
+        self._restore_update_mode()
         # 停止思考指示条
         try:
             self.thinking_bar.stop()
@@ -1944,6 +1969,9 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._set_running(False)
 
     def _on_agent_stopped(self):
+        # ★ 恢复 Houdini 更新模式 & 清除主线程忙标记
+        self._main_thread_busy = False
+        self._restore_update_mode()
         # 停止思考指示条
         try:
             self.thinking_bar.stop()
@@ -2007,6 +2035,20 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         注意：此方法在后台线程调用，Houdini 操作必须通过信号调度到主线程执行。
         不依赖 hou 模块的工具（execute_shell 等）直接在后台线程执行，避免阻塞 UI。
         """
+        # ★ Stop 检测：用户请求停止时立即返回，不再排队新工具
+        if self.client.is_stop_requested():
+            return {"success": False, "error": "用户已请求停止"}
+        
+        # ★ 主线程忙保护：如果上一个工具超时了且主线程仍在 cook，
+        #   不再堆积新的 BlockingQueuedConnection 信号（避免死锁）
+        if getattr(self, '_main_thread_busy', False):
+            if tool_name not in self._BG_SAFE_TOOLS:
+                return {
+                    "success": False,
+                    "error": "主线程正忙（可能在进行耗时计算），请等待完成后重试。"
+                            "建议：按停止按钮中断当前操作。"
+                }
+        
         # ★ Ask 模式安全守卫：拦截任何不在白名单的工具
         if not self._agent_mode and not self._plan_mode and tool_name not in self._ASK_MODE_TOOLS:
             # 额外检查 ToolRegistry（插件/Skill 工具可能注册了 ask 模式）
@@ -2104,6 +2146,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             import traceback
             return {"success": False, "error": tr('ai.bg_exec_err', f"{e}\n{traceback.format_exc()[:300]}")}
     
+    # 主线程工具执行超时（秒）
+    # 修改操作可能触发 Houdini cook，需要足够的超时时间
+    _TOOL_MAIN_THREAD_TIMEOUT = 120.0
+
     def _execute_tool_in_main_thread(self, tool_name: str, kwargs: dict) -> dict:
         """在主线程执行工具（线程安全）
         
@@ -2117,6 +2163,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         所有 hou API 调用必须在主线程执行，否则会导致段错误或 EXC_BAD_ACCESS。
         BlockingQueuedConnection 保证信号在目标线程（主线程）的事件循环中执行，
         且 emit 会阻塞调用线程直到槽函数返回，实现了线程安全的同步调用。
+        
+        ★ 防卡死机制（v1.4.3）：
+        当 Houdini cook 耗时导致超时后，标记 _main_thread_busy，
+        阻止后续工具调用堆积 BlockingQueuedConnection 信号（避免死锁）。
+        主线程槽函数执行完毕后自动清除标记。
         """
         # 使用锁确保一次只有一个工具调用（避免并发竞争）
         with self._tool_lock:
@@ -2132,14 +2183,24 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._executeToolRequest.emit(tool_name, kwargs)
             
             # 从队列获取结果（有超时保护）
-            # ★ 注意：BlockingQueuedConnection 已保证 emit 返回时槽函数执行完毕，
-            #   但使用 Queue 作为双重保险，应对某些 PySide2 版本的边缘情况。
-            #   超时设为 60s，因为 execute_python 等工具可能运行较长时间。
+            # ★ 超时设为 120s，因为某些 Houdini 操作（如创建复杂节点、cook 高面数模型）
+            #   可能需要较长时间。超时后标记主线程忙，防止后续信号堆积。
             try:
-                result = self._tool_result_queue.get(timeout=60.0)
+                result = self._tool_result_queue.get(timeout=self._TOOL_MAIN_THREAD_TIMEOUT)
+                # 主线程正常返回 → 清除忙标记
+                self._main_thread_busy = False
                 return result
             except queue.Empty:
-                return {"success": False, "error": tr('ai.main_exec_timeout')}
+                # ★ 超时：主线程可能仍在执行 cook，标记为忙
+                self._main_thread_busy = True
+                print(f"[⚠️ TIMEOUT] 工具 {tool_name} 主线程执行超时 "
+                      f"({self._TOOL_MAIN_THREAD_TIMEOUT}s)，"
+                      f"可能 Houdini 正在进行耗时计算。后续工具调用将被暂停。")
+                return {
+                    "success": False,
+                    "error": f"操作超时（{int(self._TOOL_MAIN_THREAD_TIMEOUT)}秒）：Houdini 主线程可能正在进行耗时计算（如 cook/渲染）。"
+                             f"操作 {tool_name} 仍在后台执行中，请等待完成或按停止按钮中断。"
+                }
 
     def _execute_tools_batch_in_main_thread(self, batch: list) -> list:
         """在主线程批量执行只读工具（减少 N 次信号往返为 1 次）
@@ -2595,6 +2656,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             return None
         return {'created': created, 'deleted': deleted}
 
+    # ★ 会触发 Houdini cook 的工具集合
+    # 这些工具执行时可能导致耗时的场景计算，需要特殊保护
+    _COOK_TRIGGERING_TOOLS = frozenset({
+        'create_node', 'create_nodes_batch', 'create_wrangle_node',
+        'connect_nodes', 'set_display_flag', 'set_node_parameter',
+        'batch_set_parameters', 'execute_python', 'run_skill',
+    })
+
     @QtCore.Slot(str, dict)
     def _on_execute_tool_main_thread(self, tool_name: str, kwargs: dict):
         """在主线程执行工具（槽函数）
@@ -2607,6 +2676,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         Houdini 的 hou 模块不是线程安全的。macOS 上 Cocoa/AppKit 要求 UI 和
         场景操作必须在主线程执行，否则会导致 EXC_BAD_ACCESS。
         此方法通过 BlockingQueuedConnection 信号从后台线程触发，保证在主线程执行。
+        
+        ★ Cook 保护（v1.4.3）：
+        对可能触发 cook 的修改工具，在执行前临时切换为手动更新模式，
+        执行完毕后恢复原模式。这样 setDisplayFlag/connect 等操作不会
+        立即触发耗时的场景 cook，避免阻塞主线程导致死锁。
         """
         # ★ 主线程断言（调试辅助：如果在非主线程执行，输出警告）
         _app = QtWidgets.QApplication.instance()
@@ -2624,6 +2698,17 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             "execute_python", "save_hip", "run_skill",
         }
         use_undo_group = tool_name in _MUTATING_TOOLS
+        
+        # ★ Cook 保护（v1.4.3）：对可能触发 cook 的工具，
+        # 在 Agent 运行期间保持 Manual 模式，防止 cook 阻塞主线程
+        # 模式恢复在 Agent 结束时统一处理（_restore_update_mode）
+        if tool_name in self._COOK_TRIGGERING_TOOLS:
+            try:
+                import hou  # type: ignore
+                if hou.updateModeSetting() != hou.updateMode.Manual:
+                    hou.setUpdateMode(hou.updateMode.Manual)
+            except Exception:
+                pass
         
         # ★ 对不自带 checkpoint 追踪的修改工具，做 before/after 快照
         should_snapshot = (
@@ -2729,6 +2814,14 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     hou.undos.endGroup()
                 except Exception:
                     pass
+
+            # ★ Cook 保护恢复：不在单个工具 finally 中恢复更新模式
+            # 而是在 Agent 结束时统一恢复（_restore_update_mode），
+            # 避免中间工具恢复后触发耗时 cook 阻塞主线程
+
+            # ★ 清除主线程忙标记
+            # 无论工具执行成功或失败，主线程已经空闲
+            self._main_thread_busy = False
 
             # ★ macOS 崩溃修复：不再在此处调用 processEvents()
             # ─────────────────────────────────────────────────────
@@ -3320,6 +3413,13 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._agent_response = self._current_response
         # ★ 启动流光边框动画
         self._start_active_aurora()
+        
+        # ★ 记录用户当前的 Houdini 更新模式（Agent 结束后恢复）
+        try:
+            import hou  # type: ignore
+            self._pre_agent_update_mode = hou.updateModeSetting()
+        except Exception:
+            self._pre_agent_update_mode = None
         
         # ⚠️ 在主线程中获取所有 Qt 控件的值（后台线程不能直接访问）
         agent_params = {
