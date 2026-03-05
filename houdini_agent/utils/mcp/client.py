@@ -106,6 +106,17 @@ class HoudiniMCP:
     _tool_page_cache: Dict[str, str] = {}
     _TOOL_PAGE_LINES = 50  # 每页行数
 
+    def __init__(self):
+        import threading
+        self._stop_event: Optional[threading.Event] = None
+
+    def set_stop_event(self, event):
+        """设置停止事件（从 AIClient 传入，用于检测用户中断）
+        
+        在 execute_python / execute_shell 中通过检查此事件来支持用户中断。
+        """
+        self._stop_event = event
+
     @classmethod
     def _paginate_tool_result(cls, text: str, cache_key: str, tool_hint: str,
                               page: int = 1, page_lines: int = 0) -> str:
@@ -2198,6 +2209,10 @@ class HoudiniMCP:
     # Python 代码执行（类似 Cursor 终端）
     # ========================================
     
+    class _ExecInterrupt(Exception):
+        """execute_python 超时或用户停止时抛出的中断异常"""
+        pass
+
     def execute_python(self, code: str, timeout: int = 30) -> Tuple[bool, Dict[str, Any]]:
         """在 Houdini Python 环境中执行代码
         
@@ -2219,6 +2234,12 @@ class HoudiniMCP:
         安全注意：
         - 此功能允许执行任意代码，应谨慎使用
         - 危险操作（如删除文件）需要用户确认
+        
+        ★ 超时保护（v1.4.5）：
+        使用 sys.settrace 在每行 Python 代码执行前检查超时和停止标志。
+        超时或用户停止时抛出 _ExecInterrupt 中断代码执行，防止卡死主线程。
+        注意：对 C 扩展内部的阻塞（如 hou.node.cook）无法中断，
+        但能在 C 调用返回后的下一行 Python 代码处中断。
         """
         if hou is None:
             return False, {"error": "未检测到 Houdini API"}
@@ -2229,12 +2250,36 @@ class HoudiniMCP:
         import io
         import sys
         import traceback
+        import threading
         
         start_time = time.time()
+        _stop_event = self._stop_event  # 缓存引用
+        _deadline = start_time + max(timeout, 5)  # 最少 5 秒
+        _check_interval = 0.5  # 每 0.5s 检查一次（避免过于频繁）
+        _last_check = [start_time]  # 用列表以便在闭包中修改
+        
+        def _trace_timeout(frame, event, arg):
+            """sys.settrace 回调：每行代码执行前检查超时和停止标志"""
+            now = time.time()
+            # 降低检查频率：距上次检查不足 _check_interval 则跳过
+            if now - _last_check[0] < _check_interval:
+                return _trace_timeout
+            _last_check[0] = now
+            # 检查停止标志
+            if _stop_event and _stop_event.is_set():
+                raise HoudiniMCP._ExecInterrupt("用户已停止执行")
+            # 检查超时
+            if now > _deadline:
+                raise HoudiniMCP._ExecInterrupt(
+                    f"代码执行超时（{timeout}s），已中断。"
+                    f"如需更长时间，请增加 timeout 参数。"
+                )
+            return _trace_timeout
         
         # 捕获输出
         old_stdout = sys.stdout
         old_stderr = sys.stderr
+        old_trace = sys.gettrace()
         captured_output = io.StringIO()
         captured_error = io.StringIO()
         
@@ -2255,6 +2300,9 @@ class HoudiniMCP:
                 '__builtins__': __builtins__,
             }
             exec_locals = {}
+            
+            # ★ 安装超时 trace
+            sys.settrace(_trace_timeout)
             
             # 尝试作为表达式求值（返回最后一个值）
             try:
@@ -2280,6 +2328,12 @@ class HoudiniMCP:
             
             result["execution_time"] = time.time() - start_time
             return True, result
+        
+        except HoudiniMCP._ExecInterrupt as e:
+            result["error"] = str(e)
+            result["output"] = captured_output.getvalue()
+            result["execution_time"] = time.time() - start_time
+            return False, result
             
         except Exception as e:
             result["error"] = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
@@ -2288,6 +2342,8 @@ class HoudiniMCP:
             return False, result
             
         finally:
+            # ★ 必须恢复原始 trace，否则影响后续所有 Python 执行
+            sys.settrace(old_trace)
             sys.stdout = old_stdout
             sys.stderr = old_stderr
     
@@ -2700,7 +2756,8 @@ class HoudiniMCP:
         security_msg = self._check_code_security(code)
         if security_msg:
             return {"success": False, "error": security_msg}
-        ok, result = self.execute_python(code)
+        timeout = int(args.get("timeout", 30))
+        ok, result = self.execute_python(code, timeout=timeout)
         if ok:
             output_parts = []
             if result.get("output"):

@@ -119,7 +119,7 @@ class AITab(
         
         self.client = AIClient()
         self.mcp = HoudiniMCP()
-        self.mcp._stop_event = self.client._stop_event  # 共享停止事件，使 shell 命令可被中断
+        self.mcp.set_stop_event(self.client._stop_event)  # 共享停止事件，使 shell/python 命令可被中断
         self.client.set_tool_executor(self._execute_tool_with_todo)
         self.client.set_batch_tool_executor(self._execute_tools_batch_in_main_thread)
         
