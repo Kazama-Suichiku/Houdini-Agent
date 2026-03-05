@@ -315,6 +315,20 @@ QPushButton#btnOverflow:hover {
     color: #b0a08c;
 }
 
+/* --- Custom Provider config button --- */
+QPushButton#btnCustomConfig {
+    background: transparent;
+    color: #8a7e6e;
+    border: none;
+    border-radius: 4px;
+    font-size: {FS_SM}px;
+    padding: 0;
+}
+QPushButton#btnCustomConfig:hover {
+    background: rgba(106,158,255,20);
+    color: #6a9eff;
+}
+
 /* --- Language combo (compact warm) --- */
 QComboBox#langCombo {
     background: rgba(45,40,32,180);

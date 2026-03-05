@@ -1254,6 +1254,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         self._refresh_models(provider)
         self._load_model_preference()  # 切换提供商时也尝试加载上次使用的模型
         self._update_key_status()
+        self._on_provider_changed_custom_visibility()  # Custom ⚙ 按钮可见性
 
     def _set_running(self, running: bool):
         self._is_running = running
@@ -4929,6 +4930,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
 
     def _on_set_key(self):
         provider = self._current_provider()
+        # Custom provider 使用专用配置对话框
+        if provider == 'custom':
+            self._open_custom_provider_dialog()
+            return
         names = {'openai': 'OpenAI', 'deepseek': 'DeepSeek', 'glm': 'GLM（智谱AI）', 'ollama': 'Ollama', 'openrouter': 'OpenRouter'}
         
         key, ok = QtWidgets.QInputDialog.getText(

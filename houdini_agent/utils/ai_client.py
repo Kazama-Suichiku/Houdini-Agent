@@ -1364,6 +1364,10 @@ class AIClient:
         re.compile(r'</?redacted_reasoning[^>]*>'),
     ]
 
+    # Custom provider 运行时配置
+    _CUSTOM_API_URL: str = ''
+    _CUSTOM_SUPPORTS_FC: bool = True
+
     def __init__(self, api_key: Optional[str] = None):
         self._api_keys: Dict[str, Optional[str]] = {
             'openai': api_key or self._read_api_key('openai'),
@@ -1372,6 +1376,7 @@ class AIClient:
             'ollama': 'ollama',  # Ollama 不需要真正的 API key，但需要非空值
             'duojie': self._read_api_key('duojie'),
             'openrouter': self._read_api_key('openrouter'),
+            'custom': self._read_api_key('custom'),
         }
         self._ssl_context = self._create_ssl_context()
         self._web_searcher = WebSearcher()
@@ -2259,6 +2264,7 @@ class AIClient:
             'glm': ['GLM_API_KEY', 'ZHIPU_API_KEY', 'DCC_AI_GLM_API_KEY'],
             'duojie': ['DUOJIE_API_KEY', 'DCC_AI_DUOJIE_API_KEY'],
             'openrouter': ['OPENROUTER_API_KEY', 'DCC_AI_OPENROUTER_API_KEY'],
+            'custom': ['CUSTOM_API_KEY', 'DCC_AI_CUSTOM_API_KEY'],
         }
         for env_var in env_map.get(provider, []):
             key = os.environ.get(env_var)
@@ -2270,6 +2276,7 @@ class AIClient:
                 'openai': 'openai_api_key', 'deepseek': 'deepseek_api_key',
                 'glm': 'glm_api_key', 'duojie': 'duojie_api_key',
                 'openrouter': 'openrouter_api_key',
+                'custom': 'custom_api_key',
             }
             return cfg.get(key_map.get(provider, '')) or None
         return None
@@ -2279,6 +2286,9 @@ class AIClient:
         # Ollama 总是可用（本地服务）
         if provider == 'ollama':
             return True
+        # Custom: 只要配置了 URL 就算可用（Key 可选）
+        if provider == 'custom':
+            return bool(self._CUSTOM_API_URL)
         return bool(self._api_keys.get(provider))
 
     def _get_api_key(self, provider: str) -> Optional[str]:
@@ -2294,7 +2304,7 @@ class AIClient:
             cfg, _ = load_config('ai', dcc_type='houdini')
             cfg = cfg or {}
             key_map = {'openai': 'openai_api_key', 'deepseek': 'deepseek_api_key', 'glm': 'glm_api_key',
-                       'openrouter': 'openrouter_api_key'}
+                       'openrouter': 'openrouter_api_key', 'custom': 'custom_api_key'}
             cfg[key_map.get(provider, f'{provider}_api_key')] = key
             ok, _ = save_config('ai', cfg, dcc_type='houdini')
             return ok
@@ -2305,6 +2315,19 @@ class AIClient:
         # Ollama 显示本地状态
         if provider == 'ollama':
             return 'Local'
+        # Custom: 显示 URL 缩略
+        if provider == 'custom':
+            if self._CUSTOM_API_URL:
+                url = self._CUSTOM_API_URL
+                # 提取域名部分作为显示
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    host = parsed.hostname or url[:20]
+                    return host[:16] + ('...' if len(host) > 16 else '')
+                except Exception:
+                    return url[:16] + '...'
+            return 'Not Set'
         key = self._get_api_key(provider)
         if not key:
             return ''
@@ -2330,6 +2353,8 @@ class AIClient:
             return self.DUOJIE_API_URL
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
+        elif provider == 'custom':
+            return self._CUSTOM_API_URL or self.OPENAI_API_URL
         return self.OPENAI_API_URL
 
     def _get_vendor_name(self, provider: str) -> str:
@@ -2337,8 +2362,22 @@ class AIClient:
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）', 'ollama': 'Ollama',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
+            'custom': 'Custom',
         }
         return names.get(provider, provider)
+
+    def set_custom_provider(self, api_url: str, api_key: str = '', supports_fc: bool = True):
+        """设置 Custom Provider 的运行时配置
+
+        Args:
+            api_url: OpenAI 兼容的 API 端点 URL
+            api_key: API Key（可为空）
+            supports_fc: 是否支持原生 Function Calling
+        """
+        self._CUSTOM_API_URL = api_url.strip()
+        self._CUSTOM_SUPPORTS_FC = supports_fc
+        if api_key:
+            self._api_keys['custom'] = api_key.strip()
     
     def set_ollama_url(self, base_url: str):
         """设置 Ollama 服务地址"""
@@ -2383,15 +2422,19 @@ class AIClient:
                 return {'ok': False, 'error': f'无法连接 Ollama 服务: {str(e)}'}
         
         api_key = self._get_api_key(provider)
-        if not api_key:
+        # Custom provider 允许无 API Key（本地服务等）
+        if not api_key and provider != 'custom':
             return {'ok': False, 'error': f'缺少 API Key'}
         
         try:
             if HAS_REQUESTS:
+                headers = {'Content-Type': 'application/json'}
+                if api_key:
+                    headers['Authorization'] = f'Bearer {api_key}'
                 response = self._http_session.post(
                     self._get_api_url(provider),
                     json={'model': self._get_default_model(provider), 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1},
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=headers,
                     timeout=15,
                     proxies={'http': None, 'https': None}
                 )
@@ -3144,8 +3187,8 @@ class AIClient:
             'Accept': 'text/event-stream',
         }
         
-        # Ollama 不需要 Authorization 头
-        if provider != 'ollama':
+        # Ollama 和无 Key 的 Custom 不需要 Authorization 头
+        if provider != 'ollama' and api_key:
             headers['Authorization'] = f'Bearer {api_key}'
         
         # OpenRouter 需要额外的请求头用于标识来源（参见 https://openrouter.ai/docs/quickstart）
@@ -3528,8 +3571,9 @@ class AIClient:
         
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}',
         }
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
         
         # OpenRouter 需要额外的请求头用于标识来源（参见 https://openrouter.ai/docs/quickstart）
         if provider == 'openrouter':
@@ -4464,6 +4508,9 @@ class AIClient:
         # Ollama 模型默认不支持
         if provider == 'ollama':
             return False
+        # Custom provider 根据用户配置决定
+        if provider == 'custom':
+            return self._CUSTOM_SUPPORTS_FC
         # 其他云端模型都支持
         return True
     
