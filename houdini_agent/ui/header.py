@@ -102,8 +102,8 @@ class HeaderMixin:
         self._load_custom_provider_config()
         self._model_context_limits = {
             'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
-            'deepseek-v4-flash': 128000, 'deepseek-v4-pro': 128000,
-            'deepseek-chat': 128000, 'deepseek-reasoner': 128000,
+            'deepseek-v4-flash': 1048576, 'deepseek-v4-pro': 1048576,
+            'deepseek-chat': 1048576, 'deepseek-reasoner': 1048576,
             'glm-4.7': 200000,
             'gpt-5.2': 128000,
             'gpt-5.3-codex': 200000,
