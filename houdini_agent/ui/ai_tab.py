@@ -12,12 +12,15 @@ Agent loop, multi-turn tool calling, streaming UI
 """
 
 import json
+import logging
 import math
 import os
 import threading
 import time
 import uuid
 import queue
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -5928,7 +5931,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 return
             self._save_all_sessions()
         except Exception as e:
-            print(f"[Cache] 定期保存失败: {e}")
+            logger.warning("[Cache] 定期保存失败: %s", e)
     
     def _atexit_save(self):
         """Python 退出时的最后保存机会（atexit 回调）
@@ -5946,7 +5949,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 return
             if not hasattr(self, '_sessions') or not self._sessions:
                 return
-            print(f"[Cache] atexit: 开始保存 (sessions={len(self._sessions)}, backup={len(getattr(self, '_tabs_backup', []))})")
+            logger.debug("[Cache] atexit: 开始保存 (sessions=%d, backup=%d)", len(self._sessions), len(getattr(self, '_tabs_backup', [])))
             try:
                 self._save_current_session_state()
             except (RuntimeError, AttributeError):
@@ -6046,7 +6049,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 self._update_workspace_cache_info()
             return True
         except Exception as e:
-            print(f"[Cache] 自动保存失败: {e}")
+            logger.warning("[Cache] 自动保存失败: %s", e)
             return False
     
     def _update_manifest(self):
@@ -6091,7 +6094,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 with open(manifest_file, 'w', encoding='utf-8') as f:
                     json.dump(manifest, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[Cache] 更新 manifest 失败: {e}")
+            logger.warning("[Cache] 更新 manifest 失败: %s", e)
 
     def _save_all_sessions(self) -> bool:
         """保存所有打开的会话到磁盘（关闭软件时调用）"""
@@ -6187,11 +6190,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 json.dump(manifest, f, ensure_ascii=False, indent=2)
 
             self._sessions_saved = True
-            print(f"[Cache] 已保存 {len(manifest_tabs)} 个会话标签 (tabs_list={len(tabs_list)}, sessions={len(self._sessions)})")
+            logger.debug("[Cache] 已保存 %d 个会话标签 (tabs_list=%d, sessions=%d)", len(manifest_tabs), len(tabs_list), len(self._sessions))
             return True
-        except Exception as e:
-            print(f"[Cache] 保存所有会话失败: {e}")
-            import traceback; traceback.print_exc()
+        except Exception:
+            logger.exception("[Cache] 保存所有会话失败")
             return False
 
     def _restore_all_sessions(self) -> bool:
@@ -6369,12 +6371,11 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._update_token_stats_display()
             self._update_context_stats()
             self._sessions_restored = True  # 标记已恢复，防止重复
-            print(f"[Cache] 已恢复 {self.session_tabs.count()} 个会话标签")
+            logger.debug("[Cache] 已恢复 %d 个会话标签", self.session_tabs.count())
             return True
 
-        except Exception as e:
-            print(f"[Cache] 恢复多会话失败: {e}")
-            import traceback; traceback.print_exc()
+        except Exception:
+            logger.exception("[Cache] 恢复多会话失败")
             return False
 
     def _archive_cache(self) -> bool:
