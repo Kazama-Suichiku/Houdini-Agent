@@ -116,7 +116,9 @@ class AITab(
     
     def __init__(self, parent=None, workspace_dir: Optional[Path] = None):
         super().__init__(parent)
-        
+
+        # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）
+        print("[AITab] init: begin")
         self.client = AIClient()
         self.mcp = HoudiniMCP()
         self.mcp.set_stop_event(self.client._stop_event)  # 共享停止事件，使 shell/python 命令可被中断
@@ -271,14 +273,18 @@ class AITab(
         # 兼容旧引用
         self._system_prompt = self._system_prompt_think
         self._cached_optimized_system_prompt = self._cached_prompt_think
+        print("[AITab] init: _build_ui begin")
         self._build_ui()
+        print("[AITab] init: _build_ui done")
         self._wire_events()
         self._load_model_preference(restore_provider=True)  # 恢复上次使用的提供商和模型
         self._update_key_status()
         self._update_context_stats()
-        
+
         # ★ 启动时自动恢复上次的会话（从 sessions_manifest.json）
+        print("[AITab] init: _restore_all_sessions begin")
         self._restore_all_sessions()
+        print("[AITab] init: _restore_all_sessions done")
         
         self._destroyed = False
 
