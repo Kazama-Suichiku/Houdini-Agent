@@ -38,6 +38,8 @@ def _reload_modules():
         if mod_name in sys.modules:
             try:
                 import importlib
+                # 逐模块日志：若 reload 卡死，最后一条 "reload: X" 就是阻塞模块
+                print(f"[Houdini Agent] Startup: reload: {mod_name}")
                 importlib.reload(sys.modules[mod_name])
             except Exception:
                 pass
@@ -71,10 +73,12 @@ def show_tool():
     try:
         if _main_window is not None:
             if _main_window.isVisible():
+                print("[Houdini Agent] Startup: reusing existing visible window")
                 _main_window.raise_()
                 _main_window.activateWindow()
                 return _main_window
             else:
+                print("[Houdini Agent] Startup: cleaning up stale window")
                 # 清理旧实例的退出保存回调，防止覆盖新实例的数据
                 try:
                     import atexit as _atexit
