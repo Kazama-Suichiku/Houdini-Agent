@@ -497,7 +497,7 @@ class _CustomProviderDialog(QtWidgets.QDialog):
 
         # API URL
         self._url_edit = QtWidgets.QLineEdit()
-        self._url_edit.setPlaceholderText("https://your-api.example.com/v1/chat/completions")
+        self._url_edit.setPlaceholderText("https://integrate.api.nvidia.com/v1 或 .../v1/chat/completions")
         self._url_edit.setText(cfg.get('api_url', ''))
         self._url_edit.setMinimumHeight(28)
         form.addRow("API URL:", self._url_edit)
@@ -523,12 +523,31 @@ class _CustomProviderDialog(QtWidgets.QDialog):
         key_row.addWidget(self._btn_show_key)
         form.addRow("API Key:", key_row)
 
-        # 模型名（支持多个，逗号分隔）
-        self._models_edit = QtWidgets.QLineEdit()
-        self._models_edit.setPlaceholderText("model-name-1, model-name-2（逗号分隔多个模型）")
-        self._models_edit.setText(', '.join(cfg.get('models', [])))
-        self._models_edit.setMinimumHeight(28)
-        form.addRow("模型名:", self._models_edit)
+        # 模型名 — 可编辑 ComboBox + 获取模型按钮
+        self._models_combo = QtWidgets.QComboBox()
+        self._models_combo.setEditable(True)
+        self._models_combo.setMinimumHeight(28)
+        self._models_combo.setMaxVisibleItems(20)
+        self._models_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+        )
+        self._models_combo.lineEdit().setPlaceholderText("model-name（可手动输入或点击右侧按钮获取）")
+        for m in cfg.get('models', []):
+            self._models_combo.addItem(m)
+        if cfg.get('models'):
+            self._models_combo.setCurrentText(cfg['models'][0])
+
+        models_row = QtWidgets.QHBoxLayout()
+        models_row.setSpacing(4)
+        models_row.addWidget(self._models_combo)
+
+        self._btn_fetch_models = QtWidgets.QPushButton("⟳")
+        self._btn_fetch_models.setFixedSize(28, 28)
+        self._btn_fetch_models.setToolTip("从 API 获取可用模型列表")
+        self._btn_fetch_models.clicked.connect(self._fetch_models)
+        models_row.addWidget(self._btn_fetch_models)
+
+        form.addRow("模型名:", models_row)
 
         # 上下文长度
         self._ctx_spin = QtWidgets.QSpinBox()
@@ -582,15 +601,34 @@ class _CustomProviderDialog(QtWidgets.QDialog):
                 color: #ddd;
             }
             QLabel { color: #ccc; }
-            QLineEdit, QSpinBox {
+            QLineEdit, QSpinBox, QComboBox {
                 background: #2a2a2a;
                 color: #eee;
                 border: 1px solid #444;
                 border-radius: 4px;
                 padding: 4px 8px;
             }
-            QLineEdit:focus, QSpinBox:focus {
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
                 border-color: #6a9eff;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+                subcontrol-position: center right;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #aaa;
+                margin-right: 6px;
+            }
+            QComboBox QAbstractItemView {
+                background: #2a2a2a;
+                color: #eee;
+                border: 1px solid #555;
+                selection-background-color: #3a5a8a;
+                outline: none;
             }
             QCheckBox { color: #ccc; }
             QPushButton {
@@ -603,17 +641,81 @@ class _CustomProviderDialog(QtWidgets.QDialog):
             QPushButton:hover { background: #444; border-color: #6a9eff; }
         """)
 
-    def _test_connection(self):
-        """测试 Custom API 连接"""
+    def _normalize_chat_url(self, url: str) -> str:
+        """将基础 URL 规范化为 chat completions 端点"""
+        url = url.rstrip('/')
+        if url.endswith('/chat/completions'):
+            return url
+        if url.endswith('/v1'):
+            return url + '/chat/completions'
+        return url
+
+    def _fetch_models(self):
+        """从 API 获取可用模型列表并填充到下拉框"""
         url = self._url_edit.text().strip()
         key = self._key_edit.text().strip()
-        models = [m.strip() for m in self._models_edit.text().split(',') if m.strip()]
-        model = models[0] if models else 'test'
 
         if not url:
             self._test_status.setText("⚠ 请先填写 API URL")
             self._test_status.setStyleSheet("color: #f5a623; font-size: 12px;")
             return
+
+        self._btn_fetch_models.setEnabled(False)
+        self._test_status.setText("获取模型列表中...")
+        self._test_status.setStyleSheet("color: #aaa; font-size: 12px;")
+
+        try:
+            import requests
+            base = url.rstrip('/')
+            if base.endswith('/chat/completions'):
+                base = base[:-len('/chat/completions')]
+            models_url = base + '/models'
+
+            headers = {'Content-Type': 'application/json'}
+            if key:
+                headers['Authorization'] = f'Bearer {key}'
+
+            resp = requests.get(models_url, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                model_ids = [m.get('id', '') for m in data.get('data', []) if m.get('id')]
+                if model_ids:
+                    current_text = self._models_combo.currentText()
+                    self._models_combo.clear()
+                    for mid in sorted(model_ids):
+                        self._models_combo.addItem(mid)
+                    if current_text and current_text in model_ids:
+                        self._models_combo.setCurrentText(current_text)
+                    else:
+                        self._models_combo.setCurrentIndex(0)
+                    self._test_status.setText(f"✅ 发现 {len(model_ids)} 个模型")
+                    self._test_status.setStyleSheet("color: #4caf50; font-size: 12px;")
+                    self._models_combo.showPopup()
+                else:
+                    self._test_status.setText("⚠ 未发现可用模型")
+                    self._test_status.setStyleSheet("color: #f5a623; font-size: 12px;")
+            else:
+                err = resp.text[:120]
+                self._test_status.setText(f"❌ HTTP {resp.status_code}: {err}")
+                self._test_status.setStyleSheet("color: #f44336; font-size: 12px;")
+        except Exception as e:
+            self._test_status.setText(f"❌ {str(e)[:100]}")
+            self._test_status.setStyleSheet("color: #f44336; font-size: 12px;")
+        finally:
+            self._btn_fetch_models.setEnabled(True)
+
+    def _test_connection(self):
+        """测试 Custom API 连接"""
+        url = self._url_edit.text().strip()
+        key = self._key_edit.text().strip()
+        model = self._models_combo.currentText().strip() or 'test'
+
+        if not url:
+            self._test_status.setText("⚠ 请先填写 API URL")
+            self._test_status.setStyleSheet("color: #f5a623; font-size: 12px;")
+            return
+
+        chat_url = self._normalize_chat_url(url)
 
         self._btn_test.setEnabled(False)
         self._test_status.setText("连接中...")
@@ -630,7 +732,7 @@ class _CustomProviderDialog(QtWidgets.QDialog):
                 'max_tokens': 5,
                 'stream': False,
             }
-            resp = requests.post(url, json=payload, headers=headers, timeout=15)
+            resp = requests.post(chat_url, json=payload, headers=headers, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 recv_model = data.get('model', model)
@@ -649,18 +751,19 @@ class _CustomProviderDialog(QtWidgets.QDialog):
     def _on_accept(self):
         """确认前校验必填项"""
         url = self._url_edit.text().strip()
-        models_text = self._models_edit.text().strip()
+        model_text = self._models_combo.currentText().strip()
         if not url:
             QtWidgets.QMessageBox.warning(self, "提示", "请填写 API URL。")
             return
-        if not models_text:
+        if not model_text:
             QtWidgets.QMessageBox.warning(self, "提示", "请填写至少一个模型名。")
             return
         self.accept()
 
     def get_config(self) -> dict:
         """返回用户配置的字典"""
-        models = [m.strip() for m in self._models_edit.text().split(',') if m.strip()]
+        model = self._models_combo.currentText().strip()
+        models = [model] if model else []
         return {
             'api_url': self._url_edit.text().strip(),
             'api_key': self._key_edit.text().strip(),

@@ -2366,6 +2366,21 @@ class AIClient:
         """判断是否应使用 Anthropic Messages 协议（而非 OpenAI 协议）"""
         return provider == 'duojie' and model.lower() in self._DUOJIE_ANTHROPIC_MODELS
 
+    def _normalize_chat_url(self, url: str) -> str:
+        """将基础 URL 规范化为 chat completions 端点
+        
+        支持的输入格式：
+          - https://integrate.api.nvidia.com/v1          -> 追加 /chat/completions
+          - https://example.com/v1/chat/completions      -> 保持不变
+          - http://localhost:1234/v1                      -> 追加 /chat/completions
+        """
+        url = url.rstrip('/')
+        if url.endswith('/chat/completions'):
+            return url
+        if url.endswith('/v1'):
+            return url + '/chat/completions'
+        return url
+
     def _get_api_url(self, provider: str, model: str = '') -> str:
         provider = (provider or 'openai').lower()
         if provider == 'deepseek':
@@ -2381,7 +2396,8 @@ class AIClient:
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
         elif provider == 'custom':
-            return self._CUSTOM_API_URL or self.OPENAI_API_URL
+            raw = self._CUSTOM_API_URL or self.OPENAI_API_URL
+            return self._normalize_chat_url(raw)
         return self.OPENAI_API_URL
 
     def _get_vendor_name(self, provider: str) -> str:
@@ -2429,6 +2445,38 @@ class AIClient:
             pass
         
         return ['qwen2.5:14b']  # 默认模型
+
+    def get_custom_models(self, api_url: str, api_key: str = '') -> List[str]:
+        """获取 Custom Provider 可用的模型列表（通过 OpenAI 兼容的 /v1/models 端点）
+        
+        Args:
+            api_url: 用户配置的 API URL（可以是基础 URL 或完整 chat/completions URL）
+            api_key: API Key（可为空）
+            
+        Returns:
+            模型 ID 列表，失败时返回空列表
+        """
+        if not HAS_REQUESTS:
+            return []
+        
+        base = api_url.rstrip('/')
+        if base.endswith('/chat/completions'):
+            base = base[:-len('/chat/completions')]
+        models_url = base + '/models'
+        
+        headers = {'Content-Type': 'application/json'}
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
+        
+        try:
+            resp = self._http_session.get(models_url, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                return [m.get('id', '') for m in data.get('data', []) if m.get('id')]
+        except Exception:
+            pass
+        
+        return []
 
     def test_connection(self, provider: str = 'deepseek') -> Dict[str, Any]:
         """测试连接"""

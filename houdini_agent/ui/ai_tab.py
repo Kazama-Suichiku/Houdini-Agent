@@ -119,7 +119,9 @@ class AITab(
     
     def __init__(self, parent=None, workspace_dir: Optional[Path] = None):
         super().__init__(parent)
-        
+
+        # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）
+        print("[AITab] init: begin")
         self.client = AIClient()
         self.mcp = HoudiniMCP()
         self.mcp.set_stop_event(self.client._stop_event)  # 共享停止事件，使 shell/python 命令可被中断
@@ -274,14 +276,18 @@ class AITab(
         # 兼容旧引用
         self._system_prompt = self._system_prompt_think
         self._cached_optimized_system_prompt = self._cached_prompt_think
+        print("[AITab] init: _build_ui begin")
         self._build_ui()
+        print("[AITab] init: _build_ui done")
         self._wire_events()
         self._load_model_preference(restore_provider=True)  # 恢复上次使用的提供商和模型
         self._update_key_status()
         self._update_context_stats()
-        
+
         # ★ 启动时自动恢复上次的会话（从 sessions_manifest.json）
+        print("[AITab] init: _restore_all_sessions begin")
         self._restore_all_sessions()
+        print("[AITab] init: _restore_all_sessions done")
         
         self._destroyed = False
 
@@ -925,38 +931,44 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
     def _build_ui(self):
         # ---- 全局 QSS（由 ThemeEngine 从模板渲染） ----
         self.setObjectName("aiTab")
+        print("[AITab] _build_ui: theme")
         self._theme = ThemeEngine()
         self._theme.load_template(Path(__file__).parent / "style_template.qss")
         self._theme.load_preference()
         self.setStyleSheet(self._theme.render())
-        
+
         self.setMinimumWidth(320)
-        
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # 顶部设置栏
+        print("[AITab] _build_ui: header")
         header = self._build_header()
         layout.addWidget(header)
-        
+
         # 会话标签栏（多会话切换）
+        print("[AITab] _build_ui: session_tabs")
         session_tabs_bar = self._build_session_tabs()
         layout.addWidget(session_tabs_bar)
-        
+
         # 节点上下文栏
+        print("[AITab] _build_ui: node_context_bar")
         self.node_context_bar = NodeContextBar()
         self.node_context_bar.refreshRequested.connect(self._refresh_node_context)
         layout.addWidget(self.node_context_bar)
-        
+
         # 对话区域（多会话 - 使用 QStackedWidget）
         self.session_stack = QtWidgets.QStackedWidget()
         layout.addWidget(self.session_stack, 1)
-        
+
         # 创建第一个会话
+        print("[AITab] _build_ui: initial_session")
         self._create_initial_session()
 
         # 输入区域
+        print("[AITab] _build_ui: input_area")
         input_area = self._build_input_area()
         layout.addWidget(input_area)
 

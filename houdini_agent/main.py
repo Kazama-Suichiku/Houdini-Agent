@@ -38,6 +38,8 @@ def _reload_modules():
         if mod_name in sys.modules:
             try:
                 import importlib
+                # 逐模块日志：若 reload 卡死，最后一条 "reload: X" 就是阻塞模块
+                print(f"[Houdini Agent] Startup: reload: {mod_name}")
                 importlib.reload(sys.modules[mod_name])
             except Exception:
                 pass
@@ -48,29 +50,35 @@ _main_window = None
 
 def show_tool():
     global _main_window, MainWindow
-    
-    # 每次调用时强制重新加载模块
+
+    # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）。
+    # 用户报错时贴出 Houdini Python Shell 输出即可定位卡死阶段。
+    print("[Houdini Agent] Startup: reload_modules begin")
     _reload_modules()
-    
+    print("[Houdini Agent] Startup: reload_modules done")
+
     # ★ 重载后刷新 MainWindow 引用，避免使用旧类
     try:
         from houdini_agent.core.main_window import MainWindow as _MW
         MainWindow = _MW
     except Exception:
         pass
-    
+
     if not QtWidgets.QApplication.instance():
         app = QtWidgets.QApplication([])
     else:
         app = QtWidgets.QApplication.instance()
+    print("[Houdini Agent] Startup: QApplication ready")
 
     try:
         if _main_window is not None:
             if _main_window.isVisible():
+                print("[Houdini Agent] Startup: reusing existing visible window")
                 _main_window.raise_()
                 _main_window.activateWindow()
                 return _main_window
             else:
+                print("[Houdini Agent] Startup: cleaning up stale window")
                 # 清理旧实例的退出保存回调，防止覆盖新实例的数据
                 try:
                     import atexit as _atexit
@@ -94,12 +102,17 @@ def show_tool():
         _main_window = None
 
     try:
+        print("[Houdini Agent] Startup: MainWindow() begin")
         _main_window = MainWindow()
+        print("[Houdini Agent] Startup: MainWindow() done, calling show()")
         _main_window.show()
         _main_window.raise_()
         _main_window.activateWindow()
+        print("[Houdini Agent] Startup: window shown")
         return _main_window
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         QtWidgets.QMessageBox.critical(None, "Error", f"Failed to create Houdini Agent window:\n{e}", QtWidgets.QMessageBox.Ok)
         return None
 
