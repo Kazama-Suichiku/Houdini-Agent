@@ -1,10 +1,7 @@
 import os
 import sys
 import hou
-from houdini_agent import configure_text_output
 from houdini_agent.qt_compat import QtWidgets
-
-configure_text_output()
 
 # 模块源文件 mtime 缓存：{mod_name: mtime}，跨 show_tool() 调用持久化
 _module_mtimes: dict = {}
@@ -28,28 +25,66 @@ def _reload_modules():
         'houdini_agent.utils.hooks',
         'houdini_agent.utils.tool_registry',
         'houdini_agent.utils.rules_manager',
-        'houdini_agent.utils.experience_store',
+        # ★ ai_client 拆分模块（必须在 ai_client 之前重载，否则组合到旧 mixin 类）
+        'houdini_agent.utils.web_searcher',
+        'houdini_agent.utils.ai_client_context',
+        'houdini_agent.utils.ai_client_providers',
+        'houdini_agent.utils.ai_client_streaming',
+        'houdini_agent.utils.ai_client_agent',
         'houdini_agent.utils.ai_client',
-        'houdini_agent.utils.bridge.remote_client',
-        'houdini_agent.utils.bridge.server',
-        'houdini_agent.utils.bridge',
+        # ★ mcp.client 拆分的 tools mixin（必须在 mcp.client 之前重载）
+        'houdini_agent.utils.mcp.tools.network_inspect',
+        'houdini_agent.utils.mcp.tools.node_ops',
+        'houdini_agent.utils.mcp.tools.param_ops',
+        'houdini_agent.utils.mcp.tools.exec_ops',
+        'houdini_agent.utils.mcp.tools.doc_ops',
         'houdini_agent.utils.mcp.client',
         'houdini_agent.utils.mcp',
         'houdini_agent.ui.i18n',
-        'houdini_agent.ui.theme_engine',
+        # ★ cursor_widgets 拆分的 widgets 包（叶子优先，shim 最后重载）
+        'houdini_agent.ui.widgets.theme',
+        'houdini_agent.ui.widgets.syntax',
+        'houdini_agent.ui.widgets.base',
+        'houdini_agent.ui.widgets.markdown',
+        'houdini_agent.ui.widgets.thinking',
+        'houdini_agent.ui.widgets.tool_call',
+        'houdini_agent.ui.widgets.code_block',
+        'houdini_agent.ui.widgets.node_widgets',
+        'houdini_agent.ui.widgets.shell_widgets',
+        'houdini_agent.ui.widgets.message',
+        'houdini_agent.ui.widgets.plan_dag',
+        'houdini_agent.ui.widgets.plan_viewer',
+        'houdini_agent.ui.widgets.plan_stream',
+        'houdini_agent.ui.widgets.status_bar',
+        'houdini_agent.ui.widgets.chat_input',
+        'houdini_agent.ui.widgets.todo',
+        'houdini_agent.ui.widgets.analytics',
+        'houdini_agent.ui.widgets.update_banner',
+        'houdini_agent.ui.widgets.plugin_manager',
+        'houdini_agent.ui.widgets.rules_editor',
         'houdini_agent.ui.cursor_widgets',
         # ★ 新增：拆分出的 mixin 模块也需要重载，否则引用旧类导致异常
         'houdini_agent.ui.font_settings_dialog',
-        'houdini_agent.ui.experience_review_dialog',
         'houdini_agent.ui.header',
         'houdini_agent.ui.input_area',
         'houdini_agent.ui.chat_view',
         'houdini_agent.core.agent_runner',
         'houdini_agent.core.session_manager',
+        'houdini_agent.ui.memory_mixin',
+        'houdini_agent.ui.context_mixin',
+        'houdini_agent.ui.streaming_mixin',
+        'houdini_agent.ui.plan_mixin',
+        'houdini_agent.ui.image_mixin',
+        'houdini_agent.core.cache_mixin',
+        'houdini_agent.ui.history_mixin',
+        'houdini_agent.core.update_mixin',
+        # ★ ai_tab 拆分模块（必须在 ai_tab 之前重载）
+        'houdini_agent.ui.run_mixin',
+        'houdini_agent.ui.system_prompt_mixin',
+        'houdini_agent.ui.context_trim_mixin',
         'houdini_agent.ui.ai_tab',
         'houdini_agent.core.main_window',
     ]
-
     # 第一次打开：模块刚被 import 进来，代码必然是最新的，无需 reload。
     # 只记录 mtime 基准，供后续调用做变动检测。
     if not _module_mtimes:
@@ -73,10 +108,10 @@ def _reload_modules():
             src_file = inspect.getfile(sys.modules[mod_name])
             mtime = os.path.getmtime(src_file)
             if _module_mtimes.get(mod_name) == mtime:
-                continue
+                continue  # 未变动，跳过
             _module_mtimes[mod_name] = mtime
         except (TypeError, OSError):
-            pass
+            pass  # 取不到 mtime 时保底 reload
         try:
             print(f"[Houdini Agent] Startup: reload: {mod_name}")
             importlib.reload(sys.modules[mod_name])
@@ -86,220 +121,8 @@ def _reload_modules():
 from houdini_agent.core.main_window import MainWindow
 
 _main_window = None
-_standalone_process = None
-
-def _iter_standalone_commands():
-    """Yield candidate commands for the external UI, never houdini.exe."""
-    import shutil
-
-    hfs = os.environ.get("HFS", "")
-    candidates = []
-
-    override = os.environ.get("HOUDINI_AGENT_STANDALONE_PYTHON", "").strip()
-    if override:
-        candidates.append([override])
-
-    if hfs:
-        try:
-            for name in os.listdir(hfs):
-                if name.lower().startswith("python"):
-                    candidates.append([os.path.join(hfs, name, "pythonw.exe")])
-                    candidates.append([os.path.join(hfs, name, "python.exe")])
-        except Exception:
-            pass
-        for py_dir in ("python311", "python310", "python39", "python37"):
-            candidates.append([os.path.join(hfs, py_dir, "pythonw.exe")])
-            candidates.append([os.path.join(hfs, py_dir, "python.exe")])
-        candidates.append([os.path.join(hfs, "bin", "pythonw.exe")])
-        candidates.append([os.path.join(hfs, "bin", "python.exe")])
-
-    base = os.path.basename(sys.executable or "").lower()
-    if base not in {"houdini.exe", "houdinifx.exe", "houdinicore.exe", "houdiniindie.exe"}:
-        candidates.append([sys.executable])
-
-    for name in ("pythonw.exe", "python.exe"):
-        exe = shutil.which(name)
-        if exe:
-            candidates.append([exe])
-
-    py_launcher = shutil.which("py.exe") or shutil.which("py")
-    if py_launcher:
-        candidates.append([py_launcher, "-3"])
-
-    seen = set()
-    for cmd in candidates:
-        exe = cmd[0]
-        if not exe:
-            continue
-        key = tuple(cmd)
-        if key in seen:
-            continue
-        seen.add(key)
-        if len(cmd) == 1 and exe.lower() not in {"py", "py.exe"} and not os.path.exists(exe):
-            continue
-        yield cmd
-
-def _launch_standalone_ui(bridge_url: str):
-    """Start the standalone UI process. Returns subprocess handle or None."""
-    try:
-        import subprocess
-        import time
-        import platform
-        from pathlib import Path
-        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        env = os.environ.copy()
-        paths = [root_dir, os.path.join(root_dir, "lib")]
-        hfs = os.environ.get("HFS", "")
-        if hfs:
-            for py_lib in (
-                os.path.join(hfs, "houdini", "python3.11libs"),
-                os.path.join(hfs, "houdini", "python3.10libs"),
-                os.path.join(hfs, "houdini", "python3.9libs"),
-                os.path.join(hfs, "houdini", "python3.7libs"),
-                os.path.join(hfs, "python311", "Lib", "site-packages"),
-                os.path.join(hfs, "python310", "Lib", "site-packages"),
-                os.path.join(hfs, "python39", "Lib", "site-packages"),
-                os.path.join(hfs, "python37", "Lib", "site-packages"),
-                os.path.join(hfs, "python311", "Lib", "site-packages-forced"),
-                os.path.join(hfs, "python310", "Lib", "site-packages-forced"),
-                os.path.join(hfs, "python39", "Lib", "site-packages-forced"),
-                os.path.join(hfs, "python37", "Lib", "site-packages-forced"),
-            ):
-                if os.path.exists(py_lib):
-                    paths.append(py_lib)
-            houdini_bin = os.path.join(hfs, "bin")
-            if os.path.exists(houdini_bin):
-                env["PATH"] = os.pathsep.join([houdini_bin, env.get("PATH", "")])
-            for dll_dir in (
-                os.path.join(hfs, "python311", "Lib", "site-packages-forced", "PySide6"),
-                os.path.join(hfs, "python311", "Lib", "site-packages-forced", "shiboken6"),
-                os.path.join(hfs, "python310", "Lib", "site-packages-forced", "PySide6"),
-                os.path.join(hfs, "python310", "Lib", "site-packages-forced", "shiboken6"),
-                os.path.join(hfs, "python39", "Lib", "site-packages-forced", "PySide2"),
-                os.path.join(hfs, "python39", "Lib", "site-packages-forced", "shiboken2"),
-                os.path.join(hfs, "python37", "Lib", "site-packages-forced", "PySide2"),
-                os.path.join(hfs, "python37", "Lib", "site-packages-forced", "shiboken2"),
-            ):
-                if os.path.exists(dll_dir):
-                    env["PATH"] = os.pathsep.join([dll_dir, env.get("PATH", "")])
-        old_pp = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = os.pathsep.join([p for p in paths if os.path.exists(p)] + ([old_pp] if old_pp else []))
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
-        create_no_window = platform.system().lower() == "windows"
-        log_dir = Path(root_dir) / "cache" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        if create_no_window:
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        else:
-            creationflags = 0
-
-        last_error = None
-        for cmd_prefix in _iter_standalone_commands():
-            check_cmd = list(cmd_prefix) + [
-                "-c",
-                "from houdini_agent.qt_compat import PYSIDE_VERSION; print('Qt runtime OK: PySide%s' % PYSIDE_VERSION)",
-            ]
-            try:
-                check = subprocess.run(
-                    check_cmd,
-                    cwd=root_dir,
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=8.0,
-                    creationflags=creationflags,
-                )
-                check_output = (check.stdout or "").strip()
-                if check.returncode != 0:
-                    print(f"[Houdini Agent] Startup: standalone runtime check failed ({check.returncode}): {check_cmd}")
-                    if check_output:
-                        print(f"[Houdini Agent] Startup: runtime check output:\n{check_output[-1200:]}")
-                    continue
-                if check_output:
-                    print(f"[Houdini Agent] Startup: {check_output}")
-            except Exception as e:
-                last_error = e
-                print(f"[Houdini Agent] Startup: standalone runtime check error: {e}")
-                continue
-
-            cmd = list(cmd_prefix) + ["-m", "houdini_agent.standalone", "--bridge-url", bridge_url]
-            print(f"[Houdini Agent] Startup: launching standalone UI: {cmd}")
-            log_path = log_dir / f"standalone_{int(time.time())}.log"
-            log_file = None
-            try:
-                log_file = open(log_path, "w", encoding="utf-8", errors="replace")
-                log_file.write(f"Command: {cmd}\n\n")
-                log_file.flush()
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=root_dir,
-                    env=env,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    creationflags=creationflags,
-                )
-            except Exception as e:
-                last_error = e
-                try:
-                    if log_file is not None:
-                        log_file.close()
-                except Exception:
-                    pass
-                continue
-            try:
-                log_file.close()
-            except Exception:
-                pass
-            time.sleep(1.5)
-            if proc.poll() is None:
-                print(f"[Houdini Agent] Startup: standalone UI log: {log_path}")
-                return proc
-            print(f"[Houdini Agent] Startup: standalone UI exited early: {proc.returncode}")
-            try:
-                if log_path.exists():
-                    text = log_path.read_text(encoding="utf-8", errors="replace")
-                    if text.strip():
-                        print(f"[Houdini Agent] Startup: standalone UI log tail:\n{text[-1600:]}")
-            except Exception:
-                pass
-        if last_error is not None:
-            print(f"[Houdini Agent] Startup: standalone launch failed: {last_error}")
-        print("[Houdini Agent] Startup: no usable standalone Qt runtime found; using embedded fallback")
-        print("[Houdini Agent] Startup: set HOUDINI_AGENT_STANDALONE_PYTHON to a python.exe/pythonw.exe with PySide6/PySide2 to force a runtime")
-        return None
-    except Exception as e:
-        print(f"[Houdini Agent] Startup: standalone launch failed: {e}")
-        return None
-
 
 def show_tool():
-    """Default shelf entry: bridge + standalone UI, with embedded fallback."""
-    global _standalone_process
-    try:
-        if _standalone_process is not None and _standalone_process.poll() is None:
-            print("[Houdini Agent] Startup: standalone UI already running")
-            return _standalone_process
-    except Exception:
-        _standalone_process = None
-
-    try:
-        from houdini_agent.utils.bridge import ensure_bridge_running
-        ok, msg, bridge_url = ensure_bridge_running()
-        print(f"[Houdini Agent] Bridge: {msg} {bridge_url}")
-        if ok and bridge_url:
-            proc = _launch_standalone_ui(bridge_url)
-            if proc is not None:
-                _standalone_process = proc
-                return proc
-    except Exception as e:
-        print(f"[Houdini Agent] Bridge startup failed, falling back to embedded UI: {e}")
-
-    return show_embedded_tool()
-
-
-def show_embedded_tool():
     global _main_window, MainWindow
 
     # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）。
@@ -319,11 +142,6 @@ def show_embedded_tool():
         app = QtWidgets.QApplication([])
     else:
         app = QtWidgets.QApplication.instance()
-    try:
-        from houdini_agent.ui.theme_engine import ThemeEngine
-        ThemeEngine.install_application_scaling(app)
-    except Exception as e:
-        print(f"[Houdini Agent] Startup: text scaling setup failed: {e}")
     print("[Houdini Agent] Startup: QApplication ready")
 
     try:
