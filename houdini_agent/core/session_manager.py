@@ -117,6 +117,7 @@ class SessionManagerMixin:
             'chat_layout': chat_layout,
             'todo_list': todo,
             'conversation_history': self._conversation_history,
+            'send_context': self._send_context,
             'context_summary': self._context_summary,
             'current_response': self._current_response,
             'token_stats': self._token_stats,
@@ -182,14 +183,16 @@ class SessionManagerMixin:
             'chat_layout': chat_layout,
             'todo_list': todo,
             'conversation_history': [],
+            'send_context': None,
             'context_summary': '',
             'current_response': None,
             'token_stats': new_token_stats,
         }
-        
+
         # 切换到新会话
         self._session_id = new_id
         self._conversation_history = []
+        self._send_context = None
         self._context_summary = ''
         self._current_response = None
         self._token_stats = new_token_stats
@@ -283,6 +286,7 @@ class SessionManagerMixin:
             return
         s = self._sessions[self._session_id]
         s['conversation_history'] = self._conversation_history
+        s['send_context'] = self._send_context
         s['context_summary'] = self._context_summary
         s['current_response'] = self._current_response
         s['token_stats'] = self._token_stats
@@ -308,6 +312,7 @@ class SessionManagerMixin:
         
         self._session_id = session_id
         self._conversation_history = sdata.get('conversation_history', [])
+        self._send_context = sdata.get('send_context', None)
         self._context_summary = sdata.get('context_summary', '')
         self._current_response = sdata.get('current_response')
         self._token_stats = sdata.get('token_stats', {

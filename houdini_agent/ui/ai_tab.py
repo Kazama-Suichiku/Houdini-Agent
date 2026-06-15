@@ -147,6 +147,10 @@ class AITab(
         # 上下文管理
         self._max_context_messages = 20
         self._context_summary = ""
+        # ★ 发送给 API 的工作上下文（None = 直接用 _conversation_history）
+        # _conversation_history 作为永久存档，只追加从不裁剪；
+        # _send_context 在上下文超限时由 _manage_context 裁剪，不影响存档与显示。
+        self._send_context: Optional[List[Dict[str, Any]]] = None
         
         # 缓存管理
         self._session_id = str(uuid.uuid4())[:8]  # 当前会话 ID
@@ -1944,6 +1948,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                 if nm is new_messages[-1] and nm.get('role') == 'assistant' and not nm.get('tool_calls'):
                     continue
                 history.append(clean)
+                if self._send_context is not None:
+                    self._send_context.append(clean)
         
         # 2. 提取并添加最终 AI 回复
         # 优先使用 final_content（最后一轮的纯文本），其次从 new_messages 提取
@@ -2012,6 +2018,8 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             if sys_shells:
                 final_msg['system_shells'] = sys_shells
             history.append(final_msg)
+            if self._send_context is not None:
+                self._send_context.append(final_msg)
         
         # 管理上下文
         self._manage_context()
@@ -2656,9 +2664,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         
         # 构造执行提示消息
         exec_msg = tr('ai.plan_confirmed_msg', plan_data.get('title', 'Plan'))
-        self._conversation_history.append({
-            'role': 'user', 'content': exec_msg
-        })
+        _pmsg = {'role': 'user', 'content': exec_msg}
+        self._conversation_history.append(_pmsg)
+        if self._send_context is not None:
+            self._send_context.append(_pmsg)
         
         # 创建新的 AI 回复块
         self._set_running(True)
@@ -3248,21 +3257,26 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         """
         # ★ 使用 agent 锚定的 history（避免压缩错误 session）
         history = self._agent_history if self._agent_history is not None else self._conversation_history
-        if len(history) < 6:
+
+        # ★ 工作上下文：_send_context 优先（已裁剪的副本），否则用 history
+        # _conversation_history 作为永久存档，压缩只改写 _send_context，显示不受影响。
+        work = self._send_context if self._send_context is not None else history
+
+        if len(work) < 6:
             return  # 太少，不需管理
-        
-        current_tokens = self.token_optimizer.calculate_message_tokens(history)
+
+        current_tokens = self.token_optimizer.calculate_message_tokens(work)
         context_limit = self._get_current_context_limit()
-        
+
         # 更新预算
         self.token_optimizer.budget.max_tokens = context_limit
         should_compress, reason = self.token_optimizer.should_compress(current_tokens, context_limit)
-        
+
         if not (should_compress and self._auto_optimize):
             if reason and ('警告' in reason or 'warning' in reason.lower()):
                 self._addStatus.emit(f"Note: {reason}")
             return
-        
+
         # ★ 深度睡眠：_manage_context 压缩前整理全部上下文为长期记忆
         if self._is_memory_active() and self._reflection_module and not self._sleep_in_progress:
             _params = getattr(self, '_last_agent_params', {})
@@ -3272,7 +3286,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     self._sleep_in_progress = True
                     deep_result = self._reflection_module.deep_sleep(
                         session_id=self._session_id,
-                        all_messages=list(history),
+                        all_messages=list(work),
                         ai_client=self.client,
                         model=_params.get('model', 'deepseek-v4-flash'),
                         provider=_params.get('provider', 'deepseek'),
@@ -3287,23 +3301,25 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     print(f"[Sleep] _manage_context 深度睡眠异常: {e}")
                 finally:
                     self._sleep_in_progress = False
-        
+
         old_tokens = current_tokens
-        
-        # --- 按 user 消息划分轮次 ---
-        rounds = []       # [[msg, msg, ...], ...]
+
+        # --- 按 user 消息划分轮次（在工作副本上操作）---
+        # 先做一份独立副本，以便压缩 tool content 时不污染 _conversation_history
+        work_copy = [m.copy() for m in work]
+        rounds = []
         current_round = []
-        for m in history:
+        for m in work_copy:
             if m.get('role') == 'user' and current_round:
                 rounds.append(current_round)
                 current_round = []
             current_round.append(m)
         if current_round:
             rounds.append(current_round)
-        
+
         if len(rounds) <= 2:
             return  # 只有 1-2 轮，不裁剪
-        
+
         # --- 第一遍：压缩旧轮次的 tool 结果（保留最近 60%）---
         n_rounds = len(rounds)
         protect_n = max(2, int(n_rounds * 0.6))
@@ -3313,45 +3329,38 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
                     c = m.get('content') or ''
                     if len(c) > 200:
                         m['content'] = self.client._summarize_tool_content(c, 200) if hasattr(self.client, '_summarize_tool_content') else c[:200] + '...[summary]'
-        
+
         # 重新计算
         compressed = [m for rnd in rounds for m in rnd]
         new_tokens = self.token_optimizer.calculate_message_tokens(compressed)
-        
+
         if new_tokens < context_limit * self.token_optimizer.budget.compression_threshold:
-            # 压缩 tool 就够了
-            history.clear()
-            history.extend(compressed)
+            # 压缩 tool 就够了 — 写入 _send_context，不动 _conversation_history
+            self._send_context = compressed
             saved = old_tokens - new_tokens
             if saved > 0:
-                pct = saved / old_tokens * 100 if old_tokens else 0
                 self._addStatus.emit(tr('opt.auto_status', saved))
             return
-        
+
         # --- 第二遍：删除最早的完整轮次，直到低于阈值 ---
         target = int(context_limit * 0.65)  # 目标降到 65%
         while len(rounds) > 2:
-            # 删除最早的轮次
-            removed = rounds.pop(0)
+            rounds.pop(0)
             compressed = [m for rnd in rounds for m in rnd]
             new_tokens = self.token_optimizer.calculate_message_tokens(compressed)
             if new_tokens <= target:
                 break
-        
-        # 在头部插入摘要提示
+
+        # 在头部插入摘要提示 — 写入 _send_context，不动 _conversation_history
         summary_note = {
             'role': 'system',
             'content': tr('ai.old_rounds', n_rounds - len(rounds))
         }
-        
-        history.clear()
-        history.append(summary_note)
-        history.extend([m for rnd in rounds for m in rnd])
-        
-        saved = old_tokens - self.token_optimizer.calculate_message_tokens(history)
+        self._send_context = [summary_note] + [m for rnd in rounds for m in rnd]
+
+        saved = old_tokens - self.token_optimizer.calculate_message_tokens(self._send_context)
         if saved > 0:
             self._addStatus.emit(tr('opt.auto_status', saved))
-            self._render_conversation_history()
     
     def _compress_context(self):
         """压缩上下文 — 智能摘要，保留关键信息
@@ -3570,9 +3579,15 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 构建消息内容（文字或多模态）
         if pending_imgs:
             msg_content = self._build_multimodal_content(processed_text, pending_imgs)
-            self._conversation_history.append({'role': 'user', 'content': msg_content})
+            _umsg = {'role': 'user', 'content': msg_content}
+            self._conversation_history.append(_umsg)
+            if self._send_context is not None:
+                self._send_context.append(_umsg)
         else:
-            self._conversation_history.append({'role': 'user', 'content': processed_text})
+            _umsg = {'role': 'user', 'content': processed_text}
+            self._conversation_history.append(_umsg)
+            if self._send_context is not None:
+                self._send_context.append(_umsg)
         
         # 更新上下文统计
         self._update_context_stats()
@@ -3713,14 +3728,16 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             
             # ★ Cursor 风格：只保留当前轮次（最后一条 user 消息）的图片
             # 旧轮次的 image_url 剥离为纯文本，避免 base64 膨胀上下文
+            # 使用 _send_context（已裁剪的工作副本），None 时降级到完整存档
+            _ctx_src = self._send_context if self._send_context is not None else self._conversation_history
             _last_user_idx = None
-            for _i in range(len(self._conversation_history) - 1, -1, -1):
-                if self._conversation_history[_i].get('role') == 'user':
+            for _i in range(len(_ctx_src) - 1, -1, -1):
+                if _ctx_src[_i].get('role') == 'user':
                     _last_user_idx = _i
                     break
-            
+
             history_to_send = []
-            for msg_idx, msg in enumerate(self._conversation_history):
+            for msg_idx, msg in enumerate(_ctx_src):
                 role = msg.get('role', '')
                 
                 if role == 'tool':
@@ -5121,6 +5138,7 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             self._set_running(False)
         
         self._conversation_history.clear()
+        self._send_context = None
         self._context_summary = ""
         self._current_response = None
         self._token_stats = {
@@ -5172,6 +5190,60 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
         # 更新统计显示
         self._update_token_stats_display()
         self._update_context_stats()
+
+    # ============================================================
+    # ★ 导出对话
+    # ============================================================
+
+    def _export_chat(self):
+        """导出当前会话的完整原始对话内容（JSON 格式）到用户指定目录"""
+        import json
+        import datetime
+
+        if not self._conversation_history:
+            QtWidgets.QMessageBox.information(
+                self, "Export Chat", "当前没有可导出的对话内容。"
+            )
+            return
+
+        # 选择保存目录
+        export_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "选择导出目录",
+            "",
+            QtWidgets.QFileDialog.ShowDirsOnly | QtWidgets.QFileDialog.DontResolveSymlinks,
+        )
+        if not export_dir:
+            return
+
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"houdini_agent_chat_{ts}.json"
+        filepath = f"{export_dir}/{filename}"
+
+        # 构造导出数据：元信息 + 完整原始消息列表
+        provider = self._current_provider() if hasattr(self, '_current_provider') else ""
+        model = self.model_combo.currentText() if hasattr(self, 'model_combo') else ""
+        export_data = {
+            "meta": {
+                "exported_at": datetime.datetime.now().isoformat(),
+                "session_id": str(self._session_id),
+                "provider": provider,
+                "model": model,
+                "message_count": len(self._conversation_history),
+            },
+            "messages": self._conversation_history,
+        }
+
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2, default=str)
+            QtWidgets.QMessageBox.information(
+                self, "Export Chat", f"已导出到：\n{filepath}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "Export Chat", f"导出失败：\n{e}"
+            )
 
     # ============================================================
     # ★ 斜杠命令执行
@@ -5465,7 +5537,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             response.add_status("Read network")
             response.add_collapsible("Network structure", text)
             response.finalize()
-            self._conversation_history.append({'role': 'user', 'content': f"[Network structure]\n{text}"})
+            _nmsg = {'role': 'user', 'content': f"[Network structure]\n{text}"}
+            self._conversation_history.append(_nmsg)
+            if self._send_context is not None:
+                self._send_context.append(_nmsg)
             self._update_context_stats()
             # 更新节点上下文栏
             self._refresh_node_context()
@@ -5713,7 +5788,10 @@ SideFX Labs Node Usage Rules (MUST follow strictly):
             response.add_status("Read selection")
             response.add_collapsible("Node details", text)
             response.finalize()
-            self._conversation_history.append({'role': 'user', 'content': f"[Selected nodes]\n{text}"})
+            _smsg = {'role': 'user', 'content': f"[Selected nodes]\n{text}"}
+            self._conversation_history.append(_smsg)
+            if self._send_context is not None:
+                self._send_context.append(_smsg)
             self._update_context_stats()
             # 更新节点上下文栏
             self._refresh_node_context()

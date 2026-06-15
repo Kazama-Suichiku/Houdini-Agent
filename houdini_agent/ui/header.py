@@ -266,6 +266,7 @@ class HeaderMixin:
         
         menu.addAction("API Key", self.btn_key.click)
         menu.addAction("Clear Chat", self.btn_clear.click)
+        menu.addAction("Export Chat", self._export_chat)
         menu.addAction("Cache", self.btn_cache.click)
         menu.addAction("Optimize", self.btn_optimize.click)
         menu.addSeparator()
