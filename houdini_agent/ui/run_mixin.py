@@ -19,6 +19,8 @@ class RunMixin:
     """Agent run loop, tool execution dispatch, message normalization."""
 
     def _on_agent_done(self, result: dict):
+        stopped = bool(result.get('stopped'))
+        stop_marker = "[Stopped by user]"
         # ★ Hook: on_session_end
         self._fire_session_hook('on_session_end', self._agent_session_id or self._session_id)
 
@@ -59,6 +61,8 @@ class RunMixin:
                 if resp._content:
                     resp._content = self._resolve_bare_node_names(resp._content)
                 resp.finalize()
+                if stopped:
+                    resp.add_status("Stopped")
         except RuntimeError:
             resp = None  # widget 已被 clear 销毁，跳过 UI 操作
 
@@ -71,6 +75,7 @@ class RunMixin:
 
         tool_calls_history = result.get('tool_calls_history', [])
         new_messages = result.get('new_messages', [])
+        assistant_history_start = len(history)
 
         # 1. 添加工具交互链（原生 OpenAI 格式）
         # new_messages 包含：assistant(tool_calls) + tool(results) + ...
@@ -78,6 +83,12 @@ class RunMixin:
         #   最终的纯文本 assistant 回复由下面步骤 2 统一构建，避免重复
         if new_messages:
             for nm in new_messages:
+                if self._is_internal_viewport_message(nm):
+                    clean = self._visible_viewport_message(nm)
+                    history.append(clean)
+                    if self._send_context is not None:
+                        self._send_context.append(clean)
+                    continue
                 clean = nm.copy()
                 clean.pop('reasoning_content', None)  # 推理模型专用，不需持久化
                 # 跳过最后一条纯文本 assistant 消息（没有 tool_calls 的），
@@ -112,10 +123,22 @@ class RunMixin:
             thinking_text = '\n'.join(thinking_parts).strip() if thinking_parts else ''
             clean_content = re.sub(r'<think>[\s\S]*?</think>', '', final_content).strip()
             clean_content = self._strip_fake_tool_results(clean_content)
+        if stopped:
+            clean_content = (
+                f"{clean_content}\n\n{stop_marker}".strip()
+                if clean_content and stop_marker not in clean_content
+                else (clean_content or stop_marker)
+            )
         # 原生 thinking 协议（非 <think> 标签）：从 UI widget 获取已收集的 thinking
         if not thinking_text and resp and resp._has_thinking:
             try:
-                ui_thinking = resp.thinking_section._thinking_text.strip()
+                sections = getattr(resp, '_thinking_sections', []) or []
+                ui_thinking = '\n\n'.join(
+                    s._thinking_text.strip() for s in sections
+                    if getattr(s, '_thinking_text', '').strip()
+                )
+                if not ui_thinking and getattr(resp, 'thinking_section', None) is not None:
+                    ui_thinking = resp.thinking_section._thinking_text.strip()
                 if ui_thinking:
                     thinking_text = ui_thinking
             except (AttributeError, RuntimeError):
@@ -125,7 +148,7 @@ class RunMixin:
         # 只要有内容或有工具交互，都需要一条最终 assistant 消息
         need_final = bool(clean_content) or bool(new_messages) or not history or history[-1].get('role') != 'assistant'
         if need_final:
-            final_msg = {'role': 'assistant', 'content': clean_content or tr('ai.no_content')}
+            final_msg = {'role': 'assistant', 'content': clean_content or (stop_marker if stopped else tr('ai.no_content'))}
             if thinking_text:
                 final_msg['thinking'] = thinking_text
             # 提取 shell 执行记录，供历史恢复时重建 Shell 折叠面板
@@ -157,6 +180,21 @@ class RunMixin:
             history.append(final_msg)
             if self._send_context is not None:
                 self._send_context.append(final_msg)
+
+        # 工作流经验候选自动沉淀：只进入审阅队列，不直接晋升。
+        if resp and len(history) > assistant_history_start:
+            try:
+                resp.set_history_range(assistant_history_start, len(history))
+            except RuntimeError:
+                pass
+
+        agent_sid_exp = self._agent_session_id or self._session_id
+        if history and agent_sid_exp:
+            history_snapshot = [m.copy() for m in history]
+            def _do_experience_capture():
+                self._queue_workflow_experience_candidate(agent_sid_exp, history_snapshot)
+            exp_thread = threading.Thread(target=_do_experience_capture, daemon=True)
+            exp_thread.start()
 
         # 管理上下文
         self._manage_context()
@@ -1255,7 +1293,10 @@ class RunMixin:
                     max_tokens=None,
                 ):
                     if self.client.is_stop_requested():
-                        self._agentStopped.emit()
+                        result['ok'] = False
+                        result['stopped'] = True
+                        result['final_content'] = result.get('content', '')
+                        self._agentDone.emit(result)
                         return
 
                     ctype = chunk.get('type')
@@ -1273,17 +1314,23 @@ class RunMixin:
                         if usage:
                             result['usage'] = usage
                     elif ctype == 'stopped':
-                        self._agentStopped.emit()
+                        result['ok'] = False
+                        result['stopped'] = True
+                        result['final_content'] = result.get('content', '')
+                        self._agentDone.emit(result)
                         return
                     elif ctype == 'error':
                         result = {'ok': False, 'error': chunk.get('error')}
                         break
 
             if self.client.is_stop_requested():
-                self._agentStopped.emit()
+                result['ok'] = False
+                result['stopped'] = True
+                result['final_content'] = result.get('content', '')
+                self._agentDone.emit(result)
                 return
 
-            if result.get('ok'):
+            if result.get('ok') or result.get('stopped'):
                 self._agentDone.emit(result)
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -1293,7 +1340,17 @@ class RunMixin:
         except Exception as e:
             import traceback
             if self.client.is_stop_requested():
-                self._agentStopped.emit()
+                self._agentDone.emit({
+                    'ok': False,
+                    'stopped': True,
+                    'content': '',
+                    'final_content': '',
+                    'new_messages': [],
+                    'tool_calls_history': [],
+                    'call_records': [],
+                    'iterations': 0,
+                    'usage': {},
+                })
             else:
                 # 显示完整错误信息
                 error_detail = f"{type(e).__name__}: {str(e)}"

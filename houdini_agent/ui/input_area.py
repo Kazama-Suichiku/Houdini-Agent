@@ -11,6 +11,7 @@ from .i18n import tr, get_language
 from .cursor_widgets import (
     CursorTheme,
     ChatInput,
+    InputResizeHandle,
     SendButton,
     StopButton,
     UnifiedStatusBar,
@@ -38,8 +39,14 @@ class InputAreaMixin:
         container.setObjectName("inputArea")
         
         layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(8, 3, 8, 5)
+        layout.setContentsMargins(8, 0, 8, 5)
         layout.setSpacing(2)
+
+        # 拖拽热区放在会话区与输入区的分隔线上，避免占用输入框内部空间。
+        self.input_resize_handle = InputResizeHandle()
+        self.input_resize_handle.dragged.connect(self._on_input_resize_dragged)
+        self.input_resize_handle.resetRequested.connect(self._on_input_resize_reset)
+        layout.addWidget(self.input_resize_handle)
         
         # -------- Undo All / Keep All 批量操作栏（默认隐藏）--------
         self._batch_bar = QtWidgets.QFrame()
@@ -54,13 +61,13 @@ class InputAreaMixin:
         batch_layout.addWidget(self._batch_count_label)
         batch_layout.addStretch()
         
-        self._btn_undo_all = QtWidgets.QPushButton("Undo All")
+        self._btn_undo_all = QtWidgets.QPushButton(tr("btn.undo_all"))
         self._btn_undo_all.setObjectName("btnUndoAll")
         self._btn_undo_all.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_undo_all.clicked.connect(self._undo_all_ops)
         batch_layout.addWidget(self._btn_undo_all)
         
-        self._btn_keep_all = QtWidgets.QPushButton("Keep All")
+        self._btn_keep_all = QtWidgets.QPushButton(tr("btn.keep_all"))
         self._btn_keep_all.setObjectName("btnKeepAll")
         self._btn_keep_all.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_keep_all.clicked.connect(self._keep_all_ops)
@@ -97,26 +104,30 @@ class InputAreaMixin:
         self.btn_attach_menu.setObjectName("btnAttach")
         self.btn_attach_menu.setFixedSize(18, 18)
         self.btn_attach_menu.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_attach_menu.setToolTip("Attach / Actions")
+        self.btn_attach_menu.setToolTip(tr("menu.attach_actions"))
         self.btn_attach_menu.clicked.connect(self._show_attach_menu)
         toolbar.addWidget(self.btn_attach_menu)
         
         # Agent/Ask/Plan 模式
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.setObjectName("modeCombo")
-        self.mode_combo.addItem("Agent")
-        self.mode_combo.addItem("Ask")
-        self.mode_combo.addItem("Plan")
+        self.mode_combo.addItem(tr("mode.agent"))
+        self.mode_combo.addItem(tr("mode.ask"))
+        self.mode_combo.addItem(tr("mode.plan"))
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.setProperty("mode", "agent")
         self.mode_combo.setCursor(QtCore.Qt.PointingHandCursor)
         self.mode_combo.setToolTip(tr('mode.tooltip'))
-        self.mode_combo.setFixedWidth(58)
+        try:
+            self.mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        except Exception:
+            pass
+        self._resize_mode_combo()
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         toolbar.addWidget(self.mode_combo)
         
         # 确认模式开关
-        self.chk_confirm_mode = QtWidgets.QCheckBox("Cfm")
+        self.chk_confirm_mode = QtWidgets.QCheckBox(tr("confirm"))
         self.chk_confirm_mode.setObjectName("chkConfirm")
         self.chk_confirm_mode.setChecked(False)
         self.chk_confirm_mode.setCursor(QtCore.Qt.PointingHandCursor)
@@ -150,11 +161,17 @@ class InputAreaMixin:
         input_row = QtWidgets.QHBoxLayout()
         input_row.setSpacing(6)
         
-        # 输入框（自适应高度）
+        # 输入框（自适应高度，可拖拽设定手动高度）
+        input_wrap = QtWidgets.QWidget()
+        input_wrap_lay = QtWidgets.QVBoxLayout(input_wrap)
+        input_wrap_lay.setContentsMargins(0, 0, 0, 0)
+        input_wrap_lay.setSpacing(0)
+
         self.input_edit = ChatInput()
         self.input_edit.imageDropped.connect(self._on_image_dropped)
         self.input_edit.atTriggered.connect(self._on_at_triggered)
-        input_row.addWidget(self.input_edit, 1)
+        input_wrap_lay.addWidget(self.input_edit)
+        input_row.addWidget(input_wrap, 1)
         
         # 节点路径补全弹出框
         self._node_completer = NodeCompleterPopup(parent=self.input_edit)
@@ -177,6 +194,13 @@ class InputAreaMixin:
         self.btn_stop.setFixedHeight(26)
         self.btn_stop.setVisible(False)
         btn_col.addWidget(self.btn_stop)
+
+        self.btn_clear_chat = QtWidgets.QPushButton(tr("btn.clear"))
+        self.btn_clear_chat.setObjectName("btnClearChat")
+        self.btn_clear_chat.setFixedHeight(26)
+        self.btn_clear_chat.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_clear_chat.setToolTip(tr("btn.clear_chat"))
+        btn_col.addWidget(self.btn_clear_chat)
         
         self.btn_send = SendButton()
         self.btn_send.setFixedHeight(26)
@@ -187,16 +211,16 @@ class InputAreaMixin:
         layout.addLayout(input_row)
         
         # -------- 隐藏按钮（保持 self.btn_xxx 引用兼容 _wire_events）--------
-        self.btn_attach_image = QtWidgets.QPushButton("Img")
+        self.btn_attach_image = QtWidgets.QPushButton(tr("menu.attach_image"))
         self.btn_attach_image.setVisible(False)
         
-        self.btn_network = QtWidgets.QPushButton("Read Network")
+        self.btn_network = QtWidgets.QPushButton(tr("menu.read_network"))
         self.btn_network.setVisible(False)
         
-        self.btn_selection = QtWidgets.QPushButton("Read Selection")
+        self.btn_selection = QtWidgets.QPushButton(tr("menu.read_selection"))
         self.btn_selection.setVisible(False)
         
-        self.btn_export_train = QtWidgets.QPushButton("Train")
+        self.btn_export_train = QtWidgets.QPushButton(tr("menu.export_train"))
         self.btn_export_train.setVisible(False)
         
         return container
@@ -206,14 +230,45 @@ class InputAreaMixin:
     def _show_attach_menu(self):
         """弹出附件/低频操作菜单"""
         menu = QtWidgets.QMenu(self)
-        menu.addAction("Attach Image", self.btn_attach_image.click)
-        menu.addAction("Read Network", self.btn_network.click)
-        menu.addAction("Read Selection", self.btn_selection.click)
+        menu.addAction(tr("menu.attach_image"), self.btn_attach_image.click)
+        menu.addAction(tr("menu.read_network"), self.btn_network.click)
+        menu.addAction(tr("menu.read_selection"), self.btn_selection.click)
         menu.addSeparator()
-        menu.addAction("Export Train", self.btn_export_train.click)
+        menu.addAction(tr("menu.export_train"), self.btn_export_train.click)
         menu.exec_(self.btn_attach_menu.mapToGlobal(
             QtCore.QPoint(0, -menu.sizeHint().height())
         ))
+
+    def _on_input_resize_dragged(self, dy: int):
+        """Drag up to increase the input height, drag down to reduce it."""
+        current = self.input_edit.height()
+        self.input_edit.set_manual_height(current - dy)
+
+    def _on_input_resize_reset(self):
+        self.input_edit.reset_auto_height()
+        try:
+            self._show_toast(tr("input.resize.tooltip"), 1500)
+        except Exception:
+            pass
+
+    def _resize_mode_combo(self):
+        """Keep the mode selector compact without clipping localized labels."""
+        labels = [tr("mode.agent"), tr("mode.ask"), tr("mode.plan")]
+        fm = self.mode_combo.fontMetrics()
+
+        def _advance(text: str) -> int:
+            if hasattr(fm, "horizontalAdvance"):
+                return fm.horizontalAdvance(text)
+            return fm.width(text)
+
+        text_w = max(_advance(label) for label in labels)
+        width = max(72, text_w + 34)
+        popup_w = max(96, text_w + 48)
+        self.mode_combo.setFixedWidth(width)
+        try:
+            self.mode_combo.view().setMinimumWidth(popup_w)
+        except Exception:
+            pass
 
     # ---------- 确认模式切换 ----------
     
@@ -337,8 +392,31 @@ class InputAreaMixin:
     def _retranslate_input_area(self):
         """语言切换后更新输入区域所有翻译文本"""
         self.mode_combo.setToolTip(tr('mode.tooltip'))
+        self.btn_attach_menu.setToolTip(tr("menu.attach_actions"))
+        self._btn_undo_all.setText(tr("btn.undo_all"))
+        self._btn_keep_all.setText(tr("btn.keep_all"))
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setItemText(0, tr("mode.agent"))
+        self.mode_combo.setItemText(1, tr("mode.ask"))
+        self.mode_combo.setItemText(2, tr("mode.plan"))
+        self.mode_combo.blockSignals(False)
+        self._resize_mode_combo()
+        self.chk_confirm_mode.setText(tr("confirm"))
         self.chk_confirm_mode.setToolTip(tr('confirm.tooltip'))
         self.input_edit.setPlaceholderText(tr('placeholder'))
+        if hasattr(self, 'input_resize_handle'):
+            self.input_resize_handle.retranslate()
+        if hasattr(self, 'btn_send'):
+            self.btn_send.retranslate()
+        if hasattr(self, 'btn_stop'):
+            self.btn_stop.retranslate()
+        if hasattr(self, 'btn_clear_chat'):
+            self.btn_clear_chat.setText(tr("btn.clear"))
+            self.btn_clear_chat.setToolTip(tr("btn.clear_chat"))
         self.btn_attach_image.setToolTip(tr('attach_image.tooltip'))
+        self.btn_attach_image.setText(tr("menu.attach_image"))
+        self.btn_network.setText(tr("menu.read_network"))
+        self.btn_selection.setText(tr("menu.read_selection"))
+        self.btn_export_train.setText(tr("menu.export_train"))
         self.btn_export_train.setToolTip(tr('train.tooltip'))
         self.token_stats_btn.setToolTip(tr('header.token_stats.tooltip'))

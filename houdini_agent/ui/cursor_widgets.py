@@ -25,6 +25,7 @@ from .widgets.base import (
     CollapsibleSection,
     CollapsibleContent,
     PulseIndicator,
+    TurnTraceHeader,
 )
 
 # Thinking / VEX
@@ -96,6 +97,7 @@ from .widgets.chat_input import (
     _SLASH_CATEGORY_LABELS,
     NodeCompleterPopup,
     SlashCommandPopup,
+    InputResizeHandle,
     ChatInput,
     StopButton,
     SendButton,
@@ -124,7 +126,7 @@ __all__ = [
     'CursorTheme', '_fmt_duration', '_linkify_node_paths', '_linkify_node_paths_plain',
     '_NODE_PATH_RE', '_NODE_LINK_STYLE',
     # Base
-    'AuroraBar', 'CollapsibleSection', 'CollapsibleContent', 'PulseIndicator',
+    'AuroraBar', 'CollapsibleSection', 'CollapsibleContent', 'PulseIndicator', 'TurnTraceHeader',
     # Thinking
     'ThinkingSection', 'ThinkingBar', 'VEXPreviewInline', 'VEXPreviewDialog',
     # Tool call
@@ -144,7 +146,7 @@ __all__ = [
     'NodeContextBar', 'ToolStatusBar', 'UnifiedStatusBar',
     # Chat input
     'SLASH_COMMANDS', '_SLASH_CATEGORY_LABELS',
-    'NodeCompleterPopup', 'SlashCommandPopup', 'ChatInput', 'StopButton', 'SendButton',
+    'NodeCompleterPopup', 'SlashCommandPopup', 'InputResizeHandle', 'ChatInput', 'StopButton', 'SendButton',
     # Todo
     'TodoItem', 'TodoList',
     # Analytics / update / dialogs

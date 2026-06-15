@@ -3,6 +3,7 @@ import time
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from .syntax import SyntaxHighlighter
+from ..theme_engine import ThemeEngine
 
 
 class _CollapsibleShellOutput(QtWidgets.QWidget):
@@ -36,7 +37,7 @@ class _CollapsibleShellOutput(QtWidgets.QWidget):
         self._text.setProperty("variant", self._variant)
         self._text.setHtml(
             f'<pre style="margin:0;white-space:pre;font-family:Consolas,Monaco,monospace;'
-            f'font-size:12px;">{content_html}</pre>'
+            f'font-size:{ThemeEngine.scaled_px(12)}px;">{content_html}</pre>'
         )
         lay.addWidget(self._text)
 

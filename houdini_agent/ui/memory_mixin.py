@@ -11,12 +11,13 @@ Memory Mixin — 长期记忆 + 插件 Hook 系统
 
 import threading
 
-from houdini_agent.qt_compat import QSettings
+from houdini_agent.qt_compat import QSettings, invoke_on_main
 
 from ..utils.memory_store import get_memory_store
 from ..utils.reward_engine import get_reward_engine
 from ..utils.reflection import get_reflection_module
 from ..utils.growth_tracker import get_growth_tracker, TaskMetric
+from ..utils.experience_store import get_experience_store
 
 
 class MemoryMixin:
@@ -35,6 +36,7 @@ class MemoryMixin:
                 self._reflection_module = get_reflection_module()
                 self._growth_tracker = get_growth_tracker()
                 self._memory_initialized = True
+                self._save_memory_enabled_pref(True)
                 print(f"[Memory] 长期记忆系统已初始化 (enabled={self._memory_enabled}): "
                       f"{self._memory_store.get_stats()}")
             except Exception as e:
@@ -48,35 +50,39 @@ class MemoryMixin:
 
     @staticmethod
     def _load_memory_enabled_pref() -> bool:
-        """从 QSettings 加载记忆开关（默认 False）。"""
+        """长期记忆始终开启，同时覆盖旧版本保存过的关闭状态。"""
         settings = QSettings("HoudiniAI", "Assistant")
-        val = settings.value("memory_enabled", False)
-        if isinstance(val, str):
-            return val.lower() == 'true'
-        return bool(val)
+        settings.setValue("memory_enabled", True)
+        return True
 
     def _save_memory_enabled_pref(self, enabled: bool):
         settings = QSettings("HoudiniAI", "Assistant")
-        settings.setValue("memory_enabled", bool(enabled))
+        settings.setValue("memory_enabled", True)
 
     def _is_memory_active(self) -> bool:
         """记忆相关钩子的统一短路条件。
 
-        True 时才应注入 L0 核心记忆、激活分层检索、反思、睡眠以及
-        暴露 search_memory 工具；False 时完全关闭。
+        True 时注入 L0 核心记忆、激活分层检索、反思、睡眠以及
+        暴露 search_memory 工具。启动初始化完成后该状态会保持开启。
         """
         return bool(self._memory_enabled and self._memory_initialized and self._memory_store)
 
     def set_memory_enabled(self, enabled: bool):
-        """切换记忆系统全局开关并持久化。"""
-        enabled = bool(enabled)
+        """保持记忆系统开启。保留入口是为了兼容旧菜单和旧调用。"""
+        from .i18n import tr
+        requested_enabled = bool(enabled)
+        enabled = True
         if enabled == self._memory_enabled:
+            if not requested_enabled:
+                try:
+                    self._addStatus.emit(tr('memory.toggle.disabled'))
+                except Exception:
+                    pass
             return
         self._memory_enabled = enabled
         self._save_memory_enabled_pref(enabled)
         # 状态栏提示
-        from .i18n import tr
-        key = 'memory.toggle.enabled' if enabled else 'memory.toggle.disabled'
+        key = 'memory.toggle.enabled' if requested_enabled else 'memory.toggle.disabled'
         try:
             self._addStatus.emit(tr(key))
         except Exception:
@@ -346,3 +352,27 @@ class MemoryMixin:
             import traceback
             print(f"[Memory] 反思钩子异常: {e}")
             traceback.print_exc()
+
+    def _queue_workflow_experience_candidate(self, session_id: str, history: list):
+        """Always-on workflow experience capture.
+
+        This only creates review candidates. Promotion remains an explicit
+        review action so raw reasoning does not get written directly to memory.
+        """
+        try:
+            candidates = get_experience_store().create_many_from_history(session_id, history)
+            if not candidates:
+                return
+            print(
+                f"[Experience] candidates queued: {len(candidates)} "
+                f"first={candidates[0].id} status={candidates[0].status} "
+                f"quality={candidates[0].quality_score:.2f}"
+            )
+            try:
+                dlg = getattr(self, "_experience_review_dialog", None)
+                if dlg is not None and dlg.isVisible():
+                    invoke_on_main(dlg, "_reload")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[Experience] 自动沉淀失败: {e}")

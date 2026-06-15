@@ -12,12 +12,12 @@ if tool_path not in sys.path:
     sys.path.insert(0, tool_path)
 
 # Reload module (support hot-reload)
-if 'main' in sys.modules:
+if 'launcher' in sys.modules:
     import importlib
-    import main
-    importlib.reload(main)
+    import launcher
+    importlib.reload(launcher)
 else:
-    import main
+    import launcher
 
 # Launch
-main.show_tool()
+launcher.show_tool()

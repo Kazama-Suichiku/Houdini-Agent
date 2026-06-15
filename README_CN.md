@@ -2,9 +2,27 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-基于 AI 的 SideFX Houdini 智能助手，支持自主多轮工具调用、联网搜索、VEX/Python 代码执行、Plan 模式规划复杂任务、大脑启发式长期记忆系统、插件 Hook 系统支持社区扩展、用户自定义上下文规则，配备现代深色 UI 与双语支持。
+> 本项目 fork 自原始项目 [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent)，最初由 **KazamaSuichiku** 开发。当前 fork 保留上游 Houdini Agent 的基础能力，并在工作流、自定义模型、界面体验和经验审阅等方向继续优化。
+
+基于 AI 的 SideFX Houdini 智能助手，支持自主多轮工具调用、联网搜索、VEX/Python 代码执行、Plan 模式规划复杂任务、始终开启的工作流经验沉淀与晋升审阅、大脑启发式长期记忆系统、插件 Hook 系统支持社区扩展、用户自定义上下文规则，配备现代深色 UI 与双语支持。
 
 基于 **OpenAI Function Calling** 协议，Agent 可以读取节点网络、创建/修改/连接节点、编写 VEX Wrangle、执行系统命令、联网搜索、查询本地文档、创建结构化执行计划、从历史交互中持续学习、通过插件扩展能力 —— 全部在自主循环中迭代完成。统一的 **ToolRegistry** 集中管理核心工具、技能脚本和插件工具，支持基于模式的访问控制。
+
+## 最近 Fork 更新
+
+相对上游 [`Kazama-Suichiku/Houdini-Agent`](https://github.com/Kazama-Suichiku/Houdini-Agent)，当前 fork 增加了这些面向用户的改动：
+
+- **Custom Provider 多配置** — 可同时保存多组命名 Custom 配置，每组独立维护 URL、API Key、协议、模型列表、上下文限制、视觉能力、Function Calling 能力和主界面可见模型。
+- **自定义模型配置方式优化** — Custom 配置弹窗支持新增/删除配置、独立编辑配置名称、自动获取模型、测试连接、勾选主界面可见模型，并兼容迁移旧版单配置数据。
+- **Custom 支持 Anthropic Messages** — Custom 配置可选择 OpenAI 兼容 Chat Completions 或 Anthropic Messages 协议；`/chat/completions`、`/messages` 和 `/models` 地址会自动规范化，客户端会处理 Anthropic 所需的 `x-api-key` 与 `anthropic-version` 请求头。
+- **更稳定的 Custom 模型选择** — 主界面模型选择固定为下拉枚举，仅展示勾选可见的配置模型；配置弹窗将“选择配置”和“编辑名称”分离，避免编辑时误覆盖其他配置。
+- **更完整的 Agent 时间线** — 思考过程、工具执行、视口检查和最终回复按实际顺序保留；工具调用、节点 Diff、Shell 预览和视口截图等详细执行信息默认折叠。
+- **统一执行轨迹折叠头** — 同一轮连续的思考和工具执行会合并到一个可折叠轨迹中，运行时显示“处理中”耗时，完成后保留“已处理”总耗时，不再每个操作单独生成折叠块。
+- **会话气泡重排优化** — 用户消息气泡会根据文本和缩略图估算合适宽度，更充分利用横向空间，同时仍限制最长宽度以避免内容撑破界面。
+- **Windows UTF-8 请求安全** — 独立窗口启动和 AI 请求链路强制使用 UTF-8 标准输出与请求体编码，并移除请求路径日志中的 emoji，避免 Windows GBK 控制台编码失败。
+- **重试与停止处理** — 临时 API 失败使用可配置重试次数，并在回复中显示重试日志；用户停止运行时会保留已输出的思考与执行历史，而不是丢失半成品轨迹。
+- **聊天与会话体验优化** — 支持逐条删除消息、窗口缩放时长文本自动重排、已发送图片和 `capture_viewport` 缩略图可点击预览、自动/手动会话标题以及更安全的会话缓存同步。
+- **工作流经验审阅** — 任务完成后可排队多条去噪候选经验，支持隐藏/删除已拒绝项，并能将精选语义/策略经验导出为 Markdown。
 
 ## 核心特性
 
@@ -27,6 +45,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **随时中断** — 可在任意时刻停止正在运行的 Agent 循环
 - **智能上下文管理** — 按轮次裁剪对话，永不截断用户/助手消息，仅压缩工具结果
 - **长期记忆** — 大脑启发式三层记忆系统（事件记忆、抽象知识、策略记忆），基于奖励驱动的学习与自动反思
+- **工作流经验审阅** — 任务完成后自动抽取候选经验，剥离思考过程和工具噪音，用四栏审阅台将有效知识晋升为长期记忆
 - **插件系统** — 通过 `plugins/` 目录支持外部社区扩展，包含 Hook 事件、自定义工具、UI 按钮和设置
 - **用户规则** — 类似 Cursor Rules 的持久上下文规则，自动注入到每次 AI 请求中
 
@@ -40,7 +59,26 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | **Ollama**（本地） | `qwen2.5:14b`、任意本地模型 | 隐私优先，自动检测可用模型 |
 | **拼好饭**（中转） | `claude-opus-4-6-gemini`、`claude-opus-4-6-max`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`gemini-3-flash`、`gemini-3.1-pro`、`glm-5-turbo`、`glm-5.1`、`MiniMax-M2.7`、`MiniMax-M2.7-highspeed` | 通过中转接口使用 Claude、Gemini、GLM、MiniMax |
 | **OpenRouter** | `claude-sonnet-4.6`、`claude-opus-4.6`、`gpt-5.2`、`gemini-2.5-pro`、`deepseek-r1`、`grok-4.1-fast`、`llama-4-maverick`、`qwen3-235b` 等 16 个 | 通过单一 API Key 使用所有主流提供商的模型 |
-| **自定义** | 用户可配置 | 任何 OpenAI 兼容端点（LM Studio、vLLM 等）；可配置 URL、API Key、模型名、上下文限制、Vision 和 FC 支持 |
+| **自定义** | 用户可配置 | 多组命名配置，支持 OpenAI 兼容或 Anthropic Messages 端点；可配置 URL、API Key、模型列表、可见模型、上下文限制、Vision 和 FC 支持 |
+
+### Custom Provider 配置
+
+这个 fork 中的 Custom Provider 采用多配置管理。每组配置会保存协议（`OpenAI Compatible` 或 `Anthropic Messages`）、端点、Key、模型列表、上下文限制、可见模型选择和能力开关。主界面模型下拉框显示为 `配置名 / 模型名`，你可以只勾选需要出现在主界面的模型；如果没有勾选任何模型，则默认显示该配置下的全部模型。
+
+连接测试和模型拉取会遵循当前配置选择的协议。OpenAI 兼容配置使用 Chat Completions 与 `/models`；Anthropic 配置使用 Messages 与 Anthropic 风格 `/models`，并自动附加所需请求头。这样可以同时管理 Claude 兼容中转和 OpenAI 兼容本地服务。
+
+#### 配置自定义模型
+
+1. 在提供商下拉框中选择 **Custom**，然后点击旁边的设置按钮。
+2. 通过配置下拉框选择已有配置，或点击 **+** 新增一组 URL/API Key。配置名称输入框与配置选择相互独立，重命名当前配置不会误切换或覆盖其他配置。
+3. 对 LM Studio、vLLM、Text Generation WebUI、OpenAI 兼容中转站和多数本地服务，选择 **OpenAI Compatible**。对 Claude 兼容的 `/v1/messages` 服务，选择 **Anthropic Messages**。
+4. API URL 可以填写基础地址或完整端点。客户端会自动规范化常见形式，包括 `/v1`、`/v1/chat/completions`、`/v1/messages`，以及用于模型发现的对应 `/models` 地址。
+5. 如果服务需要鉴权，填写 API Key。OpenAI 兼容配置会发送 `Authorization: Bearer ...`；Anthropic 配置会发送 `x-api-key` 和 `anthropic-version`。
+6. 点击刷新按钮从 API 获取模型列表，也可以手动添加模型名。只勾选需要显示在主界面的模型；全部不勾选时，默认显示该配置下所有模型。
+7. 设置上下文长度和能力开关（`支持图片输入`、`支持 Function Calling`），然后点击 **测试连接**。测试连接会优先使用第一个已勾选模型；若没有勾选，则使用模型列表第一个。
+8. 保存后，顶部模型下拉框会重建为固定的 `配置名 / 模型名` 选项，避免自由输入导致模型名漂移，并保证每个模型按所属配置正确路由。
+
+旧版单组 Custom 配置会在加载时自动迁移到新的配置列表中。
 
 ### 图片/多模态输入
 
@@ -62,7 +100,11 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **Token 分析** — 实时显示 Token 用量、推理 Token、Cache 命中率和按模型计费的费用估算（点击查看详细分析面板）
 - **AuroraBar 流光条** — AI 生成时左侧银白流动渐变光带
 - **流式 VEX 代码预览** — 类似 Cursor Apply 的实时代码书写动画
+- **结构化回复时间线** — 思考块、工具执行、重试日志、视口检查和最终回复保持顺序，详细执行组件可折叠
+- **单轮轨迹折叠** — 每条回复使用一个紧凑标题统一控制思考/工具轨迹折叠，并在完成后保留总耗时
+- **自适应消息气泡** — 用户气泡按文本和图片内容主动扩展，减少不必要换行，同时避免重新出现溢出
 - 多会话标签页 — 同时运行多个独立对话
+- 自动与手动会话标题
 - AI 回复一键复制
 - `Ctrl+Enter` 发送消息
 - **字号缩放** — `Ctrl+=`/`Ctrl+-` 放大缩小，"Aa" 按钮滑块控制
@@ -71,6 +113,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **插件管理器** — 三标签对话框（插件/工具/技能），支持启用/禁用、重载、设置管理
 - **规则编辑器** — 创建和管理持久用户上下文规则的对话框
 - **记忆管理器** — 浏览、编辑、删除和导出长期语义记忆的管理对话框
+- **工作流经验审阅台** — 候选 / 晋升 / 稍后 / 拒绝四栏流程，右侧显示去噪总结、证据、置信度和晋升结果
 - **PySide2 输入法支持** — 完整的中文/日文/韩文输入法支持（Windows 和 macOS）
 
 ## 可用工具（40+）
@@ -170,6 +213,8 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 |------|------|
 | `search_memory` | 搜索语义记忆库 — 按类别、抽象层级和置信度评分检索相关的历史经验、规则和策略 |
 
+工作流经验沉淀默认保持开启：Agent 会在任务完成后从上下文中提取候选经验，经过总结、去噪和证据评分后进入审阅台，用户可以晋升、稍后处理或拒绝。
+
 ### Plan 模式
 
 | 工具 | 说明 |
@@ -252,6 +297,7 @@ Houdini-Agent/
     │   ├── theme_engine.py        # QSS 模板渲染与字号缩放引擎
     │   ├── font_settings_dialog.py # 字号缩放滑块对话框
     │   ├── memory_manager_dialog.py # 记忆系统 UI — 浏览、编辑、删除、导出记忆
+    │   ├── experience_review_dialog.py # 工作流经验审阅台 — 候选、晋升、稍后、拒绝四栏流程
     │   └── style_template.qss    # 集中式 QSS 主题样式表
     ├── skills/                     # 预构建分析脚本（自动注册为 skill:xxx 工具）
     │   ├── __init__.py            # Skill 注册表、加载器与 ToolRegistry 集成
@@ -276,6 +322,7 @@ Houdini-Agent/
         ├── tool_registry.py       # 统一工具注册中心 — 集中管理核心/技能/插件/用户工具
         ├── rules_manager.py       # 用户规则管理器（UI 规则 + 文件规则，Prompt 注入）
         ├── memory_store.py        # 三层记忆存储（事件/抽象/策略）SQLite
+        ├── experience_store.py    # 工作流经验候选队列、去噪总结与晋升落库
         ├── embedding.py           # 本地文本 Embedding（sentence-transformers / 回退方案）
         ├── reward_engine.py       # 奖励评分与记忆重要度更新
         ├── reflection.py          # 规则反思 + LLM 深度反思模块
@@ -391,17 +438,26 @@ Plan 模式使 AI 能够通过结构化的三阶段工作流处理复杂任务�
 
 ### 大脑启发式长期记忆系统
 
-五个模块组成的系统，使 Agent 能够持续学习和改进：
+六个模块组成的系统，使 Agent 能够持续学习和改进：
 
 | 模块 | 说明 |
 |------|------|
 | `memory_store.py` | 三层 SQLite 存储 — **事件记忆**（具体任务经历）、**抽象知识**（反思生成的经验规则）、**策略记忆**（解决问题的套路，带优先级） |
+| `experience_store.py` | 工作流经验候选队列与晋升记录 — 自动总结任务上下文，提取结论、适用场景、验证方式和证据，过滤 `<think>`、Todo 指令和工具流水账噪音 |
 | `embedding.py` | 本地文本向量化，使用 `sentence-transformers/all-MiniLM-L6-v2`（384维），回退方案为字符 n-gram 伪向量 |
 | `reward_engine.py` | 类多巴胺奖励评分 — 成功度、效率、新颖度、错误惩罚；驱动记忆重要度的强化/衰减，附带时间衰减 |
 | `reflection.py` | 混合反思 — 每次任务后规则提取 + 定期 LLM 深度反思生成抽象规则和策略更新 |
 | `growth_tracker.py` | 滚动窗口指标（错误率、成功率、工具调用效率趋势）+ 个性特征形成（效率偏好、风险容忍度、回复详细度、主动性） |
 
 查询时自动激活记忆：通过余弦相似度检索相关的事件记忆、抽象规则和策略记忆，注入到系统提示词中。
+
+#### 工作流经验审阅与晋升
+
+工作流经验沉淀和晋升保持默认开启。每次任务结束后，系统会从用户目标、工具结果、验证结果和最终回复中抽取候选经验，但不会直接把完整思考过程写入长期记忆。
+
+审阅台采用四栏流程：**候选** 保存待判断经验，**晋升** 表示准备写入长期记忆，**稍后** 保留低置信但可能有价值的样本，**拒绝** 归档无效或重复内容。右侧详情面板显示去噪后的总结、原始证据、质量分、置信度和晋升路径，右上角关闭按钮与窗口关闭行为保持一致。
+
+经验总结会优先保留可复用知识：结论、适用场景、正确做法、验证方式和反例边界。系统会过滤 `<think>` 内容、Todo 续接提示、重复 tool 日志、单纯进度文字等上下文噪音，避免把“思考过程”误当成经验。
 
 ### 插件系统
 
@@ -570,6 +626,7 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **当前 fork 更新** — **Custom Provider、时间线、重试与经验审阅**：相对上游 `Kazama-Suichiku/Houdini-Agent`，当前 fork 增加多配置 Custom Provider 管理、可见模型勾选、Custom Anthropic Messages 协议支持、更安全的 URL/模型规范化和更稳定的配置编辑。Agent 回复现在会保留交错的思考/工具/视口/最终回复时间线，折叠详细执行信息，显示可配置重试日志，并在停止运行时保留部分历史。聊天与会话层新增逐条删除、缩放安全换行、已发送图片和视口缩略图点击预览、自动/手动会话标题和更安全的缓存同步。工作流经验审阅支持多候选提取、过程噪音过滤、隐藏/删除拒绝项、将已审阅知识晋升到长期记忆，并导出精选 Markdown。
 - **v1.5.5** — **DeepSeek V4 API 适配 + JSON Output**：新增 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，支持显式 `thinking` 参数和 `reasoning_effort`。旧模型（`deepseek-chat` / `deepseek-reasoner`）保留兼容（2026/07/24 废弃）。默认模型迁移至 `deepseek-v4-flash`。`chat_stream()` / `chat()` 新增 `response_format` 参数；反思模块使用 `json_object` 模式确保可靠的 JSON 输出。V4 模型定价、上下文限制和功能配置已添加。
 - **v1.5.4** — **长期记忆系统全局开关**：新增记忆系统启用/禁用开关。多项修复。
 - **v1.5.3** — **记忆管理器对话框**：新增 `MemoryManagerDialog` UI，支持浏览、编辑、删除和导出语义记忆。支持 `/memories` 命令。
@@ -615,7 +672,8 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 作者
 
-KazamaSuichiku
+- 原始项目与作者：[KazamaSuichiku](https://github.com/Kazama-Suichiku) / [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent)
+- 当前仓库是在上游基础上的 fork，新增优化与功能见上文说明。
 
 ## 许可证
 

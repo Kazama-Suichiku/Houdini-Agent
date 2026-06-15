@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from ..ui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,8 @@ class CacheMixin:
         auto_save_action.setChecked(self._auto_save_cache)
         auto_save_action.triggered.connect(lambda: setattr(self, '_auto_save_cache', not self._auto_save_cache))
 
-        # 显示菜单
-        menu.exec_(self.btn_cache.mapToGlobal(QtCore.QPoint(0, self.btn_cache.height())))
+        # 显示菜单：btn_cache 是隐藏兼容按钮，必须使用可见 overflow 按钮定位
+        menu.exec_(self._overflow_anchor_pos())
 
     @staticmethod
     def _strip_images_for_cache(history: list) -> list:
@@ -107,6 +108,8 @@ class CacheMixin:
             'todo_summary': self.todo_list.get_todos_summary() if hasattr(self, 'todo_list') else "",
             'todo_data': todo_data,
             'token_stats': self._token_stats.copy(),
+            'tab_label': self._clean_tab_label(self.session_tabs.tabText(self.session_tabs.currentIndex())) if hasattr(self, '_clean_tab_label') and hasattr(self, 'session_tabs') else '',
+            'manual_title': self._sessions.get(self._session_id, {}).get('manual_title', False),
         }
 
     def _on_destroyed(self):
@@ -163,18 +166,25 @@ class CacheMixin:
 
             tabs_info = getattr(self, '_tabs_backup', [])
             if not tabs_info:
-                tabs_info = [(sid, f"Chat") for sid in self._sessions]
+                tabs_info = [(sid, tr("session.default_label", i + 1)) for i, sid in enumerate(self._sessions)]
 
             manifest_tabs = []
-            for sid, tab_label in tabs_info:
+            for tab_entry in tabs_info:
+                if len(tab_entry) >= 3:
+                    sid, tab_label, manual_title = tab_entry[:3]
+                else:
+                    sid, tab_label = tab_entry[:2]
+                    manual_title = bool(self._sessions.get(sid, {}).get('manual_title', False))
                 if not sid or sid not in self._sessions:
                     continue
                 sdata = self._sessions[sid]
+                sdata['manual_title'] = bool(manual_title or sdata.get('manual_title', False))
                 history = sdata.get('conversation_history', [])
                 if not history:
                     manifest_tabs.append({
                         'session_id': sid,
                         'tab_label': tab_label,
+                        'manual_title': sdata.get('manual_title', False),
                         'file': '',
                         'empty': True,
                     })
@@ -193,6 +203,8 @@ class CacheMixin:
                     'context_summary': sdata.get('context_summary', ''),
                     'todo_data': todo_data,
                     'token_stats': sdata.get('token_stats', {}),
+                    'tab_label': tab_label,
+                    'manual_title': sdata.get('manual_title', False),
                 }
                 session_file = self._cache_dir / f"session_{sid}.json"
                 with open(session_file, 'w', encoding='utf-8') as f:
@@ -200,6 +212,7 @@ class CacheMixin:
                 manifest_tabs.append({
                     'session_id': sid,
                     'tab_label': tab_label,
+                    'manual_title': sdata.get('manual_title', False),
                     'file': f"session_{sid}.json",
                 })
             if not manifest_tabs:
@@ -267,11 +280,14 @@ class CacheMixin:
                 if not sid:
                     continue
                 tab_label = self.session_tabs.tabText(i)
+                clean_label = self._clean_tab_label(tab_label) if hasattr(self, '_clean_tab_label') else tab_label
+                manual_title = bool(self._sessions.get(sid, {}).get('manual_title', False))
                 session_file = self._cache_dir / f"session_{sid}.json"
                 if session_file.exists():
                     manifest_tabs.append({
                         'session_id': sid,
-                        'tab_label': tab_label,
+                        'tab_label': clean_label,
+                        'manual_title': manual_title,
                         'file': f"session_{sid}.json",
                     })
                 else:
@@ -280,13 +296,15 @@ class CacheMixin:
                     if history:
                         manifest_tabs.append({
                             'session_id': sid,
-                            'tab_label': tab_label,
+                            'tab_label': clean_label,
+                            'manual_title': manual_title,
                             'file': f"session_{sid}.json",
                         })
                     else:
                         manifest_tabs.append({
                             'session_id': sid,
-                            'tab_label': tab_label,
+                            'tab_label': clean_label,
+                            'manual_title': manual_title,
                             'file': '',
                             'empty': True,
                         })
@@ -328,15 +346,23 @@ class CacheMixin:
                     sid = self.session_tabs.tabData(i)
                     tab_label = self.session_tabs.tabText(i)
                     if sid:
-                        tabs_list.append((sid, tab_label))
+                        clean_label = self._clean_tab_label(tab_label) if hasattr(self, '_clean_tab_label') else tab_label
+                        manual_title = bool(self._sessions.get(sid, {}).get('manual_title', False))
+                        tabs_list.append((sid, clean_label, manual_title))
             except (RuntimeError, AttributeError):
                 tabs_list = getattr(self, '_tabs_backup', [])
 
-            for sid, tab_label in tabs_list:
+            for tab_entry in tabs_list:
+                if len(tab_entry) >= 3:
+                    sid, tab_label, manual_title = tab_entry[:3]
+                else:
+                    sid, tab_label = tab_entry[:2]
+                    manual_title = bool(self._sessions.get(sid, {}).get('manual_title', False))
                 if not sid or sid not in self._sessions:
                     continue
 
                 sdata = self._sessions[sid]
+                sdata['manual_title'] = bool(manual_title or sdata.get('manual_title', False))
                 history = sdata.get('conversation_history', [])
                 if not history:
                     # 空会话：清理磁盘残留，但仍记录到 manifest 以保留标签布局
@@ -349,6 +375,7 @@ class CacheMixin:
                     manifest_tabs.append({
                         'session_id': sid,
                         'tab_label': tab_label,
+                        'manual_title': sdata.get('manual_title', False),
                         'file': '',
                         'empty': True,
                     })
@@ -372,6 +399,8 @@ class CacheMixin:
                     'context_summary': sdata.get('context_summary', ''),
                     'todo_data': todo_data,
                     'token_stats': sdata.get('token_stats', {}),
+                    'manual_title': sdata.get('manual_title', False),
+                    'tab_label': tab_label,
                 }
                 session_file = self._cache_dir / f"session_{sid}.json"
                 with open(session_file, 'w', encoding='utf-8') as f:
@@ -380,6 +409,7 @@ class CacheMixin:
                 manifest_tabs.append({
                     'session_id': sid,
                     'tab_label': tab_label,
+                    'manual_title': sdata.get('manual_title', False),
                     'file': f"session_{sid}.json",
                 })
 
@@ -425,7 +455,8 @@ class CacheMixin:
 
             for tab_info in tabs_info:
                 sid = tab_info.get('session_id', '')
-                tab_label = tab_info.get('tab_label', 'Chat')
+                tab_label = tab_info.get('tab_label', tr("session.default_label", 1))
+                manual_title = bool(tab_info.get('manual_title', False))
                 is_empty = tab_info.get('empty', False)
 
                 history = []
@@ -455,6 +486,8 @@ class CacheMixin:
                         context_summary = cache_data.get('context_summary', '')
                         todo_data = cache_data.get('todo_data', [])
                         saved_token_stats = cache_data.get('token_stats', saved_token_stats)
+                        manual_title = bool(cache_data.get('manual_title', manual_title))
+                        tab_label = cache_data.get('tab_label', tab_label)
 
                 if first_tab:
                     # 第一个 tab：加载到已有的初始会话中
@@ -471,6 +504,7 @@ class CacheMixin:
                         sdata['conversation_history'] = history
                         sdata['context_summary'] = context_summary
                         sdata['token_stats'] = saved_token_stats
+                        sdata['manual_title'] = manual_title
                         self._sessions[sid] = sdata
                     elif sid not in self._sessions:
                         self._sessions[sid] = {
@@ -482,6 +516,7 @@ class CacheMixin:
                             'context_summary': context_summary,
                             'current_response': None,
                             'token_stats': saved_token_stats,
+                            'manual_title': manual_title,
                         }
 
                     if todo_data and hasattr(self, 'todo_list') and self.todo_list:
@@ -523,6 +558,7 @@ class CacheMixin:
                         'context_summary': context_summary,
                         'current_response': None,
                         'token_stats': saved_token_stats,
+                        'manual_title': manual_title,
                     }
 
                     if not is_empty:
@@ -642,6 +678,8 @@ class CacheMixin:
             context_summary = cache_data.get('context_summary', '')
             todo_data = cache_data.get('todo_data', [])
             cached_session_id = cache_data.get('session_id', str(uuid.uuid4())[:8])
+            cached_tab_label = cache_data.get('tab_label', '')
+            cached_manual_title = bool(cache_data.get('manual_title', False))
             # ★ 恢复 token 使用统计
             saved_token_stats = cache_data.get('token_stats', {
                 'input_tokens': 0, 'output_tokens': 0,
@@ -666,6 +704,7 @@ class CacheMixin:
                     self._sessions[self._session_id]['conversation_history'] = self._conversation_history
                     self._sessions[self._session_id]['context_summary'] = self._context_summary
                     self._sessions[self._session_id]['token_stats'] = saved_token_stats
+                    self._sessions[self._session_id]['manual_title'] = cached_manual_title
                 elif self._sessions:
                     # 旧 session_id 已经变了，需要重新映射
                     old_id = list(self._sessions.keys())[0]
@@ -673,6 +712,7 @@ class CacheMixin:
                     sdata['conversation_history'] = self._conversation_history
                     sdata['context_summary'] = self._context_summary
                     sdata['token_stats'] = saved_token_stats
+                    sdata['manual_title'] = cached_manual_title
                     self._sessions[self._session_id] = sdata
                     # 更新标签数据
                     for i in range(self.session_tabs.count()):
@@ -683,7 +723,9 @@ class CacheMixin:
                 self._update_token_stats_display()
                 self._update_context_stats()
                 # 自动重命名标签
-                if history:
+                if cached_tab_label:
+                    self._set_session_tab_title(self._session_id, cached_tab_label, manual=cached_manual_title)
+                elif history:
                     for msg in history:
                         if msg.get('role') == 'user' and msg.get('content'):
                             self._auto_rename_tab(msg['content'])
@@ -700,14 +742,15 @@ class CacheMixin:
             self.session_stack.addWidget(scroll_area)
 
             # 用缓存文件名或首条用户消息作为标签名
-            label = f"Chat {self._session_counter}"
-            for msg in history:
-                if msg.get('role') == 'user' and msg.get('content'):
-                    short = msg['content'][:18].replace('\n', ' ').strip()
-                    if len(msg['content']) > 18:
-                        short += "..."
-                    label = short
-                    break
+            label = cached_tab_label or tr("session.default_label", self._session_counter)
+            if not cached_tab_label:
+                for msg in history:
+                    if msg.get('role') == 'user' and msg.get('content'):
+                        short = msg['content'][:18].replace('\n', ' ').strip()
+                        if len(msg['content']) > 18:
+                            short += "..."
+                        label = short
+                        break
 
             tab_index = self.session_tabs.addTab(label)
             self.session_tabs.setTabData(tab_index, cached_session_id)
@@ -726,6 +769,7 @@ class CacheMixin:
                 'context_summary': context_summary,
                 'current_response': None,
                 'token_stats': saved_token_stats,
+                'manual_title': cached_manual_title,
             }
 
             # 切换到新标签

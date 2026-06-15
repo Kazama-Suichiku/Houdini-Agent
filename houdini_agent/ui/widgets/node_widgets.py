@@ -25,6 +25,8 @@ class NodeOperationLabel(QtWidgets.QWidget):
             param_diff: 参数 diff 信息 {"param_name": str, "old_value": Any, "new_value": Any}
         """
         super().__init__(parent)
+        self.setObjectName("nodeOperationLabel")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self._node_paths = node_paths or []
         self._decided = False  # 用户是否已做出选择
 
@@ -213,6 +215,7 @@ class StreamingCodePreview(QtWidgets.QWidget):
 
     def __init__(self, tool_name: str, parent=None):
         super().__init__(parent)
+        self.setMinimumWidth(0)
         self.setObjectName("streamingCodePreview")
         self._tool_name = tool_name
 
@@ -229,8 +232,11 @@ class StreamingCodePreview(QtWidgets.QWidget):
         self._code_area = QtWidgets.QPlainTextEdit()
         self._code_area.setReadOnly(True)
         self._code_area.setObjectName("streamingCodeArea")
+        self._code_area.setMinimumWidth(0)
         self._code_area.setMaximumHeight(200)
-        self._code_area.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self._code_area.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        self._code_area.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self._code_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         layout.addWidget(self._code_area)
 
         # 记录上次已显示的代码长度，只追加增量
@@ -277,7 +283,7 @@ class ParamDiffWidget(QtWidgets.QWidget):
 
     # 行级通用样式（紧凑无间隙，像一个完整代码块）
     _LINE_BASE = (
-        "font-size: 11px; font-family: {font}; "
+        "font-size: {font_size}px; font-family: {font}; "
         "margin: 0px; padding: 0px 6px; "
         "border: none; border-radius: 0px; "
         "min-height: 16px; max-height: 16px;"

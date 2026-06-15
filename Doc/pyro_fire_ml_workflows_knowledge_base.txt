@@ -1,0 +1,89 @@
+# Houdini Pyro / Fire / ML Upres 工作流知识库
+# 来源范围: 用户提供的 Houdini 火焰、COP Pyro、ML Volume Upres、初学流程视频链接；仓库内 SideFX 文档；公开视频元数据。
+# 证据边界: YouTube 字幕和逐段转写在本次环境中被平台反机器人限制阻断，Bilibili 两条公开视频无字幕轨道。因此本文件只吸收可由视频主题、公开元数据和 SideFX 文档交叉验证的通用经验；不记录未逐段核验的镜头特定参数。
+
+## Pyro 火焰第一性原理：形体、温度、燃料、速度场
+
+做火焰时先把效果拆成可控字段，而不是先调外观。常见关键字段是 `density`、`temperature`、`fuel`、`flame`、`vel`、`divergence` 和用于遮罩/控制的自定义标量场。`fuel` 决定哪里可以燃烧，`temperature` 决定热浮力和发光倾向，`vel` 决定运动方向与拉伸，`density` 决定烟和可见体积厚度，`flame` 或 burn 相关场常用于着色和发光遮罩。
+
+火焰形体来自三个层级的共同作用：源形状提供大轮廓，速度场和浮力提供主运动，湍流/扰动/燃烧衰减提供边缘破碎。调试顺序应从低分辨率、少字段开始：先确认源、尺度、方向和生命周期，再增加 disturbance、shredding、turbulence、confinement 等细节项。不要在基础形体错误时用高分辨率或着色掩盖问题。
+
+尺度是 Pyro 的第一参数之一。同样的速度、浮力、冷却和燃烧速率，在不同场景单位下会产生完全不同的节奏。Agent 在创建或修改火焰网络时，应主动确认目标尺度、镜头距离、帧率和参考素材速度；如果用户只说“更真实”，优先检查 source size、voxel size、time scale、temperature diffusion/cooling、buoyancy，而不是盲目提高细节强度。
+
+## 火焰质感调试：参考匹配、尺度、扰动、着色
+
+火焰质感调试要把“形体”和“渲染”分开。形体阶段看灰度体积和字段切片，确认火舌长度、卷曲频率、上升速度、边缘破碎、烟火比例；渲染阶段再调 blackbody、emission ramp、density scale、shadow density、volume step size 和色彩管理。若 viewport/渲染中火焰发白、发糊或像云，通常先检查 `flame`/`temperature` 范围和密度遮挡，再调颜色。
+
+参考匹配时，不要只对齐单帧轮廓。应同时对齐四件事：源区是否稳定，火舌是否有方向性，细节频率是否符合尺度，亮度衰减是否沿燃烧生命周期变化。小火焰通常需要更快的冷却、更短的寿命和更高频的边缘细节；大火/爆燃通常需要更明显的整体浮力、低频翻卷和烟雾滞留。
+
+火焰边缘细节应由运动场驱动，而不是只靠着色噪声。着色噪声可以补视觉纹理，但如果 `vel`、temperature gradient 或燃烧遮罩没有形成真实的拉伸和卷曲，最终会显得“贴图在体积上滑动”。在 Houdini 中优先通过源速度、Gas Disturbance、Gas Turbulence、Gas Vortex Confinement、shredding 或 SOP Pyro 的对应控制塑造运动，再用 shader ramp 精修。
+
+循环火焰或角色交互火焰要额外检查时间连续性。若角色动画、源动画或燃烧源不是无缝循环，即使单帧火焰质感正确，缓存首尾也会在播放时跳帧。Agent 遇到“循环火焰卡一下/跳一下”时，应检查源动画首尾、燃料/温度缓存首尾、velocity continuity、solver 初始状态和 retime/cache 拼接，而不是只调 shader 或增加 substeps。
+
+## Sparse Pyro / SOP Pyro 工作流经验
+
+Sparse Pyro 的核心价值是只在有效体素区域计算，因此源裁剪、边界管理和字段稀疏性会直接影响速度与稳定性。构建网络时应尽早删除无用源、限制发射区域、缓存源字段，并用低分辨率预览确认行为。对 Agent 来说，自动创建火焰网络时应优先提供低分辨率 preview 分支和 cache 节点，再进入高分辨率。
+
+SOP Pyro 适合迭代单个效果网络，因为源、求解、可视化和缓存能放在 SOP 上下文中连续调试。需要生产级控制时，仍应暴露关键字段和缓存节点：source volume、pyro solver、post-process、volume rasterize/visualize、file cache、render material。任何自动化修改都应保留可回退的节点命名和网络分组，避免把源、求解和着色混成一个不可诊断的黑盒。
+
+火焰网络常见失败模式：voxel size 太大导致块状火焰；time scale 或 substeps 不合适导致运动太慢或穿透；source fuel/temperature 范围过高导致整团燃烧；density scale 过高导致火焰被烟遮住；缺少初始速度导致火焰只向上冒；缓存放在错误位置导致每次调 shader 都重算模拟。Agent 应先检查这些低成本项，再建议昂贵的高分辨率模拟。
+
+## COP Pyro 快速预览与迭代
+
+Copernicus 的 Flow Block 可作为 2D 类流体/平面 advection 工具使用，默认围绕 color、velocity、temperature 等输入输出组织。它适合做快速视觉预览、motion graphics 火焰/烟雾感、纹理流动和风格化迭代，但 SideFX 文档明确指出它不是三维真实流体模拟。需要真实体积遮挡、三维浮力、碰撞和体积渲染时，不应把 COP Flow 当作 Pyro Solver 的替代品。
+
+COP 快速迭代的优势来自 OpenCL/GPU、live simulation、block 封装和较低维度的数据规模。用它做火焰/烟雾预览时，优先把问题设计成 2D 字段：用噪声或 Slope Direction 生成 `v`，用 SDF Shape/SDF to Mono 生成 `temperature` 或 mask，用 Flow Block Begin/End 反馈 color、velocity、temperature，再用 Blend/Cache/Preview Material 做视觉检查。
+
+COP 网络性能要注意 cooking 模式和 passthrough。大文件或 2K/4K 纹理如果放进每帧反馈区，会被重复 cook，导致交互变慢。应把静态输入接入 passthrough 或在 block 外缓存，只让真正需要反馈的字段进入 simulation loop。GPU vRAM 不足会让数据转移到主内存，明显拖慢处理；Agent 遇到 COP Pyro 卡顿时应检查分辨率、缓存、compiled cook、passthrough 和显存占用。
+
+Houdini 21 的 COP Pyro 可按真实节点链理解：`Pyro Configure COP` 建立标准 VDB/layer 字段，`Pyro Block Begin` 与 `Pyro Block End` 包住反馈模拟，中间插入 `Pyro Advect`、`Pyro Buoyancy`、`Pyro Disturbance`、`Pyro Turbulence`、`Pyro Dissipate`、`Pyro Source From Layer/Points`、lighting 或 visualization 类 COP。构建时先确认 `density`、`temperature`、`v` 等字段存在和激活区域正确，再调浮力、扰动、湍流和耗散。COP Pyro 是 Houdini 21.0+ 工作流；compiled cooking 可用于输出或大段网络优化，但 simulation feedback 本身不应假定可被 compiled cook 完整替代。
+
+## ML Volume Upres：低分辨率模拟到高分辨率细节
+
+ML Volume Upres 的目标不是重新求解物理，而是用训练好的模型把低分辨率 pyro volume 映射成更像高分辨率模拟的结果。SideFX 文档中 `ML Train Volume Upres` 用于训练 pyro upres 模型，`ML Volume Tile Component` 用于从 3D volume 裁训练 tile，`ML Volume Tile Inference` 通过分块推理避免接缝，`ML Volume Res`/`ml_volumeupres` 运行由该 recipe 训练出的 ONNX 模型。
+
+第一性原理上，模型学习的是低分辨率输入和高分辨率目标之间的统计关系。它能补充常见细节频率、锐化烟雾结构、减少高分辨率模拟成本，但不能修正错误的主运动、源方向、燃烧逻辑或碰撞关系。如果低分辨率模拟的大形体、速度和生命周期不对，upres 只会把错误变清晰。
+
+训练数据必须覆盖将来推理的效果分布。烟、火、爆炸、冷却塔蒸汽、横向风、不同尺度和不同 shader 目标不能随意混用。入库规则：Agent 建议 ML upres 前，应先问清是否有成对低/高分辨率训练样本、目标字段、分辨率比例、tile 尺寸、模型格式和验证镜头；没有训练数据时，只能建议使用预训练模型做相近类型初试，不能保证结果。
+
+## 训练数据与推理风险：何时该用 ML，何时不该用
+
+适合使用 ML Volume Upres 的场景：低分辨率模拟已经得到正确的大形体；需要批量镜头或长序列节省高分辨率求解成本；目标主要是细节锐化而非改变动力学；训练集和目标镜头属于同类效果。此时流程应包括数据生成、训练/验证切分、训练 loss 与 validation loss 检查、ONNX 导出、tile inference、接缝检查、与真实高分辨率 holdout 对比。
+
+不适合使用 ML upres 的场景：导演仍在大幅改运动；源/碰撞/风场尚未定；低分辨率结果缺少目标结构；效果类型和训练集差异很大；需要严格物理一致性或可解释模拟。遇到这些情况，Agent 应建议先修模拟网络和艺术方向，再考虑 ML。
+
+常见风险：过拟合导致训练镜头好看但新镜头失真；tile 边缘出现接缝；模型输入字段范围和训练时不一致；不同 voxel size/time scale 让模型看到的统计分布变化；推理输出与 shader 预期字段名或范围不匹配。每次部署前应做 A/B 对比、字段范围检查、缓存版本标记和失败回退路径。
+
+loss 曲线要分开读。training loss 降不下去，优先检查数据配对、字段范围、学习率、模型容量和输入噪声；training loss 很低但 validation loss 明显更高，通常是过拟合或训练集覆盖不足，应扩大数据分布、增加正则/weight decay、启用 early stopping 或保留更多未见镜头做 holdout。loss 下降不等于镜头可用，仍需比较 low-res、ML upres、high-res ground truth、动画连续性和 tile seam。
+
+## 初学者 Houdini 学习路线：属性、网络、调试
+
+Houdini 学习的根基是数据流和上下文，而不是记节点按钮。先理解 SOP/DOP/COP/LOP 等上下文边界，再理解 geometry、point/prim/vertex/detail attribute、volume/VDB、packed primitive、node cooking 和 display/render flag。遇到问题时先看 Geometry Spreadsheet、node info、visualizer 和中间节点结果，不要直接重建整张网络。
+
+初学者做 procedural 网络应保持小步可验证：每个阶段只解决一个问题，节点命名表达意图，关键分支加 Null 输出，复杂阶段用 Network Box 组织。Wrangle/VEX 应从读取/写入属性、范围映射、噪声、邻域查询开始，不急于写大段不可调代码。Agent 在教学或生成网络时，应同时给用户“检查点”：当前节点应该产生什么属性、几何数量或可视结果。
+
+从第一性原理看，Houdini 的强项是把问题拆成数据变换链。火焰、ML upres、COP Flow 都遵循同一模式：明确输入字段，定义变换或求解，缓存中间结果，用可视化确认字段，再进入渲染/推理/合成。Agent 的回答应优先解释数据如何流动和如何验证，而不是只给最终参数表。
+
+## 材质学习路线：测试几何、属性遮罩、可复用网络
+
+学习 Houdini 材质时应先在 shaderball 或测试几何上验证基础属性，再接到复杂资产。合理顺序是：base color/roughness/metallic 等基础参数，transmission/subsurface/emission/sheen 等材质族特性，texture import，displacement 与 tessellation，procedural noise，triplanar，最后用 geometry attributes 或自定义 attribute mask 混合多个材质。
+
+可复用材质网络要保留调试入口。Agent 创建材质时应提供测试几何、预览材质、清晰的输入属性名、mask 可视化和可回退分支。使用 attribute mask 混合材质前，要确认属性存在、范围是 0-1 或明确归一化、插值域符合预期（point/prim/vertex/detail），并在 Geometry Spreadsheet 或 visualizer 中检查。triplanar 适合减少 UV 依赖，但高频纹理、displacement 和低分辨率几何会暴露拉伸、接缝或 tessellation 不足。
+
+材质教学和自动建网都应保持“小步验证”：先做一个可看的基础材质，再逐步加入纹理、位移、程序噪声和混合逻辑。不要一次生成巨大的不可读 shader graph；复杂材质应按功能分组命名，例如 base、texture、noise、displacement、mask、blend、preview。
+
+## 本次视频学习证据边界
+
+已确认的视频元数据包括：`How To Train Your Flame | Houdini 21 | Jeff Guttin`、`Sexy Fires Will Not Burn Your Hands! | Attila Torok | SIGGRAPH HIVE 2022`、`Building ML Volume Upres | Jakob Ringler | Equinox 2025`、`【Houdini 21 新機能】Copernicusの新機能COP Pyroの紹介【爆速シミュレーション】`、`Houdini: a not THAT bad approach to fire`、`[Beginner Friendly] Houdini: How I wish I had learned it - Lesson 02`，以及 Bilibili 上艺小月发布的两条火焰视频。Bilibili 两条分别约 177 秒和 174 秒，且公开字幕列表为空。
+
+本次环境中，`yt-dlp` 和 `youtube-transcript-api` 均被 YouTube 登录/反机器人限制阻断，公开视频页面也未暴露 captionTracks；因此未能生成每个 YouTube 视频从 00:00 到结尾的逐段转写覆盖表。为避免错误入库，本文件不声称任何未逐段核验的视频细节，只沉淀与视频主题一致、并可由仓库 SideFX 文档或公开元数据交叉支撑的通用工作流经验。
+
+## 官方教程复盘：如何补强本经验库
+
+SideFX 官方教程库进一步确认了本经验库的学习路径。Pyro 方向应从 `Dust Interaction` 这类 volume/dust/smoke 基础进入，再学习 Houdini 21 的 `Pyro Thruster`、motion-based emission、custom wind force、Karma XPU/volume AOV 和 COPs Pyro Reveal。Agent 在推荐教程时，应按“基础体积 -> 源与速度 -> 外力/微求解器 -> 具体镜头效果 -> 渲染/lookdev”排列。
+
+Copernicus 方向应从 `The Ultimate Copernicus Guide` 或官方 Copernicus 文档理解 context/layers/cables/cooking，再通过 `Building a Fluid Solver in Copernicus` 理解 2D image processing 和 solver feedback，最后学习 `How to Make a Pyro Reveal Effect in COPs`、PBR texturing、heightfield masks、ACES 等实用任务。Agent 不应把 COP Flow 或 COP Pyro 一概解释成完整三维 Pyro 替代品。
+
+AI & ML 方向应区分 Houdini 21 `Machine Learning Tools`、FX artist 训练模型、ML Groom/Sketch/PCA、ONNX 推理、PDG/Stable Diffusion 和 ChatGPT/OpenAI 集成。对 ML Volume Upres，Agent 应继续坚持“低分辨率大形体正确、训练数据成对且覆盖目标分布、验证 loss 和 holdout 镜头通过”这三条入门门槛。
+
+Lookdev/材质方向的官方教程强调 MaterialX/Karma、ACES、primvars、wet maps、tiling fixes、Copernicus texture generation 和 Solaris lighting。Agent 在回答材质问题时，应把材质拆成属性来源、texture/triplanar、displacement/tessellation、mask/primvar、Karma CPU/XPU、ACES/color management 这些检查点。

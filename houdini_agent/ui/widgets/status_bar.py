@@ -2,6 +2,7 @@ from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from .base import PulseIndicator
 from ..i18n import tr
+from ..theme_engine import ThemeEngine
 
 
 # ============================================================
@@ -113,8 +114,9 @@ class UnifiedStatusBar(QtWidgets.QWidget):
         self.setObjectName("unifiedStatusBar")
         self.setVisible(False)
 
-        self._mode = None  # 'thinking' | 'generating' | 'tool' | None
+        self._mode = None  # 'thinking' | 'generating' | 'planning' | 'tool' | 'processed' | None
         self._elapsed = 0.0
+        self._processed_seconds = 0.0
         self._phase = 0.0
 
         # 流光定时器 ~25fps
@@ -182,6 +184,14 @@ class UnifiedStatusBar(QtWidgets.QWidget):
             self._timer.start()
         self.update()
 
+    def show_processed(self, seconds: float):
+        """显示任务完成后的总耗时。"""
+        self._mode = 'processed'
+        self._processed_seconds = max(0.0, seconds)
+        self._timer.stop()
+        self.setVisible(True)
+        self.update()
+
     def hide_tool(self):
         """隐藏工具状态 → 自动切换到 generating 模式（等待下轮 API 响应）"""
         if self._mode == 'tool':
@@ -205,14 +215,23 @@ class UnifiedStatusBar(QtWidgets.QWidget):
             self._paint_planning(event)
         elif self._mode == 'tool':
             self._paint_tool(event)
+        elif self._mode == 'processed':
+            self._paint_processed(event)
+
+    @staticmethod
+    def _fmt_processed_duration(seconds: float) -> str:
+        s = int(seconds)
+        if s < 60:
+            return f"{s}s"
+        return f"{s // 60}m {s % 60}s"
 
     def _paint_thinking(self, event):
         """绘制思考状态 — 流光文字"""
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        text = f"Thinking {self._elapsed:.1f}s" if self._elapsed > 0 else "Thinking..."
-        font = QtGui.QFont(CursorTheme.FONT_BODY, 10)
+        text = tr("thinking.progress", f"{self._elapsed:.1f}s") if self._elapsed > 0 else tr("thinking.init")
+        font = ThemeEngine.font(CursorTheme.FONT_BODY, 13)
         p.setFont(font)
         fm = p.fontMetrics()
         tw = fm.horizontalAdvance(text)
@@ -242,8 +261,8 @@ class UnifiedStatusBar(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        text = "Generating..."
-        font = QtGui.QFont(CursorTheme.FONT_BODY, 10)
+        text = tr("status.generating")
+        font = ThemeEngine.font(CursorTheme.FONT_BODY, 13)
         p.setFont(font)
         fm = p.fontMetrics()
         tw = fm.horizontalAdvance(text)
@@ -274,8 +293,8 @@ class UnifiedStatusBar(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w, h = self.width(), self.height()
         progress = getattr(self, '_planning_progress', '')
-        text = f"Planning... {progress}" if progress else "Planning..."
-        font = QtGui.QFont(CursorTheme.FONT_BODY, 10)
+        text = f"{tr('plan.planning')} {progress}" if progress else tr("plan.planning")
+        font = ThemeEngine.font(CursorTheme.FONT_BODY, 13)
         p.setFont(font)
         fm = p.fontMetrics()
         tw = fm.horizontalAdvance(text)
@@ -306,8 +325,8 @@ class UnifiedStatusBar(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w, h = self.width(), self.height()
         tool_name = getattr(self, '_tool_name', '')
-        text = f"Exec: {tool_name}" if tool_name else "Executing..."
-        font = QtGui.QFont(CursorTheme.FONT_BODY, 10)
+        text = tr("exec.tool", tool_name) if tool_name else tr("exec.running")
+        font = ThemeEngine.font(CursorTheme.FONT_BODY, 13)
         p.setFont(font)
         fm = p.fontMetrics()
         tw = fm.horizontalAdvance(text)
@@ -329,5 +348,22 @@ class UnifiedStatusBar(QtWidgets.QWidget):
             grad.setColorAt(after, QtGui.QColor(212, 190, 140, 0))
         grad.setColorAt(1.0, QtGui.QColor(212, 190, 140, 0))
         p.setPen(QtGui.QPen(QtGui.QBrush(grad), 0))
+        p.drawText(x, y, text)
+        p.end()
+
+    def _paint_processed(self, event):
+        """绘制完成后的静态耗时状态。"""
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        duration = self._fmt_processed_duration(getattr(self, '_processed_seconds', 0.0))
+        text = f"{tr('status.processed')} {duration} >"
+        font = ThemeEngine.font(CursorTheme.FONT_BODY, 13)
+        p.setFont(font)
+        fm = p.fontMetrics()
+        tw = fm.horizontalAdvance(text)
+        x = (w - tw) // 2
+        y = (h + fm.ascent() - fm.descent()) // 2
+        p.setPen(QtGui.QColor(148, 163, 184, 185))
         p.drawText(x, y, text)
         p.end()

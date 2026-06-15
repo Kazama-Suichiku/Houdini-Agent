@@ -32,6 +32,22 @@ class AIClientAgentMixin:
         'set_node_parameter', 'create_wrangle_node',
     })
 
+    # ★ Auto visual checkpoint：场景变更工具 & 阶段完成工具
+    # 场景变更工具仅将视口标记为"待复检"，
+    # 当某个阶段完成工具成功执行时才自动截图，让模型校验阶段结果。
+    _VISUAL_CHECKPOINT_TOOLS = frozenset({
+        'create_node', 'create_nodes_batch', 'connect_nodes',
+        'set_node_parameter', 'batch_set_parameters', 'create_wrangle_node',
+        'delete_node', 'copy_node', 'set_display_flag',
+        'layout_nodes', 'create_network_box', 'add_nodes_to_box',
+        'execute_python', 'run_skill', 'undo_redo',
+    })
+    _VISUAL_PHASE_COMPLETE_TOOLS = frozenset({
+        'verify_and_summarize',
+        'layout_nodes',
+        'set_display_flag',
+    })
+
     # ============================================================
     # Agent Loop（流式版本）
     # ============================================================
@@ -115,7 +131,10 @@ class AIClientAgentMixin:
         consecutive_same_calls = 0  # 连续相同调用计数
         last_call_signature = None
         server_error_retries = 0    # 连续服务端错误重试计数
-        max_server_retries = 3      # 最多重试 3 次服务端错误
+        max_server_retries = self._server_error_max_retries  # 最多重试服务端错误次数（可配置）
+
+        # ★ Auto visual checkpoint：累积本阶段的场景变更工具，阶段完成时自动截图
+        pending_visual_checkpoint_tools = []
 
         # ★ Cursor 风格：同轮去重缓存
         # 如果 AI 在同一 turn 中用相同参数调用相同工具，直接返回缓存结果
@@ -341,7 +360,7 @@ class AIClientAgentMixin:
 
                         elif is_server_transient or is_compress_fail:
                             # ---- 临时服务器错误：先等待重试，不急着裁剪 ----
-                            wait_seconds = 5 * server_error_retries
+                            wait_seconds = min(20, 5 * server_error_retries)
                             if on_content:
                                 on_content(f"\n[服务端暂时不可用，{wait_seconds}秒后重试 ({server_error_retries}/{max_server_retries})...]\n")
                             time.sleep(wait_seconds)
@@ -787,6 +806,104 @@ class AIClientAgentMixin:
                     })
                     print(f"[AI Client] 📸 视口截图已注入消息 ({len(_img_b64)//1024}KB, {'anthropic' if _use_anth else 'openai'} format)")
 
+            # Auto visual checkpoint:
+            # Scene-changing tools only mark the viewport as needing review.
+            # We take the screenshot when a phase-completion tool succeeds, so
+            # the model verifies stage results instead of every individual edit.
+            if any(
+                pc[1] == 'capture_viewport'
+                and isinstance(results_ordered[_ci], dict)
+                and results_ordered[_ci].get('success')
+                for _ci, pc in enumerate(parsed_calls)
+            ):
+                pending_visual_checkpoint_tools = []
+
+            if (
+                supports_vision
+                and not self._stop_event.is_set()
+                and parsed_calls
+                and not any(pc[1] == 'capture_viewport' for pc in parsed_calls)
+            ):
+                _round_changed_tools = []
+                _phase_complete_tools = []
+                for _ri, (_tid, _tn, _ta, _tc) in enumerate(parsed_calls):
+                    _rr = results_ordered[_ri]
+                    if (
+                        _tn in self._VISUAL_CHECKPOINT_TOOLS
+                        and isinstance(_rr, dict)
+                        and _rr.get('success')
+                    ):
+                        _round_changed_tools.append(_tn)
+                    if (
+                        _tn in self._VISUAL_PHASE_COMPLETE_TOOLS
+                        and isinstance(_rr, dict)
+                        and _rr.get('success')
+                    ):
+                        _phase_complete_tools.append(_tn)
+
+                if _round_changed_tools:
+                    pending_visual_checkpoint_tools.extend(_round_changed_tools)
+
+                if pending_visual_checkpoint_tools and _phase_complete_tools:
+                    _auto_args = {"width": 960, "height": 540}
+                    _auto_args_for_ui = {**_auto_args, "_auto": True}
+                    if on_tool_call:
+                        on_tool_call('capture_viewport', _auto_args_for_ui)
+                    try:
+                        _auto_result = self._tool_executor('capture_viewport', **_auto_args)
+                    except Exception as _auto_e:
+                        _auto_result = {
+                            "success": False,
+                            "error": f"Auto visual checkpoint failed: {_auto_e}",
+                        }
+
+                    tool_calls_history.append({
+                        'tool_name': 'capture_viewport',
+                        'arguments': {
+                            **_auto_args_for_ui,
+                            "after_tools": pending_visual_checkpoint_tools,
+                            "phase_complete_tools": _phase_complete_tools,
+                        },
+                        'result': _auto_result,
+                    })
+                    if on_tool_result:
+                        on_tool_result('capture_viewport', _auto_args_for_ui, _auto_result)
+
+                    if isinstance(_auto_result, dict) and _auto_result.get('_viewport_image'):
+                        _img_b64 = _auto_result['_viewport_image']
+                        _img_mt = _auto_result.get('_image_media_type', 'image/jpeg')
+                        _use_anth = self._is_anthropic_protocol(provider, model)
+                        _reason = ", ".join(dict.fromkeys(pending_visual_checkpoint_tools))
+                        _phase = ", ".join(dict.fromkeys(_phase_complete_tools))
+                        working_messages.append({
+                            'role': 'user',
+                            'content': [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "[auto visual checkpoint attached after phase completion: "
+                                        f"{_phase}. Changed tools since last visual check: {_reason}. "
+                                        "First inspect the screenshot for obvious visual "
+                                        "problems, scale/framing issues, missing geometry, or incorrect "
+                                        "display output. If it looks correct, continue or finalize; if not, "
+                                        "fix the Houdini network and verify again.]"
+                                    ),
+                                },
+                                self._build_image_block(_img_b64, _img_mt, _use_anth),
+                            ],
+                        })
+                        print(
+                            f"[AI Client] Auto visual checkpoint injected at phase completion "
+                            f"({_phase}; {len(pending_visual_checkpoint_tools)} pending scene-changing tool(s)) "
+                            f"({len(_img_b64)//1024}KB base64)"
+                        )
+                        pending_visual_checkpoint_tools = []
+                    elif isinstance(_auto_result, dict):
+                        print(
+                            "[AI Client] Auto visual checkpoint skipped: "
+                            f"{_auto_result.get('error') or _auto_result.get('result')}"
+                        )
+
             if should_break_tool_limit:
                 return {
                     'ok': True,
@@ -1149,7 +1266,7 @@ class AIClientAgentMixin:
         consecutive_same_calls = 0
         last_call_signature = None
         server_error_retries = 0    # 连续服务端错误重试计数
-        max_server_retries = 3      # 最多重试 3 次服务端错误
+        max_server_retries = self._server_error_max_retries  # 最多重试服务端错误次数（可配置）
 
         while iteration < max_iterations:
             if self._stop_event.is_set():
@@ -1262,7 +1379,7 @@ class AIClientAgentMixin:
                             )
                         else:
                             # 临时服务器错误：等待，第2次开始才裁剪
-                            wait_seconds = 5 * server_error_retries
+                            wait_seconds = min(20, 5 * server_error_retries)
                             if on_content:
                                 on_content(f"\n[服务端暂时不可用，{wait_seconds}秒后重试 ({server_error_retries}/{max_server_retries})...]\n")
                             time.sleep(wait_seconds)

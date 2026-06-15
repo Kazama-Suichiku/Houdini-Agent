@@ -210,6 +210,65 @@ class SlashCommandPopup(QtWidgets.QListWidget):
 # 输入区域
 # ============================================================
 
+class InputResizeHandle(QtWidgets.QFrame):
+    """Thin drag handle above the chat input."""
+
+    dragged = QtCore.Signal(int)  # dy since last mouse move
+    resetRequested = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("inputResizeHandle")
+        self.setFixedHeight(8)
+        self.setCursor(QtCore.Qt.SizeVerCursor)
+        self.setToolTip(tr("input.resize.tooltip"))
+        self._dragging = False
+        self._last_global_y = 0
+
+    @staticmethod
+    def _event_global_y(event) -> int:
+        try:
+            return int(event.globalY())
+        except AttributeError:
+            try:
+                return int(event.globalPosition().y())
+            except AttributeError:
+                return int(event.globalPos().y())
+
+    def mousePressEvent(self, event):  # noqa: N802
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = True
+            self._last_global_y = self._event_global_y(event)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if self._dragging:
+            y = self._event_global_y(event)
+            dy = y - self._last_global_y
+            self._last_global_y = y
+            if dy:
+                self.dragged.emit(dy)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        self._dragging = False
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):  # noqa: N802
+        if event.button() == QtCore.Qt.LeftButton:
+            self.resetRequested.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def retranslate(self):
+        self.setToolTip(tr("input.resize.tooltip"))
+
+
 class ChatInput(QtWidgets.QPlainTextEdit):
     """聊天输入框 — 自适应高度，支持自动换行、多行输入、图片粘贴/拖拽
 
@@ -224,7 +283,8 @@ class ChatInput(QtWidgets.QPlainTextEdit):
     slashTriggered = QtCore.Signal(str, QtCore.QRect)  # / 触发补全: (当前前缀, 光标矩形)
 
     _MIN_H = 44
-    _MAX_H = 220
+    _AUTO_MAX_H = 220
+    _MANUAL_MAX_H = 360
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -239,7 +299,10 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         self.setAcceptDrops(True)
         self.setObjectName("chatInput")
         self.setMinimumHeight(self._MIN_H)
-        self.setMaximumHeight(self._MAX_H)
+        self.setMaximumHeight(self._MANUAL_MAX_H)
+        self._manual_height = self._load_manual_height()
+        if self._manual_height is not None:
+            self.setFixedHeight(self._manual_height)
 
         # ★ PySide2 / PySide6 全平台 IME 支持（中文/日文/韩文）
         # ------------------------------------------------------------------
@@ -293,6 +356,13 @@ class ChatInput(QtWidgets.QPlainTextEdit):
 
     def _adjust_height(self):
         """根据视觉行数（含软换行）自动调整高度——向上扩展"""
+        if self._manual_height is not None:
+            h = max(self._MIN_H, min(self._MANUAL_MAX_H, int(self._manual_height)))
+            if h != self.height():
+                self.setFixedHeight(h)
+                self.updateGeometry()
+            return
+
         doc = self.document()
         # 统计所有视觉行（包括 word-wrap 产生的软换行）
         visual_lines = 0
@@ -317,11 +387,43 @@ class ChatInput(QtWidgets.QPlainTextEdit):
         padding = margins.top() + margins.bottom() + frame_w * 2 + 18
         total = content_h + padding
 
-        h = max(self._MIN_H, min(self._MAX_H, total))
+        h = max(self._MIN_H, min(self._AUTO_MAX_H, total))
         if h != self.height():
             self.setFixedHeight(h)
             # 通知父布局重新分配空间
             self.updateGeometry()
+
+    def _load_manual_height(self):
+        try:
+            settings = QtCore.QSettings("HoudiniAI", "Assistant")
+            val = settings.value("input_manual_height", "")
+            if val in ("", None):
+                return None
+            h = int(val)
+            return max(self._MIN_H, min(self._MANUAL_MAX_H, h))
+        except Exception:
+            return None
+
+    def _save_manual_height(self):
+        try:
+            settings = QtCore.QSettings("HoudiniAI", "Assistant")
+            if self._manual_height is None:
+                settings.remove("input_manual_height")
+            else:
+                settings.setValue("input_manual_height", int(self._manual_height))
+        except Exception:
+            pass
+
+    def set_manual_height(self, height: int):
+        self._manual_height = max(self._MIN_H, min(self._MANUAL_MAX_H, int(height)))
+        self.setFixedHeight(self._manual_height)
+        self._save_manual_height()
+        self.updateGeometry()
+
+    def reset_auto_height(self):
+        self._manual_height = None
+        self._save_manual_height()
+        self._adjust_height()
 
     def _hide_completer(self):
         """隐藏补全弹出框"""
@@ -747,8 +849,11 @@ class StopButton(QtWidgets.QPushButton):
     """停止按钮"""
 
     def __init__(self, parent=None):
-        super().__init__("Stop", parent)
+        super().__init__(tr("btn.stop"), parent)
         self.setObjectName("btnStop")
+
+    def retranslate(self):
+        self.setText(tr("btn.stop"))
 
 
 # ============================================================
@@ -759,5 +864,8 @@ class SendButton(QtWidgets.QPushButton):
     """发送按钮"""
 
     def __init__(self, parent=None):
-        super().__init__("Send", parent)
+        super().__init__(tr("btn.send"), parent)
         self.setObjectName("btnSend")
+
+    def retranslate(self):
+        self.setText(tr("btn.send"))

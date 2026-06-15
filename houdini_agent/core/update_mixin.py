@@ -54,8 +54,8 @@ class UpdateMixin:
             action.setChecked(self._optimization_strategy == strat)
             action.triggered.connect(lambda _, s=strat: setattr(self, '_optimization_strategy', s))
 
-        # 显示菜单
-        menu.exec_(self.btn_optimize.mapToGlobal(QtCore.QPoint(0, self.btn_optimize.height())))
+        # 显示菜单：btn_optimize 是隐藏兼容按钮，必须使用可见 overflow 按钮定位
+        menu.exec_(self._overflow_anchor_pos())
 
     def _optimize_now(self):
         """立即优化当前对话"""

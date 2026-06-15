@@ -914,19 +914,48 @@ class HoudiniDocIndex:
                 "copy", "scatter", "颜色", "法线", "位置", "run over",
                 "nearpoint", "pcfind", "addpoint", "setpointattrib",
                 "hou.", "python", "表达式", "hscript", "变量",
+                "official tutorial", "sidefx tutorial", "learning library",
+                "官方教程", "学习库", "学习路径", "教程推荐",
+                "sop", "建模", "程序化建模", "procedural modeling",
+                "geo processing", "sdf", "hda",
                 # Heightfields / Terrain
                 "heightfield", "terrain", "地形", "height", "erosion", "侵蚀",
                 "mask", "蒙版", "layer", "图层",
                 # Copernicus / COP
                 "copernicus", "cop", "图像", "image", "texture", "纹理",
                 "composite", "合成", "filter", "滤镜", "gpu",
+                "cop pyro", "flow block", "flow", "advection",
                 # MPM
                 "mpm", "物理", "模拟", "simulation", "solver", "求解器",
                 "snow", "雪", "soil", "mud", "泥", "concrete", "混凝土",
                 "rubber", "橡胶", "jello", "sand", "沙",
+                "dop", "fx", "vfx", "particles", "pop", "粒子",
+                "rbd", "destruction", "fracture", "破碎", "碎裂", "约束",
+                "constraint", "packed", "collision", "碰撞",
+                "vellum", "cloth", "cfx", "softbody", "soft body", "布料",
+                "软体", "pin", "attach", "stiffness", "grain",
+                "fluid", "flip", "ocean", "water", "fluids", "whitewater",
+                "流体", "液体", "水体", "海洋", "白水", "wetmap", "wet-map",
+                # Pyro / Fire
+                "pyro", "fire", "flame", "smoke", "combustion", "burn",
+                "fuel", "temperature", "density", "velocity", "火焰", "烟雾",
+                "燃烧", "爆炸", "燃料", "温度", "速度场", "体积",
+                "thruster", "custom wind", "dust interaction", "pyro reveal",
                 # Machine Learning
                 "machine learning", "ml", "机器学习", "train", "训练",
                 "inference", "推理", "model", "dataset", "数据集", "onnx",
+                "volume upres", "upres", "ml volume", "体积超分", "体积升采样",
+                "loss", "validation", "overfit", "过拟合", "验证集",
+                # Materials / lookdev
+                "material", "shader", "materialx", "karma", "材质", "着色器",
+                "triplanar", "displacement", "subsurface", "emission",
+                "attribute mask", "mask", "属性遮罩", "位移", "三平面",
+                "solaris", "usd", "lop", "lookdev", "render", "rendering",
+                "渲染", "灯光", "aov", "aces", "xpu", "cpu", "primvar",
+                "primvars", "mtlx", "material x",
+                # PDG / pipeline
+                "pdg", "top", "tops", "wedge", "wedges", "pipeline",
+                "批处理", "资产", "自动化",
                 # Labs
                 "labs", "sidefx labs", "游戏", "game", "gamedev",
                 "baker", "bake", "烘焙", "lod", "impostor", "flowmap",
@@ -937,7 +966,14 @@ class HoudiniDocIndex:
             }
             msg_lower = user_message.lower()
             if any(h in msg_lower for h in _KB_HINTS):
-                kb_results = self.search_knowledge(user_message, top_k=2)
+                route_query = any(h in msg_lower for h in (
+                    "official tutorial", "sidefx tutorial", "learning library",
+                    "官方教程", "学习库", "学习路径", "教程推荐", "官方路线",
+                )) or ("sidefx" in msg_lower and any(h in msg_lower for h in (
+                    "tutorial", "learn", "learning", "path", "route",
+                    "教程", "学习", "路线", "路径", "官方",
+                )))
+                kb_results = self.search_knowledge(user_message, top_k=4 if route_query else 2)
                 for kr in kb_results:
                     if kr["score"] > 0.3:
                         _add(kr["snippet"], kr["name"])

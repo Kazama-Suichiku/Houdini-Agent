@@ -10,6 +10,33 @@ Houdini 20.5 及之前版本自带 PySide2，Houdini 21+ 自带 PySide6。
     from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui, QSettings
 """
 
+import os
+
+
+def _add_houdini_qt_dll_dirs():
+    hfs = os.environ.get("HFS", "")
+    if not hfs or not hasattr(os, "add_dll_directory"):
+        return
+    for path in (
+        os.path.join(hfs, "bin"),
+        os.path.join(hfs, "python311", "Lib", "site-packages-forced", "PySide6"),
+        os.path.join(hfs, "python311", "Lib", "site-packages-forced", "shiboken6"),
+        os.path.join(hfs, "python310", "Lib", "site-packages-forced", "PySide6"),
+        os.path.join(hfs, "python310", "Lib", "site-packages-forced", "shiboken6"),
+        os.path.join(hfs, "python39", "Lib", "site-packages-forced", "PySide2"),
+        os.path.join(hfs, "python39", "Lib", "site-packages-forced", "shiboken2"),
+        os.path.join(hfs, "python37", "Lib", "site-packages-forced", "PySide2"),
+        os.path.join(hfs, "python37", "Lib", "site-packages-forced", "shiboken2"),
+    ):
+        if os.path.isdir(path):
+            try:
+                os.add_dll_directory(path)
+            except Exception:
+                pass
+
+
+_add_houdini_qt_dll_dirs()
+
 try:
     from PySide6 import QtWidgets, QtCore, QtGui          # noqa: F401
     from PySide6.QtCore import QSettings                   # noqa: F401

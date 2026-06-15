@@ -3,6 +3,7 @@ from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import _fmt_duration
 from .plan_dag import PlanDAGWidget
 from ..i18n import tr
+from ..theme_engine import ThemeEngine
 
 
 class StreamingPlanCard(QtWidgets.QWidget):
@@ -52,12 +53,12 @@ class StreamingPlanCard(QtWidgets.QWidget):
         icon_lbl.setFixedWidth(18)
         header.addWidget(icon_lbl)
 
-        self._title_lbl = QtWidgets.QLabel("Planning...")
+        self._title_lbl = QtWidgets.QLabel(tr("plan.planning"))
         self._title_lbl.setObjectName("planViewerTitle")
         self._title_lbl.setWordWrap(True)
         header.addWidget(self._title_lbl, 1)
 
-        self._status_badge = QtWidgets.QLabel("STREAMING")
+        self._status_badge = QtWidgets.QLabel(tr("plan.status.streaming"))
         self._status_badge.setObjectName("planStatusBadge")
         self._status_badge.setAlignment(QtCore.Qt.AlignCenter)
         self._status_badge.setFixedHeight(20)
@@ -86,7 +87,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         self._card_lay.addWidget(self._steps_container)
 
         # ── 正在生成指示器 ──
-        self._loading_lbl = QtWidgets.QLabel("  ⋯ generating steps...")
+        self._loading_lbl = QtWidgets.QLabel(tr("plan.generating_steps"))
         self._loading_lbl.setObjectName("planStepDep")
         self._card_lay.addWidget(self._loading_lbl)
 
@@ -150,7 +151,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
 
         # 检查是否进入 architecture 部分
         if '"architecture"' in accumulated:
-            self._loading_lbl.setText("  ⋯ generating architecture...")
+            self._loading_lbl.setText(tr("plan.generating_architecture"))
 
     def _add_streaming_step(self, step_id: str, text: str):
         """流式阶段：添加一行简化版步骤"""
@@ -199,7 +200,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         self._loading_lbl.setVisible(False)
 
         # 用完整数据刷新标题 + 概述（覆盖流式阶段的可能不完整内容）
-        self._title_lbl.setText(plan_data.get("title", self._current_title or "Plan"))
+        self._title_lbl.setText(plan_data.get("title", self._current_title or tr("plan.title")))
         overview = plan_data.get("overview", "")
         if overview:
             self._overview_lbl.setText(overview)
@@ -293,22 +294,22 @@ class StreamingPlanCard(QtWidgets.QWidget):
                 detail_lay.addWidget(lbl)
             step_tools = s.get("tools", [])
             if step_tools:
-                detail_lay.addWidget(QtWidgets.QLabel(f"Tools: {', '.join(step_tools)}"))
+                detail_lay.addWidget(QtWidgets.QLabel(f"{tr('plan.tools')}: {', '.join(step_tools)}"))
             expected = s.get("expected_result", "")
             if expected:
-                lbl = QtWidgets.QLabel(f"Expected: {expected}")
+                lbl = QtWidgets.QLabel(f"{tr('plan.expected')}: {expected}")
                 lbl.setObjectName("planStepExpected")
                 lbl.setWordWrap(True)
                 detail_lay.addWidget(lbl)
             fallback = s.get("fallback", "")
             if fallback:
-                lbl = QtWidgets.QLabel(f"Fallback: {fallback}")
+                lbl = QtWidgets.QLabel(f"{tr('plan.fallback')}: {fallback}")
                 lbl.setObjectName("planStepFallback")
                 lbl.setWordWrap(True)
                 detail_lay.addWidget(lbl)
             notes = s.get("notes", "")
             if notes:
-                lbl = QtWidgets.QLabel(f"Note: {notes}")
+                lbl = QtWidgets.QLabel(f"{tr('plan.note')}: {notes}")
                 lbl.setObjectName("planStepNotes")
                 lbl.setWordWrap(True)
                 detail_lay.addWidget(lbl)
@@ -331,13 +332,13 @@ class StreamingPlanCard(QtWidgets.QWidget):
             from .plan_viewer import PlanViewer
             arch_data = PlanViewer._build_step_dag(steps)
 
-        dag_title = "Architecture" if has_real_arch else "Flow"
+        dag_title = tr("plan.architecture") if has_real_arch else tr("plan.flow")
         dag_label = QtWidgets.QLabel(dag_title)
         dag_label.setObjectName("planSectionHeader")
         dag_header_row.addWidget(dag_label)
         dag_header_row.addStretch()
 
-        self._dag_toggle = QtWidgets.QPushButton("▾ Collapse")
+        self._dag_toggle = QtWidgets.QPushButton(tr("plan.collapse"))
         self._dag_toggle.setObjectName("planDAGToggle")
         self._dag_toggle.setCursor(QtCore.Qt.PointingHandCursor)
         self._dag_toggle.setFixedHeight(20)
@@ -377,7 +378,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         btn_lay.setSpacing(8)
         btn_lay.addStretch()
 
-        self._btn_reject = QtWidgets.QPushButton("Reject")
+        self._btn_reject = QtWidgets.QPushButton(tr("plan.reject"))
         self._btn_reject.setObjectName("planBtnReject")
         self._btn_reject.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_reject.setFixedHeight(28)
@@ -385,7 +386,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         self._btn_reject.clicked.connect(self._do_reject)
         btn_lay.addWidget(self._btn_reject)
 
-        self._btn_confirm = QtWidgets.QPushButton("Confirm")
+        self._btn_confirm = QtWidgets.QPushButton(tr("plan.confirm"))
         self._btn_confirm.setObjectName("planBtnConfirm")
         self._btn_confirm.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_confirm.setFixedHeight(28)
@@ -408,7 +409,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         if self._btn_confirm:
             self._btn_confirm.setEnabled(False)
             self._btn_reject.setEnabled(False)
-            self._btn_confirm.setText("✓ Confirmed")
+            self._btn_confirm.setText(tr("plan.confirmed"))
         self._refresh_ui()
 
     def set_rejected(self):
@@ -417,7 +418,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
         if self._btn_confirm:
             self._btn_confirm.setEnabled(False)
             self._btn_reject.setEnabled(False)
-            self._btn_reject.setText("✗ Rejected")
+            self._btn_reject.setText(tr("plan.rejected"))
         self._refresh_ui()
 
     def update_step_status(self, step_id: str, status: str, result_summary: str = ""):
@@ -467,7 +468,7 @@ class StreamingPlanCard(QtWidgets.QWidget):
             return
         collapsed = not self._dag_widget._collapsed
         self._dag_widget.set_collapsed(collapsed)
-        self._dag_toggle.setText("▸ Expand" if collapsed else "▾ Collapse")
+        self._dag_toggle.setText(tr("plan.expand") if collapsed else tr("plan.collapse"))
         if collapsed:
             self._dag_scroll.setFixedHeight(0)
         else:
@@ -486,18 +487,18 @@ class StreamingPlanCard(QtWidgets.QWidget):
     def _refresh_ui(self):
         status = self._plan.get("status", "draft")
         badge_map = {
-            "draft":     ("DRAFT",     "#64748b"),
-            "confirmed": ("CONFIRMED", "#a78bfa"),
-            "executing": ("EXECUTING", "#3b82f6"),
-            "completed": ("COMPLETED", "#10b981"),
-            "rejected":  ("REJECTED",  "#ef4444"),
+            "draft":     (tr("plan.status.draft"),     "#64748b"),
+            "confirmed": (tr("plan.status.confirmed"), "#a78bfa"),
+            "executing": (tr("plan.status.executing"), "#3b82f6"),
+            "completed": (tr("plan.status.completed"), "#10b981"),
+            "rejected":  (tr("plan.status.rejected"),  "#ef4444"),
         }
-        text, color = badge_map.get(status, ("DRAFT", "#64748b"))
+        text, color = badge_map.get(status, (tr("plan.status.draft"), "#64748b"))
         self._status_badge.setText(text)
         self._status_badge.setStyleSheet(
             f"color: {color}; background: rgba(0,0,0,0.3); "
             f"border: 1px solid {color}; border-radius: 4px; "
-            f"font-size: 10px; padding: 1px 8px; font-weight: bold;"
+            f"font-size: {ThemeEngine.scaled_px(10)}px; padding: 1px 8px; font-weight: bold;"
         )
         if self._btn_row:
             show = status == "draft" and not self._confirmed and not self._rejected

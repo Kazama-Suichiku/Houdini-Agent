@@ -1,6 +1,7 @@
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from ..i18n import tr
+from ..theme_engine import ThemeEngine
 
 
 class _BarWidget(QtWidgets.QWidget):
@@ -219,7 +220,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         row_h.setContentsMargins(4, 3, 4, 3)
         row_h.setSpacing(2)
 
-        font_size = "10px" if is_header else "11px"
+        font_size = f"{ThemeEngine.scaled_px(10 if is_header else 11)}px"
         fg = CursorTheme.TEXT_MUTED if is_header else CursorTheme.TEXT_PRIMARY
         weight = "bold" if is_header else "normal"
         font_family = f"font-family:'Consolas','Monaco',monospace;" if not is_header else ""

@@ -2,6 +2,7 @@ import json
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from ..i18n import tr
+from ..theme_engine import ThemeEngine
 
 
 class PluginManagerDialog(QtWidgets.QDialog):
@@ -120,7 +121,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
         skill_dir_lay.setContentsMargins(10, 6, 10, 6)
         skill_dir_lay.setSpacing(8)
         skill_dir_icon = QtWidgets.QLabel("📁")
-        skill_dir_icon.setStyleSheet("background: transparent; font-size: 13px;")
+        skill_dir_icon.setStyleSheet(f"background: transparent; font-size: {ThemeEngine.scaled_px(13)}px;")
         skill_dir_lay.addWidget(skill_dir_icon)
         skill_dir_lbl = QtWidgets.QLabel(tr('plugin.skill_dir_label'))
         skill_dir_lbl.setObjectName("pmSubLabel")
@@ -210,7 +211,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
             ev.setAlignment(QtCore.Qt.AlignCenter)
 
             icon_lbl = QtWidgets.QLabel("🔌")
-            icon_lbl.setStyleSheet("font-size: 28px; background: transparent;")
+            icon_lbl.setStyleSheet(f"font-size: {ThemeEngine.scaled_px(28)}px; background: transparent;")
             icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
             ev.addWidget(icon_lbl)
 
@@ -249,7 +250,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
         dot.setFixedWidth(12)
         dot.setStyleSheet(
             f"color: {'#6ecf72' if enabled else '#5a5040'}; "
-            f"font-size: 8px; background: transparent;"
+            f"font-size: {ThemeEngine.scaled_px(8)}px; background: transparent;"
         )
         dot.setAlignment(QtCore.Qt.AlignCenter)
         h.addWidget(dot)
@@ -264,7 +265,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
 
         name_lbl = QtWidgets.QLabel(
             f"<span style='font-weight:600; color:#e0d4c0'>{name}</span>"
-            f"  <span style='color:#7a6e5e; font-size:10px'>v{version}</span>"
+            f"  <span style='color:#7a6e5e; font-size:{ThemeEngine.scaled_px(10)}px'>v{version}</span>"
         )
         name_lbl.setObjectName("pmCardName")
         left.addWidget(name_lbl)
@@ -560,7 +561,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
             ev.setAlignment(QtCore.Qt.AlignCenter)
 
             icon_lbl = QtWidgets.QLabel("🧠")
-            icon_lbl.setStyleSheet("font-size: 28px; background: transparent;")
+            icon_lbl.setStyleSheet(f"font-size: {ThemeEngine.scaled_px(28)}px; background: transparent;")
             icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
             ev.addWidget(icon_lbl)
 
@@ -598,7 +599,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
         # 图标
         icon_lbl = QtWidgets.QLabel("🧠")
         icon_lbl.setFixedWidth(20)
-        icon_lbl.setStyleSheet("font-size: 14px; background: transparent;")
+        icon_lbl.setStyleSheet(f"font-size: {ThemeEngine.scaled_px(14)}px; background: transparent;")
         icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
         h.addWidget(icon_lbl)
 

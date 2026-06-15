@@ -197,12 +197,13 @@ class AIClientStreamingMixin:
         解析 Anthropic SSE 事件流，yield 与 OpenAI 分支相同的内部 chunk 格式。
         """
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if (provider or '').lower() == 'custom' else model
 
         # 消息转换
         system_text, anth_messages = self._convert_messages_to_anthropic(messages)
 
         payload: Dict[str, Any] = {
-            'model': model,
+            'model': request_model,
             'messages': anth_messages,
             'max_tokens': max_tokens or 16384,
             'stream': True,
@@ -230,19 +231,19 @@ class AIClientStreamingMixin:
 
         # 请求头（Anthropic 格式）
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'Accept': 'text/event-stream',
             'x-api-key': api_key,
             'anthropic-version': '2023-06-01',
         }
 
-        print(f"[AI Client] Anthropic protocol: {api_url} model={model}")
+        print(f"[AI Client] Anthropic protocol: {api_url} model={request_model}")
 
         for attempt in range(self._max_retries):
             try:
                 with self._http_session.post(
                     api_url,
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),
@@ -488,10 +489,11 @@ class AIClientStreamingMixin:
                         timeout: int = 60) -> Dict[str, Any]:
         """Anthropic Messages 协议的非流式 Chat。"""
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if (provider or '').lower() == 'custom' else model
         system_text, anth_messages = self._convert_messages_to_anthropic(messages)
 
         payload: Dict[str, Any] = {
-            'model': model,
+            'model': request_model,
             'messages': anth_messages,
             'max_tokens': max_tokens,
         }
@@ -505,7 +507,7 @@ class AIClientStreamingMixin:
                 payload['tool_choice'] = {'type': 'auto'}
 
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'x-api-key': api_key,
             'anthropic-version': '2023-06-01',
         }
@@ -513,7 +515,7 @@ class AIClientStreamingMixin:
         for attempt in range(self._max_retries):
             try:
                 response = self._http_session.post(
-                    api_url, json=payload, headers=headers,
+                    api_url, data=self._json_body(payload), headers=headers,
                     timeout=timeout, proxies={'http': None, 'https': None}
                 )
                 response.raise_for_status()
@@ -583,7 +585,7 @@ class AIClientStreamingMixin:
             return
 
         provider = (provider or 'openai').lower()
-        api_key = self._get_api_key(provider)
+        api_key = self._get_api_key(provider, model)
 
         # Ollama / Custom（无 Key）不需要 API Key 验证
         if provider not in ('ollama', 'custom') and not api_key:
@@ -601,9 +603,10 @@ class AIClientStreamingMixin:
             return
 
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if provider == 'custom' else model
 
         payload = {
-            'model': model,
+            'model': request_model,
             'messages': messages,
             'temperature': temperature,
             'stream': True,
@@ -640,7 +643,7 @@ class AIClientStreamingMixin:
 
         # 构建请求头
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'Accept': 'text/event-stream',
         }
 
@@ -659,7 +662,7 @@ class AIClientStreamingMixin:
             try:
                 with self._http_session.post(
                     api_url,
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),  # (连接超时, 读取超时)
@@ -998,12 +1001,14 @@ class AIClientStreamingMixin:
             return {'ok': False, 'error': '需要安装 requests 库'}
 
         provider = (provider or 'openai').lower()
-        api_key = self._get_api_key(provider)
+        api_key = self._get_api_key(provider, model)
         if not api_key and provider not in ('ollama', 'custom'):
             return {'ok': False, 'error': f'缺少 API Key'}
 
+        request_model = self._get_custom_model_name(model) if provider == 'custom' else model
+
         payload = {
-            'model': model,
+            'model': request_model,
             'messages': messages,
             'temperature': temperature,
         }
@@ -1028,7 +1033,7 @@ class AIClientStreamingMixin:
             payload['tool_choice'] = tool_choice
 
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
         }
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
@@ -1051,7 +1056,7 @@ class AIClientStreamingMixin:
             try:
                 response = self._http_session.post(
                     self._get_api_url(provider, model),
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     timeout=timeout,
                     proxies={'http': None, 'https': None}
