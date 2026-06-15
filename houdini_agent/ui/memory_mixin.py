@@ -36,7 +36,6 @@ class MemoryMixin:
                 self._reflection_module = get_reflection_module()
                 self._growth_tracker = get_growth_tracker()
                 self._memory_initialized = True
-                self._save_memory_enabled_pref(True)
                 print(f"[Memory] 长期记忆系统已初始化 (enabled={self._memory_enabled}): "
                       f"{self._memory_store.get_stats()}")
             except Exception as e:
@@ -50,39 +49,35 @@ class MemoryMixin:
 
     @staticmethod
     def _load_memory_enabled_pref() -> bool:
-        """长期记忆始终开启，同时覆盖旧版本保存过的关闭状态。"""
+        """从 QSettings 加载记忆开关（默认 False = 关闭）。"""
         settings = QSettings("HoudiniAI", "Assistant")
-        settings.setValue("memory_enabled", True)
-        return True
+        val = settings.value("memory_enabled", False)
+        if isinstance(val, str):
+            return val.lower() == 'true'
+        return bool(val)
 
     def _save_memory_enabled_pref(self, enabled: bool):
         settings = QSettings("HoudiniAI", "Assistant")
-        settings.setValue("memory_enabled", True)
+        settings.setValue("memory_enabled", bool(enabled))
 
     def _is_memory_active(self) -> bool:
         """记忆相关钩子的统一短路条件。
 
-        True 时注入 L0 核心记忆、激活分层检索、反思、睡眠以及
-        暴露 search_memory 工具。启动初始化完成后该状态会保持开启。
+        True 时才注入 L0 核心记忆、激活分层检索、反思、睡眠以及
+        暴露 search_memory 工具；False 时完全关闭。
         """
         return bool(self._memory_enabled and self._memory_initialized and self._memory_store)
 
     def set_memory_enabled(self, enabled: bool):
-        """保持记忆系统开启。保留入口是为了兼容旧菜单和旧调用。"""
+        """切换记忆系统全局开关并持久化。"""
         from .i18n import tr
-        requested_enabled = bool(enabled)
-        enabled = True
+        enabled = bool(enabled)
         if enabled == self._memory_enabled:
-            if not requested_enabled:
-                try:
-                    self._addStatus.emit(tr('memory.toggle.disabled'))
-                except Exception:
-                    pass
             return
         self._memory_enabled = enabled
         self._save_memory_enabled_pref(enabled)
         # 状态栏提示
-        key = 'memory.toggle.enabled' if requested_enabled else 'memory.toggle.disabled'
+        key = 'memory.toggle.enabled' if enabled else 'memory.toggle.disabled'
         try:
             self._addStatus.emit(tr(key))
         except Exception:

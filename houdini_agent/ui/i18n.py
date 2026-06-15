@@ -789,9 +789,9 @@ _ZH = {
 
     # ===== Memory Toggle (global switch) =====
     'memory.menu_label': '长期记忆系统',
-    'memory.menu_tooltip': '长期记忆与工作流经验沉淀始终开启；经验会先进入审阅队列，人工晋升后才写入长期记忆。',
-    'memory.toggle.enabled': '长期记忆系统保持开启',
-    'memory.toggle.disabled': '长期记忆系统保持开启，不能关闭',
+    'memory.menu_tooltip': '启用后，AI 会积累经验并在对话中注入历史偏好；关闭后每次对话都是全新的。默认关闭。',
+    'memory.toggle.enabled': '已启用长期记忆系统',
+    'memory.toggle.disabled': '已关闭长期记忆系统（本次及后续对话不再注入历史经验）',
     'cook.menu_label': 'Cook 实时模式',
     'cook.menu_tooltip': '开启（默认）：保持 Auto 更新，工具执行后同步计算并反馈 cook 耗时，可实时看到视口变化。关闭：Agent 运行期间切换为 Manual 更新，防止重型节点 cook 阻塞界面。',
     'cook.mode_realtime': '实时模式（Auto + 同步 cook）',
@@ -1558,9 +1558,9 @@ _EN = {
 
     # ===== Memory Toggle (global switch) =====
     'memory.menu_label': 'Long-Term Memory',
-    'memory.menu_tooltip': 'Long-term memory and workflow experience capture stay on. Experience is queued for review before promotion.',
-    'memory.toggle.enabled': 'Long-term memory remains enabled',
-    'memory.toggle.disabled': 'Long-term memory remains enabled and cannot be disabled',
+    'memory.menu_tooltip': 'When enabled, the assistant accumulates experience and injects past preferences into each chat. When off, every conversation starts fresh. Off by default.',
+    'memory.toggle.enabled': 'Long-term memory enabled',
+    'memory.toggle.disabled': 'Long-term memory disabled (no past experience will be injected going forward)',
     'cook.menu_label': 'Realtime Cook',
     'cook.menu_tooltip': 'On (default): keep Auto update; after each tool the display nodes are cooked synchronously and the cook time is reported, so you see viewport changes live. Off: switch to Manual update while the agent runs, preventing heavy-node cooks from freezing the UI.',
     'cook.mode_realtime': 'Realtime (Auto + sync cook)',
