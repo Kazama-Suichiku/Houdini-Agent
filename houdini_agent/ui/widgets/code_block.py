@@ -31,7 +31,6 @@ class CodeBlockWidget(QtWidgets.QFrame):
 
     def __init__(self, code: str, language: str = "", parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(0)
         self._code = code
         self._lang = language.lower()
         self._line_count = code.count('\n') + 1
@@ -96,17 +95,15 @@ class CodeBlockWidget(QtWidgets.QFrame):
         # ---- code area ----
         self._code_edit = QtWidgets.QTextEdit()
         self._code_edit.setReadOnly(True)
-        self._code_edit.setMinimumWidth(0)
-        self._code_edit.setLineWrapMode(QtWidgets.QTextEdit.WidgetWidth)
-        self._code_edit.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self._code_edit.setLineWrapMode(QtWidgets.QTextEdit.NoWrap)
         self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self._code_edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._code_edit.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self._code_edit.setObjectName("codeBlockEdit")
 
         highlighted = self._highlight()
         code_html = self._add_line_numbers(highlighted) if self._show_line_numbers else highlighted
         self._code_edit.setHtml(
-            f'<pre style="margin:0;white-space:pre-wrap;">{code_html}</pre>'
+            f'<pre style="margin:0;white-space:pre;">{code_html}</pre>'
         )
         # auto-height (capped)
         doc = self._code_edit.document()
@@ -125,25 +122,6 @@ class CodeBlockWidget(QtWidgets.QFrame):
             self._code_edit.setFixedHeight(min(self._full_h, self._MAX_HEIGHT))
 
         layout.addWidget(self._code_edit)
-        QtCore.QTimer.singleShot(0, self._update_code_height)
-
-    def _update_code_height(self):
-        doc = self._code_edit.document()
-        doc.setTextWidth(max(120, self._code_edit.viewport().width()))
-        doc.adjustSize()
-        self._full_h = int(doc.size().height()) + 20
-        if self._collapsed:
-            self._code_edit.setFixedHeight(min(self._collapsed_h, self._MAX_HEIGHT))
-            self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        else:
-            self._code_edit.setFixedHeight(min(self._full_h, self._MAX_HEIGHT))
-            self._code_edit.setVerticalScrollBarPolicy(
-                QtCore.Qt.ScrollBarAsNeeded if self._full_h > self._MAX_HEIGHT else QtCore.Qt.ScrollBarAlwaysOff
-            )
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_code_height()
 
     def _add_line_numbers(self, highlighted_code: str) -> str:
         """为高亮代码添加行号（使用 HTML table 布局）"""
@@ -177,7 +155,6 @@ class CodeBlockWidget(QtWidgets.QFrame):
             else:
                 self._code_edit.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
             self._toggle_btn.setText("收起")
-        QtCore.QTimer.singleShot(0, self._update_code_height)
 
     # --- helpers ---
     def _is_vex(self) -> bool:
@@ -259,8 +236,6 @@ class RichContentWidget(QtWidgets.QWidget):
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(0)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)  # 段落间距由 HTML margin 控制
@@ -270,8 +245,6 @@ class RichContentWidget(QtWidgets.QWidget):
         for seg in segments:
             if seg[0] == 'text':
                 lbl = QtWidgets.QLabel()
-                lbl.setMinimumWidth(0)
-                lbl.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
                 lbl.setWordWrap(True)
                 lbl.setTextFormat(QtCore.Qt.RichText)
                 lbl.setOpenExternalLinks(False)  # 我们自己处理链接
@@ -292,7 +265,6 @@ class RichContentWidget(QtWidgets.QWidget):
                 img_url = seg[1]
                 img_alt = seg[2] if len(seg) > 2 else ''
                 img_lbl = QtWidgets.QLabel()
-                img_lbl.setMinimumWidth(0)
                 img_lbl.setObjectName("richImage")
                 img_lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
                 img_lbl.setWordWrap(False)

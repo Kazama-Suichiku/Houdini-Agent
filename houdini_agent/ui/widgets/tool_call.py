@@ -93,10 +93,8 @@ class ExecutionSection(CollapsibleSection):
 
     def __init__(self, parent=None):
         super().__init__(tr('exec.running'), icon="", collapsed=True, parent=parent)
-        self.setMinimumWidth(0)
         self._tool_calls: List[ToolCallItem] = []
         self._start_time = time.time()
-        self._finalized = False
 
         # 更新标题样式
         self.header.setObjectName("execHeader")
@@ -109,14 +107,6 @@ class ExecutionSection(CollapsibleSection):
         self.content_layout.addWidget(item)
         self._update_title()
         return item
-
-    def is_complete(self) -> bool:
-        """Return True once all visible tool calls in this section have results."""
-        return bool(self._tool_calls) and all(item._result is not None for item in self._tool_calls)
-
-    def add_detail_widget(self, widget: QtWidgets.QWidget):
-        """Attach operation details to this execution block so they collapse together."""
-        self.content_layout.addWidget(widget)
 
     def set_tool_result(self, tool_name: str, result: str, success: bool = True):
         """设置工具结果"""
@@ -139,9 +129,6 @@ class ExecutionSection(CollapsibleSection):
 
     def finalize(self):
         """完成执行"""
-        if self._finalized:
-            return
-        self._finalized = True
         elapsed = time.time() - self._start_time
         total = len(self._tool_calls)
 

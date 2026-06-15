@@ -20,97 +20,6 @@ from .i18n import tr
 class StreamingMixin:
     """流式输出 + <think> 标签解析 + 思考面板管理"""
 
-    _RETRY_NOTICE_KEYWORDS = (
-        '服务端暂时不可用',
-        '上下文超限',
-        '连续出错',
-    )
-
-    def _split_retry_notices(self, text: str) -> tuple:
-        if not text:
-            return "", []
-        normal_parts = []
-        notices = []
-        for line in text.splitlines(keepends=True):
-            stripped = line.strip()
-            is_notice = (
-                stripped.startswith('[')
-                and stripped.endswith(']')
-                and any(keyword in stripped for keyword in self._RETRY_NOTICE_KEYWORDS)
-            )
-            if is_notice:
-                notices.append(stripped)
-            else:
-                normal_parts.append(line)
-        return ''.join(normal_parts), notices
-
-    def _append_retry_notices(self, resp, notices: list):
-        if not notices:
-            return
-        lines = getattr(resp, '_retry_notice_lines', None)
-        if lines is None:
-            lines = []
-            setattr(resp, '_retry_notice_lines', lines)
-        lines.extend(notices)
-
-        section = getattr(resp, '_retry_notice_section', None)
-        label = getattr(resp, '_retry_notice_label', None)
-        try:
-            if section is None:
-                section = resp.add_collapsible(tr('retry.log_title', len(lines)), '')
-                setattr(resp, '_retry_notice_section', section)
-                item = section.content_layout.itemAt(0)
-                label = item.widget() if item else None
-                setattr(resp, '_retry_notice_label', label)
-            section.set_title(tr('retry.log_title', len(lines)))
-            if label is not None:
-                label.setText('\n'.join(lines))
-        except RuntimeError:
-            pass
-
-    @staticmethod
-    def _is_internal_viewport_message(msg: dict) -> bool:
-        """Return True for model-only viewport image prompts that should not render as chat."""
-        if msg.get('role') != 'user':
-            return False
-        content = msg.get('content')
-        if not isinstance(content, list):
-            return False
-        text = '\n'.join(
-            part.get('text', '') for part in content
-            if isinstance(part, dict) and part.get('type') == 'text'
-        )
-        return (
-            '[viewport snapshot attached' in text
-            or '[auto visual checkpoint attached' in text
-        )
-
-    @staticmethod
-    def _visible_viewport_message(msg: dict) -> dict:
-        """Convert an internal viewport-analysis prompt into a visible chat snapshot."""
-        if msg.get('role') != 'user':
-            return msg
-        content = msg.get('content')
-        if not isinstance(content, list):
-            return msg
-
-        text = '\n'.join(
-            part.get('text', '') for part in content
-            if isinstance(part, dict) and part.get('type') == 'text'
-        )
-        if '[auto visual checkpoint attached' in text:
-            label = '[Auto viewport verification]'
-        elif '[viewport snapshot attached' in text:
-            label = '[Viewport snapshot]'
-        else:
-            return msg
-
-        visible_parts = [{"type": "text", "text": label}]
-        for part in content:
-            if isinstance(part, dict) and part.get('type') == 'image_url':
-                visible_parts.append(part)
-        return {'role': 'user', 'content': visible_parts}
-
     def _on_append_content(self, text: str):
         """处理内容追加（主线程槽函数）
 
@@ -121,27 +30,15 @@ class StreamingMixin:
         resp = self._agent_response or self._current_response
         if not text or not resp:
             return
-        text, retry_notices = self._split_retry_notices(text)
         # ★ 修复：不丢弃包含换行符的 chunk
         # 纯换行符（\n\n）是 Markdown 段落分隔的关键信号，
         # 丢弃它们会导致多段内容粘连在一起
-        if retry_notices and not text.strip():
-            self._append_retry_notices(resp, retry_notices)
-            return
         if not text.strip() and '\n' not in text:
-            self._append_retry_notices(resp, retry_notices)
             return
         try:
-            self._append_retry_notices(resp, retry_notices)
             # ★ 内容开始流入 → 隐藏 "Generating..." 状态（如果正在显示）
             if hasattr(self, 'thinking_bar') and getattr(self.thinking_bar, '_mode', None) == 'generating':
                 self.thinking_bar.stop()
-            if (
-                getattr(resp, '_has_thinking', False)
-                and getattr(resp, 'thinking_section', None) is not None
-                and not resp.thinking_section._finalized
-            ):
-                resp.thinking_section.finalize()
             resp.append_content(text)
             self._scroll_agent_to_bottom(force=False)
         except RuntimeError:
@@ -248,7 +145,7 @@ class StreamingMixin:
         """[主线程] 实际执行 finalize 思考区块并停止计时器"""
         try:
             resp = self._agent_response or self._current_response
-            if resp and resp._has_thinking and getattr(resp, 'thinking_section', None) is not None:
+            if resp and resp._has_thinking:
                 if not resp.thinking_section._finalized:
                     resp.thinking_section.finalize()
         except RuntimeError:
@@ -269,8 +166,10 @@ class StreamingMixin:
             return  # Agent 已停止，忽略延迟到达的信号
         try:
             resp = self._agent_response or self._current_response
-            if resp:
-                resp.start_thinking_round()
+            if resp and resp._has_thinking:
+                ts = resp.thinking_section
+                if ts._finalized:
+                    ts.resume()
         except RuntimeError:
             pass  # widget 已被 clear 销毁
         # 重启计时器（如果已停止）
@@ -433,7 +332,7 @@ class StreamingMixin:
                 resp.update_thinking_time()
                 # ★ 同步更新输入框上方思考指示条的时间
                 if hasattr(self, 'thinking_bar') and self.thinking_bar.isVisible():
-                    if resp._has_thinking and getattr(resp, 'thinking_section', None) is not None:
+                    if resp._has_thinking:
                         self.thinking_bar.set_elapsed(resp.thinking_section._total_elapsed())
         except RuntimeError:
             pass  # 控件可能已销毁

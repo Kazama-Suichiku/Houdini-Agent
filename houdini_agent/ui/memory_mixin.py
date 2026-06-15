@@ -11,13 +11,12 @@ Memory Mixin — 长期记忆 + 插件 Hook 系统
 
 import threading
 
-from houdini_agent.qt_compat import QSettings, invoke_on_main
+from houdini_agent.qt_compat import QSettings
 
 from ..utils.memory_store import get_memory_store
 from ..utils.reward_engine import get_reward_engine
 from ..utils.reflection import get_reflection_module
 from ..utils.growth_tracker import get_growth_tracker, TaskMetric
-from ..utils.experience_store import get_experience_store
 
 
 class MemoryMixin:
@@ -49,7 +48,7 @@ class MemoryMixin:
 
     @staticmethod
     def _load_memory_enabled_pref() -> bool:
-        """从 QSettings 加载记忆开关（默认 False = 关闭）。"""
+        """从 QSettings 加载记忆开关（默认 False）。"""
         settings = QSettings("HoudiniAI", "Assistant")
         val = settings.value("memory_enabled", False)
         if isinstance(val, str):
@@ -63,20 +62,20 @@ class MemoryMixin:
     def _is_memory_active(self) -> bool:
         """记忆相关钩子的统一短路条件。
 
-        True 时才注入 L0 核心记忆、激活分层检索、反思、睡眠以及
+        True 时才应注入 L0 核心记忆、激活分层检索、反思、睡眠以及
         暴露 search_memory 工具；False 时完全关闭。
         """
         return bool(self._memory_enabled and self._memory_initialized and self._memory_store)
 
     def set_memory_enabled(self, enabled: bool):
         """切换记忆系统全局开关并持久化。"""
-        from .i18n import tr
         enabled = bool(enabled)
         if enabled == self._memory_enabled:
             return
         self._memory_enabled = enabled
         self._save_memory_enabled_pref(enabled)
         # 状态栏提示
+        from .i18n import tr
         key = 'memory.toggle.enabled' if enabled else 'memory.toggle.disabled'
         try:
             self._addStatus.emit(tr(key))
@@ -347,27 +346,3 @@ class MemoryMixin:
             import traceback
             print(f"[Memory] 反思钩子异常: {e}")
             traceback.print_exc()
-
-    def _queue_workflow_experience_candidate(self, session_id: str, history: list):
-        """Always-on workflow experience capture.
-
-        This only creates review candidates. Promotion remains an explicit
-        review action so raw reasoning does not get written directly to memory.
-        """
-        try:
-            candidates = get_experience_store().create_many_from_history(session_id, history)
-            if not candidates:
-                return
-            print(
-                f"[Experience] candidates queued: {len(candidates)} "
-                f"first={candidates[0].id} status={candidates[0].status} "
-                f"quality={candidates[0].quality_score:.2f}"
-            )
-            try:
-                dlg = getattr(self, "_experience_review_dialog", None)
-                if dlg is not None and dlg.isVisible():
-                    invoke_on_main(dlg, "_reload")
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[Experience] 自动沉淀失败: {e}")

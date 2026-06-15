@@ -149,7 +149,7 @@ class PlanMixin:
 
         # 插入到对话流
         try:
-            self._insert_chat_widget(card)
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
         except Exception as e:
             print(f"[AskQuestion] ⚠ 插入失败: {e}")
             q.put(None)
@@ -199,7 +199,7 @@ class PlanMixin:
 
             card = StreamingPlanCard(parent=self.chat_container)
             self._streaming_plan_card = card
-            self._insert_chat_widget(card)
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
             self._scroll_to_bottom(force=True)
         except Exception as e:
             print(f"[Plan] Create streaming card error: {e}")
@@ -254,7 +254,7 @@ class PlanMixin:
                 viewer.planConfirmed.connect(self._on_plan_confirmed)
                 viewer.planRejected.connect(self._on_plan_rejected)
                 self._active_plan_viewer = viewer
-                self._insert_chat_widget(viewer)
+                self.chat_layout.insertWidget(self.chat_layout.count() - 1, viewer)
             self._scroll_to_bottom(force=True)
         except Exception as e:
             print(f"[Plan] Render PlanViewer error: {e}")

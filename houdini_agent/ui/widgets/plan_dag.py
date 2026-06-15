@@ -2,7 +2,6 @@ import math
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from ..i18n import tr
-from ..theme_engine import ThemeEngine
 
 
 class PlanBlock(QtWidgets.QWidget):
@@ -299,7 +298,7 @@ class PlanDAGWidget(QtWidgets.QWidget):
             p.setPen(pen)
             p.drawRoundedRect(grect, 10, 10)
             # 标题
-            title_font = ThemeEngine.font(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 11)
+            title_font = QtGui.QFont(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 8)
             title_font.setWeight(QtGui.QFont.Medium)
             p.setFont(title_font)
             p.setPen(QtGui.QColor(r, g, b, 140))
@@ -366,7 +365,7 @@ class PlanDAGWidget(QtWidgets.QWidget):
             # 连线标签（如果有）
             conn_label = conn.get("label", "")
             if conn_label:
-                lbl_font = ThemeEngine.font(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 9)
+                lbl_font = QtGui.QFont(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 7)
                 p.setFont(lbl_font)
                 lbl_color = QtGui.QColor(border_c_hex)
                 lbl_color.setAlpha(100)
@@ -376,8 +375,8 @@ class PlanDAGWidget(QtWidgets.QWidget):
                 p.drawText(QtCore.QPointF(mid_x + 4, mid_y_lbl), conn_label)
 
         # ── 3) 节点 ──
-        label_font = ThemeEngine.font(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 12)
-        type_font = ThemeEngine.font(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 9)
+        label_font = QtGui.QFont(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 9)
+        type_font = QtGui.QFont(CursorTheme.FONT_BODY.split(",")[0].strip("' "), 7)
 
         for n in self._nodes:
             nid = n["id"]

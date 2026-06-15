@@ -2,7 +2,6 @@ from typing import Optional
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from ..i18n import tr
-from ..theme_engine import ThemeEngine
 
 
 class RulesEditorDialog(QtWidgets.QDialog):
@@ -99,7 +98,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
 
         empty_icon = QtWidgets.QLabel("📝")
         empty_icon.setAlignment(QtCore.Qt.AlignCenter)
-        empty_icon.setStyleSheet(f"font-size: {ThemeEngine.scaled_px(32)}px; background: transparent;")
+        empty_icon.setStyleSheet("font-size: 32px; background: transparent;")
         empty_lay.addWidget(empty_icon)
 
         self._empty_label = QtWidgets.QLabel(tr('rules.empty_hint'))

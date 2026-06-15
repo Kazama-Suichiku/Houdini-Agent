@@ -77,7 +77,7 @@ class TodoList(QtWidgets.QWidget):
         header = QtWidgets.QHBoxLayout()
         header.setSpacing(6)
 
-        self.title_label = QtWidgets.QLabel(tr("todo.title"))
+        self.title_label = QtWidgets.QLabel("Todo")
         self.title_label.setObjectName("todoTitle")
         header.addWidget(self.title_label)
 
@@ -87,7 +87,7 @@ class TodoList(QtWidgets.QWidget):
 
         header.addStretch()
 
-        self.clear_btn = QtWidgets.QPushButton(tr("todo.clear"))
+        self.clear_btn = QtWidgets.QPushButton("Clear")
         self.clear_btn.setFixedHeight(20)
         self.clear_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.clear_btn.setObjectName("todoClearBtn")
@@ -110,10 +110,6 @@ class TodoList(QtWidgets.QWidget):
 
         outer.addWidget(self._card)
         self.setVisible(False)
-
-    def retranslate(self):
-        self.title_label.setText(tr("todo.title"))
-        self.clear_btn.setText(tr("todo.clear"))
 
     def add_todo(self, todo_id: str, text: str, status: str = "pending") -> TodoItem:
         if todo_id in self._todos:

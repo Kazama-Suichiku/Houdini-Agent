@@ -11,12 +11,9 @@ import ssl
 import time
 import re
 from typing import List, Dict, Optional, Any, Callable, Generator, Tuple
-from urllib.parse import quote_plus, urlsplit, urlunsplit
+from urllib.parse import quote_plus
 
-from houdini_agent import configure_text_output
 from shared.common_utils import load_config, save_config
-
-configure_text_output()
 
 # 强制使用本地 lib 目录中的依赖库
 _lib_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'lib')
@@ -24,7 +21,7 @@ if os.path.exists(_lib_path):
     # 将 lib 目录添加到 sys.path 最前面，确保优先使用
     if _lib_path in sys.path:
         sys.path.remove(_lib_path)
-    sys.path.append(_lib_path)
+    sys.path.insert(0, _lib_path)
 
 # 导入 requests
 HAS_REQUESTS = False
@@ -33,87 +30,6 @@ try:
     HAS_REQUESTS = True
 except ImportError:
     pass
-
-
-_CUSTOM_PROVIDER_ENDPOINTS = (
-    '/chat/completions',
-    '/messages',
-    '/models',
-)
-
-
-def _custom_provider_base_path(path: str) -> str:
-    base = (path or '').rstrip('/')
-    lower_base = base.lower()
-    for endpoint in _CUSTOM_PROVIDER_ENDPOINTS:
-        if lower_base.endswith(endpoint):
-            return base[:-len(endpoint)].rstrip('/')
-    return base
-
-
-def _join_endpoint(base_path: str, endpoint: str) -> str:
-    base = _custom_provider_base_path(base_path)
-    return f"{base}{endpoint}" if base else endpoint
-
-
-def normalize_custom_chat_url(api_url: str) -> str:
-    """Accept either an OpenAI-compatible base URL or a full chat endpoint."""
-    raw = (api_url or '').strip()
-    if not raw:
-        return ''
-
-    parts = urlsplit(raw)
-    if not parts.scheme or not parts.netloc:
-        return raw.rstrip('/')
-
-    path = _join_endpoint(parts.path, '/chat/completions')
-
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
-
-
-def normalize_custom_messages_url(api_url: str) -> str:
-    """Accept either an Anthropic base URL or a full Messages endpoint."""
-    raw = (api_url or '').strip()
-    if not raw:
-        return ''
-
-    parts = urlsplit(raw)
-    if not parts.scheme or not parts.netloc:
-        return raw.rstrip('/')
-
-    path = _join_endpoint(parts.path, '/messages')
-
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
-
-
-def normalize_custom_models_url(api_url: str) -> str:
-    """Return the OpenAI-compatible models endpoint for a custom provider URL."""
-    raw = (api_url or '').strip()
-    if not raw:
-        return ''
-
-    parts = urlsplit(raw)
-    if not parts.scheme or not parts.netloc:
-        base = _custom_provider_base_path(raw)
-        return f"{base}/models" if base else 'models'
-
-    path = _join_endpoint(parts.path, '/models')
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
-
-
-def normalize_custom_anthropic_models_url(api_url: str) -> str:
-    """Return the Anthropic-compatible models endpoint for a custom provider URL."""
-    raw = (api_url or '').strip()
-    if not raw:
-        return ''
-
-    parts = urlsplit(raw)
-    if not parts.scheme or not parts.netloc:
-        base = _custom_provider_base_path(raw)
-        return f"{base}/models" if base else 'models'
-
-    path = _join_endpoint(parts.path, '/models')
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 # ============================================================
@@ -1032,19 +948,6 @@ from .ai_client_agent import AIClientAgentMixin
 class AIClient(AIClientContextMixin, AIClientProvidersMixin, AIClientStreamingMixin, AIClientAgentMixin):
     """AI 客户端，支持流式传输、Function Calling、联网搜索"""
 
-    # 用户可配置的网络/服务端重试上限
-    DEFAULT_RETRY_LIMIT = 5
-    MAX_RETRY_LIMIT = 20
-    MIN_RETRY_LIMIT = 1
-
-    @classmethod
-    def clamp_retry_limit(cls, value: Any) -> int:
-        try:
-            retries = int(value)
-        except (TypeError, ValueError):
-            retries = cls.DEFAULT_RETRY_LIMIT
-        return max(cls.MIN_RETRY_LIMIT, min(cls.MAX_RETRY_LIMIT, retries))
-
     def __init__(self, api_key: Optional[str] = None):
         self._api_keys: Dict[str, Optional[str]] = {
             'openai': api_key or self._read_api_key('openai'),
@@ -1064,15 +967,14 @@ class AIClient(AIClientContextMixin, AIClientProvidersMixin, AIClientStreamingMi
         self._ollama_base_url = "http://localhost:11434"
 
         # 网络配置
-        self._max_retries = self.DEFAULT_RETRY_LIMIT
-        self._server_error_max_retries = self.DEFAULT_RETRY_LIMIT
+        self._max_retries = 3
         self._retry_delay = 1.0
         self._chunk_timeout = 60  # Ollama 本地模型可能较慢，增加超时
 
         # ★ 持久化 HTTP Session（连接池 + Keep-Alive，避免每轮重新 TLS 握手）
         self._http_session = requests.Session()
         self._http_session.headers.update({
-            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Type': 'application/json',
         })
 
         # 停止控制（使用 threading.Event 保证线程安全）

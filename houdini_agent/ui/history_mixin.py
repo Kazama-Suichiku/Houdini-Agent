@@ -20,7 +20,6 @@ import time
 from houdini_agent.qt_compat import QtWidgets, QtCore
 
 from .cursor_widgets import PythonShellWidget, SystemShellWidget
-from .theme_engine import ThemeEngine
 
 
 class HistoryMixin:
@@ -144,8 +143,11 @@ class HistoryMixin:
         3. role="tool"（旧缓存格式）
            → 先 add_tool_call 再 set_tool_result（折叠式）
         """
-        # 清空当前显示（保留末尾聊天锚点）
-        self._clear_chat_widgets()
+        # 清空当前显示（保留末尾 stretch）
+        while self.chat_layout.count() > 1:
+            item = self.chat_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
         # 取消之前的分批渲染定时器
         if hasattr(self, '_batch_render_timer') and self._batch_render_timer is not None:
@@ -174,12 +176,13 @@ class HistoryMixin:
             )
             self._batch_placeholder.setObjectName("batchPlaceholder")
             self._batch_placeholder.setStyleSheet(
-                f"color: #64748b; padding: 8px 12px; font-size: {ThemeEngine.scaled_px(12)}px; "
+                "color: #64748b; padding: 8px 12px; font-size: 12px; "
                 "font-style: italic; background: transparent;"
             )
             self._batch_placeholder.setAlignment(QtCore.Qt.AlignCenter)
-            # 插入到聊天锚点之前
-            self._insert_chat_widget(self._batch_placeholder)
+            # 插入到 stretch 之前
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1,
+                                         self._batch_placeholder)
 
             # 渲染最后 _BATCH_INITIAL 组
             self._render_message_groups(groups, early_count, total_groups)
@@ -254,9 +257,6 @@ class HistoryMixin:
         """渲染一个消息组"""
         msg = messages[si]
         role = msg.get('role', '')
-        if self._is_internal_viewport_message(msg):
-            msg = self._visible_viewport_message(msg)
-            role = msg.get('role', '')
         raw_content = msg.get('content', '') or ''
         if isinstance(raw_content, list):
             content = '\n'.join(
@@ -266,33 +266,25 @@ class HistoryMixin:
         else:
             content = raw_content
 
-        if role == 'user' and isinstance(raw_content, list):
-            history_text, history_images = self._extract_multimodal_user_content(raw_content)
-            if history_images:
-                self._add_user_message(history_text or "[Image]", images=history_images, history_range=(si, ei))
-            else:
-                self._render_user_history(history_text or content, history_range=(si, ei))
-
-        elif role == 'user':
-            self._render_user_history(content, history_range=(si, ei))
+        if role == 'user':
+            self._render_user_history(content)
 
         elif role == 'assistant':
             if msg.get('tool_calls'):
                 turn_msgs = messages[si:ei]
-                self._render_native_tool_turn(turn_msgs, history_range=(si, ei))
+                self._render_native_tool_turn(turn_msgs)
             else:
                 tool_msgs = [messages[j] for j in range(si + 1, ei)
                              if messages[j].get('role') == 'tool']
 
                 if content.lstrip().startswith('[工具执行结果]'):
-                    self._render_tool_summary_history(content, msg, history_range=(si, ei))
+                    self._render_tool_summary_history(content, msg)
                 else:
-                    response = self._add_ai_response(history_range=(si, ei))
+                    response = self._add_ai_response()
                     thinking = msg.get('thinking', '')
                     if thinking:
                         response.add_thinking(thinking)
-                        if getattr(response, 'thinking_section', None) is not None:
-                            response.thinking_section.finalize()
+                        response.thinking_section.finalize()
                     self._render_old_tool_msgs(response, tool_msgs)
                     self._restore_shell_widgets(response, msg)
                     response.set_content(content)
@@ -307,7 +299,7 @@ class HistoryMixin:
                     response.status_label.setText(label)
 
         elif role == 'system' and '[历史对话摘要' in content:
-            response = self._add_ai_response(history_range=(si, ei))
+            response = self._add_ai_response()
             response.add_collapsible("历史对话摘要", content)
             response.status_label.setText("历史摘要")
             response.finalize()
@@ -344,8 +336,8 @@ class HistoryMixin:
                 # 将新添加的 widget 移动到正确位置（占位符之前）
                 if added > 0:
                     for _ in range(added):
-                        # 取出最后添加的 widget（在聊天锚点之前）
-                        from_idx = self._chat_end_index() - 1
+                        # 取出最后添加的 widget（在 stretch 之前）
+                        from_idx = self.chat_layout.count() - 2  # -1 是 stretch, -2 是新 widget
                         item = self.chat_layout.takeAt(from_idx)
                         if item and item.widget():
                             self.chat_layout.insertWidget(insert_pos, item.widget())
@@ -428,26 +420,18 @@ class HistoryMixin:
             pass  # 解析失败忽略
 
     # ------------------------------------------------------------------
-    def _render_native_tool_turn(self, turn_msgs: list, history_range: tuple = None):
+    def _render_native_tool_turn(self, turn_msgs: list):
         """渲染 Cursor 风格原生工具调用轮次
 
         turn_msgs 格式：
           assistant(tool_calls) → tool → [assistant(tool_calls) → tool →] ... → assistant(reply)
         静默工具（add_todo/update_todo）不显示在执行列表中，但会恢复 todo 数据。
         """
-        response = self._add_ai_response(history_range=history_range)
+        response = self._add_ai_response()
         tool_count = 0
         final_content = ''
         thinking = ''
         final_msg = {}
-
-        for m in turn_msgs:
-            if m.get('role') == 'assistant' and not m.get('tool_calls') and m.get('thinking'):
-                thinking = m.get('thinking', '')
-                response.add_thinking(thinking)
-                if getattr(response, 'thinking_section', None) is not None:
-                    response.thinking_section.finalize()
-                break
 
         for m in turn_msgs:
             r = m.get('role', '')
@@ -467,7 +451,7 @@ class HistoryMixin:
                 else:
                     # 最终回复 assistant 消息
                     final_content = m.get('content', '') or ''
-                    thinking = thinking or m.get('thinking', '')
+                    thinking = m.get('thinking', '')
                     final_msg = m
             elif r == 'tool':
                 tc_id = m.get('tool_call_id', '')
@@ -480,6 +464,11 @@ class HistoryMixin:
                 success = not t_content.lstrip().startswith('[err]') and 'error' not in t_content[:50].lower()
                 prefix = "[ok] " if success else "[err] "
                 response.add_tool_result(t_name, f"{prefix}{t_content}")
+
+        # 恢复 thinking
+        if thinking:
+            response.add_thinking(thinking)
+            response.thinking_section.finalize()
 
         # 恢复 Shell 折叠面板
         self._restore_shell_widgets(response, final_msg)
@@ -512,7 +501,7 @@ class HistoryMixin:
         return ''
 
     # ------------------------------------------------------------------
-    def _render_user_history(self, content: str, history_range: tuple = None):
+    def _render_user_history(self, content: str):
         """渲染用户历史消息，长上下文自动折叠"""
         # 检查是否包含 [Network structure] 等上下文注入
         split_pos = -1
@@ -530,27 +519,27 @@ class HistoryMixin:
             context_data = content[split_pos:]
             # 显示用户实际文字
             if user_text:
-                self._add_user_message(user_text, history_range=history_range)
+                self._add_user_message(user_text)
             # 上下文放进折叠区域
-            resp = self._add_ai_response(history_range=history_range)
+            resp = self._add_ai_response()
             resp.add_collapsible(header_tag.strip('[]'), context_data)
             resp.status_label.setText("上下文")
             resp.finalize()
             resp.status_label.setText("上下文")
         elif split_pos == 0 and len(content) > 300:
             # 纯上下文（无用户文字），整块折叠
-            resp = self._add_ai_response(history_range=history_range)
+            resp = self._add_ai_response()
             resp.add_collapsible(header_tag.strip('[]'), content)
             resp.status_label.setText("上下文")
             resp.finalize()
             resp.status_label.setText("上下文")
         else:
-            self._add_user_message(content, history_range=history_range)
+            self._add_user_message(content)
 
     # ------------------------------------------------------------------
     _TOOL_LINE_PREFIXES = ('[ok] ', '[err] ', '✅ ', '❌ ')
 
-    def _render_tool_summary_history(self, content: str, msg: dict = None, history_range: tuple = None):
+    def _render_tool_summary_history(self, content: str, msg: dict = None):
         """渲染 [工具执行结果] 格式的 assistant 消息
 
         格式示例：
@@ -562,7 +551,7 @@ class HistoryMixin:
         """
         if msg is None:
             msg = {}
-        response = self._add_ai_response(history_range=history_range)
+        response = self._add_ai_response()
 
         # 先按行分组：以 [ok]/[err]/✅/❌ 开头的行开始新条目，
         # 其他行归到前一条目的续行
@@ -621,8 +610,7 @@ class HistoryMixin:
         thinking = msg.get('thinking', '')
         if thinking:
             response.add_thinking(thinking)
-            if getattr(response, 'thinking_section', None) is not None:
-                response.thinking_section.finalize()
+            response.thinking_section.finalize()
 
         # 恢复正文（[工具执行结果]之后可能还有 AI 正式回复）
         # 找到工具摘要之后的正文部分

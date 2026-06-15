@@ -2,7 +2,6 @@ from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme
 from .plan_dag import PlanDAGWidget
 from ..i18n import tr
-from ..theme_engine import ThemeEngine
 
 
 class PlanViewer(QtWidgets.QWidget):
@@ -54,12 +53,12 @@ class PlanViewer(QtWidgets.QWidget):
         icon_lbl.setFixedWidth(18)
         header.addWidget(icon_lbl)
 
-        self._title_lbl = QtWidgets.QLabel(plan_data.get("title", tr("plan.title")))
+        self._title_lbl = QtWidgets.QLabel(plan_data.get("title", "Plan"))
         self._title_lbl.setObjectName("planViewerTitle")
         self._title_lbl.setWordWrap(True)
         header.addWidget(self._title_lbl, 1)
 
-        self._status_badge = QtWidgets.QLabel(tr("plan.status.draft"))
+        self._status_badge = QtWidgets.QLabel("DRAFT")
         self._status_badge.setObjectName("planStatusBadge")
         self._status_badge.setAlignment(QtCore.Qt.AlignCenter)
         self._status_badge.setFixedHeight(20)
@@ -82,9 +81,9 @@ class PlanViewer(QtWidgets.QWidget):
         if complexity or est_ops:
             meta_parts = []
             if complexity:
-                meta_parts.append(f"{tr('plan.complexity')}: {complexity.upper()}")
+                meta_parts.append(f"Complexity: {complexity.upper()}")
             if est_ops:
-                meta_parts.append(f"{tr('plan.est_operations')}: {est_ops}")
+                meta_parts.append(f"Est. Operations: {est_ops}")
             meta_lbl = QtWidgets.QLabel("  |  ".join(meta_parts))
             meta_lbl.setObjectName("planMetaInfo")
             card_lay.addWidget(meta_lbl)
@@ -187,14 +186,14 @@ class PlanViewer(QtWidgets.QWidget):
             # 工具列表
             tools = s.get("tools", [])
             if tools:
-                tools_lbl = QtWidgets.QLabel(f"{tr('plan.tools')}: {', '.join(tools)}")
+                tools_lbl = QtWidgets.QLabel(f"Tools: {', '.join(tools)}")
                 tools_lbl.setObjectName("planStepTools")
                 detail_lay.addWidget(tools_lbl)
 
             # 预期结果
             expected = s.get("expected_result", "")
             if expected:
-                exp_lbl = QtWidgets.QLabel(f"{tr('plan.expected')}: {expected}")
+                exp_lbl = QtWidgets.QLabel(f"Expected: {expected}")
                 exp_lbl.setObjectName("planStepExpected")
                 exp_lbl.setWordWrap(True)
                 detail_lay.addWidget(exp_lbl)
@@ -202,7 +201,7 @@ class PlanViewer(QtWidgets.QWidget):
             # 回退策略
             fallback = s.get("fallback", "")
             if fallback:
-                fb_lbl = QtWidgets.QLabel(f"{tr('plan.fallback')}: {fallback}")
+                fb_lbl = QtWidgets.QLabel(f"Fallback: {fallback}")
                 fb_lbl.setObjectName("planStepFallback")
                 fb_lbl.setWordWrap(True)
                 detail_lay.addWidget(fb_lbl)
@@ -210,7 +209,7 @@ class PlanViewer(QtWidgets.QWidget):
             # 备注
             notes = s.get("notes", "")
             if notes:
-                notes_lbl = QtWidgets.QLabel(f"{tr('plan.note')}: {notes}")
+                notes_lbl = QtWidgets.QLabel(f"Note: {notes}")
                 notes_lbl.setObjectName("planStepNotes")
                 notes_lbl.setWordWrap(True)
                 detail_lay.addWidget(notes_lbl)
@@ -236,13 +235,13 @@ class PlanViewer(QtWidgets.QWidget):
             # ── 回退：从 steps 的 depends_on 自动生成步骤依赖图 ──
             arch_data = self._build_step_dag(steps)
 
-        dag_title = tr("plan.architecture") if has_real_arch else tr("plan.flow")
+        dag_title = "Architecture" if has_real_arch else "Flow"
         dag_label = QtWidgets.QLabel(dag_title)
         dag_label.setObjectName("planSectionHeader")
         dag_header_row.addWidget(dag_label)
         dag_header_row.addStretch()
 
-        self._dag_toggle = QtWidgets.QPushButton(tr("plan.collapse"))
+        self._dag_toggle = QtWidgets.QPushButton("▾ Collapse")
         self._dag_toggle.setObjectName("planDAGToggle")
         self._dag_toggle.setCursor(QtCore.Qt.PointingHandCursor)
         self._dag_toggle.setFixedHeight(20)
@@ -283,7 +282,7 @@ class PlanViewer(QtWidgets.QWidget):
         btn_lay.setSpacing(8)
         btn_lay.addStretch()
 
-        self._btn_reject = QtWidgets.QPushButton(tr("plan.reject"))
+        self._btn_reject = QtWidgets.QPushButton("Reject")
         self._btn_reject.setObjectName("planBtnReject")
         self._btn_reject.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_reject.setFixedHeight(28)
@@ -291,7 +290,7 @@ class PlanViewer(QtWidgets.QWidget):
         self._btn_reject.clicked.connect(self._do_reject)
         btn_lay.addWidget(self._btn_reject)
 
-        self._btn_confirm = QtWidgets.QPushButton(tr("plan.confirm"))
+        self._btn_confirm = QtWidgets.QPushButton("Confirm")
         self._btn_confirm.setObjectName("planBtnConfirm")
         self._btn_confirm.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_confirm.setFixedHeight(28)
@@ -314,7 +313,7 @@ class PlanViewer(QtWidgets.QWidget):
         self._plan["status"] = "confirmed"
         self._btn_confirm.setEnabled(False)
         self._btn_reject.setEnabled(False)
-        self._btn_confirm.setText(tr("plan.confirmed"))
+        self._btn_confirm.setText("✓ Confirmed")
         self._refresh_ui()
 
     def set_rejected(self):
@@ -323,7 +322,7 @@ class PlanViewer(QtWidgets.QWidget):
         self._plan["status"] = "rejected"
         self._btn_confirm.setEnabled(False)
         self._btn_reject.setEnabled(False)
-        self._btn_reject.setText(tr("plan.rejected"))
+        self._btn_reject.setText("✗ Rejected")
         self._refresh_ui()
 
     def update_step_status(self, step_id: str, status: str, result_summary: str = ""):
@@ -427,7 +426,7 @@ class PlanViewer(QtWidgets.QWidget):
     def _toggle_dag(self):
         collapsed = not self._dag_widget._collapsed
         self._dag_widget.set_collapsed(collapsed)
-        self._dag_toggle.setText(tr("plan.expand") if collapsed else tr("plan.collapse"))
+        self._dag_toggle.setText("▸ Expand" if collapsed else "▾ Collapse")
         # ★ 同步滚动区域高度
         if collapsed:
             self._dag_scroll.setFixedHeight(0)
@@ -446,18 +445,18 @@ class PlanViewer(QtWidgets.QWidget):
     def _refresh_ui(self):
         status = self._plan.get("status", "draft")
         badge_map = {
-            "draft":     (tr("plan.status.draft"),     "#64748b"),
-            "confirmed": (tr("plan.status.confirmed"), "#a78bfa"),
-            "executing": (tr("plan.status.executing"), "#3b82f6"),
-            "completed": (tr("plan.status.completed"), "#10b981"),
-            "rejected":  (tr("plan.status.rejected"),  "#ef4444"),
+            "draft":     ("DRAFT",     "#64748b"),
+            "confirmed": ("CONFIRMED", "#a78bfa"),
+            "executing": ("EXECUTING", "#3b82f6"),
+            "completed": ("COMPLETED", "#10b981"),
+            "rejected":  ("REJECTED",  "#ef4444"),
         }
-        text, color = badge_map.get(status, (tr("plan.status.draft"), "#64748b"))
+        text, color = badge_map.get(status, ("DRAFT", "#64748b"))
         self._status_badge.setText(text)
         self._status_badge.setStyleSheet(
             f"color: {color}; background: rgba(0,0,0,0.3); "
             f"border: 1px solid {color}; border-radius: 4px; "
-            f"font-size: {ThemeEngine.scaled_px(10)}px; padding: 1px 8px; font-weight: bold;"
+            f"font-size: 10px; padding: 1px 8px; font-weight: bold;"
         )
         # 按钮可见性
         show_buttons = status in ("draft", "confirmed") and not self._confirmed and not self._rejected
@@ -579,7 +578,7 @@ class AskQuestionCard(QtWidgets.QFrame):
         btn_row.setContentsMargins(0, 6, 0, 0)
         btn_row.addStretch()
 
-        self._btn_cancel = QtWidgets.QPushButton(tr("ask.skip"))
+        self._btn_cancel = QtWidgets.QPushButton("Skip")
         self._btn_cancel.setObjectName("askQuestionBtnCancel")
         self._btn_cancel.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_cancel.setFixedHeight(28)
@@ -587,7 +586,7 @@ class AskQuestionCard(QtWidgets.QFrame):
         self._btn_cancel.clicked.connect(self._do_cancel)
         btn_row.addWidget(self._btn_cancel)
 
-        self._btn_submit = QtWidgets.QPushButton(tr("ask.submit"))
+        self._btn_submit = QtWidgets.QPushButton("Submit Answer")
         self._btn_submit.setObjectName("askQuestionBtnSubmit")
         self._btn_submit.setCursor(QtCore.Qt.PointingHandCursor)
         self._btn_submit.setFixedHeight(28)
@@ -619,7 +618,7 @@ class AskQuestionCard(QtWidgets.QFrame):
         answers = self._collect_answers()
         self._btn_submit.setEnabled(False)
         self._btn_cancel.setEnabled(False)
-        self._btn_submit.setText(tr("ask.submitted"))
+        self._btn_submit.setText("✓ Submitted")
         self.answered.emit(answers)
 
     def _do_cancel(self):
@@ -628,5 +627,5 @@ class AskQuestionCard(QtWidgets.QFrame):
         self._answered = True
         self._btn_submit.setEnabled(False)
         self._btn_cancel.setEnabled(False)
-        self._btn_cancel.setText(tr("ask.skipped"))
+        self._btn_cancel.setText("Skipped")
         self.cancelled.emit()

@@ -29,7 +29,7 @@ if os.path.exists(_lib_path):
     # 将 lib 目录添加到 sys.path 最前面，确保优先使用
     if _lib_path in sys.path:
         sys.path.remove(_lib_path)
-    sys.path.append(_lib_path)
+    sys.path.insert(0, _lib_path)
 
 # 导入 requests
 try:
@@ -1366,7 +1366,7 @@ class HoudiniMCP(NetworkInspectMixin, NodeOpsMixin, ParamOpsMixin, ExecOpsMixin,
         """搜索长期记忆库 — 跨层级 chunk 检索"""
         query = args.get("query", "")
         print(f"[search_memory] 收到搜索请求: query={query!r}, args={args}")
-        # ★ 防御性守卫：若全局记忆开关关闭（默认关闭），直接返回空结果，
+        # ★ 防御性守卫：若全局记忆开关关闭，直接返回空结果，
         #   防止 agent 绕过工具过滤（例如缓存到的旧 schema）读取记忆。
         try:
             from houdini_agent.qt_compat import QSettings

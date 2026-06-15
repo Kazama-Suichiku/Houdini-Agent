@@ -3,7 +3,6 @@ from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 from .theme import CursorTheme, _fmt_duration
 from .base import CollapsibleSection, PulseIndicator
 from ..i18n import tr
-from ..theme_engine import ThemeEngine
 
 
 # ============================================================
@@ -23,9 +22,9 @@ class ThinkingSection(CollapsibleSection):
     _MAX_HEIGHT_PX = 400
 
     def __init__(self, parent=None):
-        # 历史恢复时默认折叠；实时生成思考内容时由 AIResponse.add_thinking 展开。
-        super().__init__(tr('thinking.init'), icon="", collapsed=True, parent=parent)
-        self.setMinimumWidth(0)
+        # ★ 默认展开（用户要求不自动折叠）；section 整体初始 setVisible(False)，
+        #   首次收到思考内容时 setVisible(True) 即可，内容区已处于展开状态。
+        super().__init__(tr('thinking.init'), icon="", collapsed=False, parent=parent)
         # ★ 防止被父布局拉伸 —— 内容多大就多大
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding,
@@ -38,7 +37,8 @@ class ThinkingSection(CollapsibleSection):
         self._round_count = 0
 
         # ★ 思考内容 — QPlainTextEdit(readOnly)，自带滚动条
-        self._text_font = ThemeEngine.font(CursorTheme.FONT_BODY, 11)
+        self._text_font = QtGui.QFont(CursorTheme.FONT_BODY)
+        self._text_font.setPixelSize(13)
 
         self.thinking_label = QtWidgets.QPlainTextEdit()
         self.thinking_label.setReadOnly(True)
@@ -48,8 +48,6 @@ class ThinkingSection(CollapsibleSection):
         self.thinking_label.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.thinking_label.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.thinking_label.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
-        self.thinking_label.setWordWrapMode(QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere)
-        self.thinking_label.setMinimumWidth(0)
         self.thinking_label.setObjectName("thinkLabel")
         # 初始高度为一行（紧凑），流式输入时会动态增大
         self._line_h = QtGui.QFontMetrics(self._text_font).lineSpacing()
@@ -66,7 +64,6 @@ class ThinkingSection(CollapsibleSection):
         逐块遍历 block.layout().lineCount() 统计真实视觉行数。
         """
         doc = self.thinking_label.document()
-        doc.setTextWidth(max(120, self.thinking_label.viewport().width()))
         visual_lines = 0
         block = doc.begin()
         while block.isValid():
@@ -127,7 +124,8 @@ class ThinkingSection(CollapsibleSection):
         self._accumulated_seconds += (time.time() - self._round_start)
         total = self._accumulated_seconds
         self.set_title(tr('thinking.done', _fmt_duration(total)))
-        self.collapse()
+        # ★ 防御性展开：确保思考区块在任何情况下都保持展开
+        self.expand()
 
 
 # ============================================================
@@ -186,7 +184,7 @@ class ThinkingBar(QtWidgets.QWidget):
         time_str = f"{s}s" if s < 60 else f"{s // 60}m{s % 60:02d}s"
         display = f"  ✦ {tr('thinking.progress', time_str)}"
 
-        font = ThemeEngine.font(CursorTheme.FONT_BODY, 12)
+        font = QtGui.QFont(CursorTheme.FONT_BODY, 9)
         p.setFont(font)
         fm = QtGui.QFontMetrics(font)
         y = (self.height() + fm.ascent() - fm.descent()) // 2

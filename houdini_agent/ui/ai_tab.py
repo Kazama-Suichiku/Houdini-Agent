@@ -122,7 +122,6 @@ class AITab(
     _addNodeOperation = QtCore.Signal(str, object)  # (name, result_dict) ★ 直接传 dict，避免 JSON 序列化/反序列化开销
     _addPythonShell = QtCore.Signal(str, str)  # (code, result_json)
     _addSystemShell = QtCore.Signal(str, str)  # (command, result_json)
-    _addViewportSnapshot = QtCore.Signal(str, str, str)  # (label, base64, media_type)
     _executeToolRequest = QtCore.Signal(str, dict)  # 工具执行请求信号（线程安全）
     _executeToolBatchRequest = QtCore.Signal(list)   # 批量工具执行请求：[(tool_name, kwargs), ...]
     _addThinking = QtCore.Signal(str)  # 思考内容更新信号（线程安全）
@@ -142,27 +141,14 @@ class AITab(
     _updatePlanStep = QtCore.Signal(str, str, str)   # Plan 模式：更新步骤状态 (step_id, status, result_summary)
     _askQuestionRequest = QtCore.Signal()             # Plan 模式：ask_question 请求（参数通过属性传递）
     
-    def __init__(
-        self,
-        parent=None,
-        workspace_dir: Optional[Path] = None,
-        embedded: bool = True,
-        mcp_client=None,
-        bridge_url: str = "",
-    ):
+    def __init__(self, parent=None, workspace_dir: Optional[Path] = None):
         super().__init__(parent)
-        self._embedded_mode = bool(embedded)
-        self._bridge_url = bridge_url or ""
 
         # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）
         print("[AITab] init: begin")
         self.client = AIClient()
-        self._load_retry_preference()
-        self.mcp = mcp_client if mcp_client is not None else HoudiniMCP()
-        self._local_mcp = self.mcp if self._embedded_mode else HoudiniMCP()
+        self.mcp = HoudiniMCP()
         self.mcp.set_stop_event(self.client._stop_event)  # 共享停止事件，使 shell/python 命令可被中断
-        if self._local_mcp is not self.mcp:
-            self._local_mcp.set_stop_event(self.client._stop_event)
         self.client.set_tool_executor(self._execute_tool_with_todo)
         self.client.set_batch_tool_executor(self._execute_tools_batch_in_main_thread)
         
@@ -226,8 +212,8 @@ class AITab(
         self._reflection_module = None
         self._growth_tracker = None
         self._memory_initialized = False
-        # 长期记忆与工作流经验沉淀始终开启。候选经验先进入审阅队列，
-        # 只有用户手动晋升后才写入长期记忆。
+        # 全局开关：默认关闭，避免长期记忆把 agent 锁死在某种工作方式上。
+        # 用户在 Header 溢出菜单（···）中可显式启用，状态持久化到 QSettings。
         self._memory_enabled = self._load_memory_enabled_pref()
 
         # ★ Cook 模式（v1.6）：默认实时模式（保持 Auto + 同步测量 cook 耗时）。
@@ -241,7 +227,7 @@ class AITab(
         self._sleep_msg_counter = 0       # 当前 session 累计用户消息数
         self._sleep_in_progress = False   # 防止并发睡眠
 
-        self._init_memory_system()
+        QtCore.QTimer.singleShot(2000, self._init_memory_system)
         
         # 思考长度限制（已禁用，允许完整思考）
         self._max_thinking_length = float('inf')  # 不限制思考长度
@@ -290,7 +276,6 @@ class AITab(
         self._addNodeOperation.connect(self._on_add_node_operation)
         self._addPythonShell.connect(self._on_add_python_shell)
         self._addSystemShell.connect(self._on_add_system_shell)
-        self._addViewportSnapshot.connect(self._on_add_viewport_snapshot)
         self._executeToolRequest.connect(self._on_execute_tool_main_thread, QtCore.Qt.BlockingQueuedConnection)
         self._executeToolBatchRequest.connect(self._on_execute_tool_batch_main_thread, QtCore.Qt.BlockingQueuedConnection)
         self._addThinking.connect(self._on_add_thinking)
@@ -315,6 +300,8 @@ class AITab(
         self._streaming_last_code = ""          # 上次解析出的完整代码（用于增量 diff）
         
         # 构建并缓存系统提示词（两个版本：有思考 / 无思考）
+        # ★ 启动优化：先用不含 DocIndex 的轻量 prompt（跳过 JSON 加载），
+        #   DocIndex 在后台加载完成后自动触发 _rebuild_system_prompts() 补全。
         self._doc_index_ready = False
         self._system_prompt_think = self._build_system_prompt(with_thinking=True, skip_doc_index=True)
         self._system_prompt_no_think = self._build_system_prompt(with_thinking=False, skip_doc_index=True)
@@ -327,12 +314,13 @@ class AITab(
         # 兼容旧引用
         self._system_prompt = self._system_prompt_think
         self._cached_optimized_system_prompt = self._cached_prompt_think
+        # 后台加载 DocIndex，完成后重建完整 prompt
         QtCore.QTimer.singleShot(0, self._warm_doc_index)
         print("[AITab] init: _build_ui begin")
         self._build_ui()
         print("[AITab] init: _build_ui done")
         self._wire_events()
-        self._load_model_preference(restore_provider=True)  # 恢复上次使用的提供商和模型
+        self._load_model_preference(restore_provider=True)
         self._update_key_status()
         self._update_context_stats()
 
@@ -381,19 +369,6 @@ class AITab(
         self._cached_optimized_system_prompt = self._cached_prompt_think
         print(f"[i18n] System prompts rebuilt for language: {_lang or get_language()}")
 
-    def _warm_doc_index(self):
-        """后台加载 DocIndex 并重建完整系统提示词"""
-        def _load():
-            try:
-                from ..utils.doc_rag import get_doc_index
-                get_doc_index()
-                self._doc_index_ready = True
-                invoke_on_main(self, "_rebuild_system_prompts")
-            except Exception as e:
-                print(f"[DocIndex] 后台加载失败: {e}")
-
-        threading.Thread(target=_load, daemon=True).start()
-
     def _retranslateUi(self, _lang: str = ''):
         """语言切换后重新翻译所有静态 UI 文本"""
         # Header 区域
@@ -402,10 +377,6 @@ class AITab(
         self._retranslate_input_area()
         # 会话标签栏
         self._retranslate_session_tabs()
-        for sdata in getattr(self, '_sessions', {}).values():
-            todo = sdata.get('todo_list')
-            if todo and hasattr(todo, 'retranslate'):
-                todo.retranslate()
         print(f"[i18n] UI retranslated for language: {_lang or get_language()}")
 
     # ==========================================================
@@ -428,6 +399,20 @@ class AITab(
             return get_rules_for_prompt()
         except Exception:
             return ""
+
+    def _warm_doc_index(self):
+        """后台加载 DocIndex 并重建完整系统提示词"""
+        import threading
+        def _load():
+            try:
+                from ..utils.doc_rag import get_doc_index
+                get_doc_index()  # 触发单例加载（含 JSON 反序列化）
+                self._doc_index_ready = True
+                # 回主线程重建 prompt
+                QtCore.QTimer.singleShot(0, self._rebuild_system_prompts)
+            except Exception as e:
+                print(f"[DocIndex] 后台加载失败: {e}")
+        threading.Thread(target=_load, daemon=True).start()
 
     def _build_ui(self):
         # ---- 全局 QSS（由 ThemeEngine 从模板渲染） ----
@@ -486,8 +471,7 @@ class AITab(
         self.btn_send.clicked.connect(self._on_send)
         self.btn_stop.clicked.connect(self._on_stop)
         self.btn_key.clicked.connect(self._on_set_key)
-        self.btn_clear.clicked.connect(self._on_clear_requested)
-        self.btn_clear_chat.clicked.connect(self._on_clear_requested)
+        self.btn_clear.clicked.connect(self._on_clear)
         self.btn_cache.clicked.connect(self._on_cache_menu)
         self.btn_optimize.clicked.connect(self._on_optimize_menu)
         self.btn_network.clicked.connect(self._on_read_network)
@@ -498,7 +482,6 @@ class AITab(
         self.btn_font_scale.clicked.connect(self._on_font_settings)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.model_combo.currentIndexChanged.connect(self._update_context_stats)
-        self.model_combo.currentIndexChanged.connect(lambda _index: self._update_key_status())
         
         # 字号缩放快捷键
         # QShortcut 在 PySide6 中位于 QtGui，PySide2 中位于 QtWidgets
@@ -523,7 +506,6 @@ class AITab(
         self._is_running = running
         
         if running:
-            self._agent_started_at = time.time()
             # 锚定 agent 输出目标到当前 session
             self._agent_session_id = self._session_id
             self._agent_response = self._current_response
@@ -591,15 +573,6 @@ class AITab(
         
         # 按当前显示的 session 更新按钮状态
         self._update_run_buttons()
-
-    def _show_processed_status(self):
-        """Show elapsed task duration in the input status bar after the agent stops."""
-        started_at = getattr(self, '_agent_started_at', None)
-        elapsed = (time.time() - started_at) if started_at else 0.0
-        try:
-            self.thinking_bar.show_processed(elapsed)
-        except (RuntimeError, AttributeError):
-            pass
     
     # ===== 动效：输入框呼吸光晕 + AIResponse 流光边框 =====
 
@@ -690,8 +663,6 @@ class AITab(
         策略：只 cook 当前 /obj 下各 geo 容器中设置了 Display Flag 的节点。
         这是最小范围的 cook，只刷新 AI 关注的节点数据而不触发全场景 cook。
         """
-        if not getattr(self, '_embedded_mode', True):
-            return
         if getattr(self, '_pre_agent_update_mode', None) is None:
             return  # 不在 Agent cook 保护模式下，无需处理
         # ★ 实时模式因 cook 中断/超时而挂起时，绝不再主动 cook：
@@ -922,9 +893,6 @@ class AITab(
         cook 阻塞主线程。Agent 结束后在此统一恢复用户原始的更新模式，
         此时 Houdini 会自动触发一次 cook 展示最终结果。
         """
-        if not getattr(self, '_embedded_mode', True):
-            self._pre_agent_update_mode = None
-            return
         _user_mode = getattr(self, '_pre_agent_update_mode', None)
         if _user_mode is not None:
             try:
@@ -959,15 +927,8 @@ class AITab(
         
         # ★ 确保历史以 assistant 结尾（防止连续 user 消息破坏结构）
         self._ensure_history_ends_with_assistant(f"[Error] {error}")
-        history = self._agent_history if self._agent_history is not None else self._conversation_history
-        if resp and history and history[-1].get('role') == 'assistant':
-            try:
-                resp.set_history_range(len(history) - 1, len(history))
-            except RuntimeError:
-                pass
         
         self._set_running(False)
-        self._show_processed_status()
 
     def _on_agent_stopped(self):
         # ★ 恢复 Houdini 更新模式 & 清除主线程忙标记
@@ -991,27 +952,11 @@ class AITab(
         except RuntimeError:
             pass  # widget 已被 clear 销毁
         
-        # ★ 保留已经流式显示出来的半成品回复，再用 stopped 标记收尾
-        self._append_partial_response_to_history("[Stopped by user]")
-        history = self._agent_history if self._agent_history is not None else self._conversation_history
-        if resp and history and history[-1].get('role') == 'assistant':
-            try:
-                resp.set_history_range(len(history) - 1, len(history))
-            except RuntimeError:
-                pass
-
-        agent_sid = self._agent_session_id
-        if self._auto_save_cache and history and agent_sid:
-            if agent_sid in self._sessions:
-                self._sessions[agent_sid]['conversation_history'] = history
-                if self._agent_token_stats is not None:
-                    self._sessions[agent_sid]['token_stats'] = self._agent_token_stats
-            if agent_sid == self._session_id:
-                self._save_cache()
+        # ★ 确保历史以 assistant 结尾（防止连续 user 消息破坏结构）
+        self._ensure_history_ends_with_assistant("[Stopped by user]")
         
         self._set_running(False)
         self._hideToolStatus.emit()
-        self._show_processed_status()
     
     def _ensure_history_ends_with_assistant(self, fallback_content: str):
         """确保 conversation_history 以 assistant 消息结尾
@@ -1022,36 +967,6 @@ class AITab(
         history = self._agent_history if self._agent_history is not None else self._conversation_history
         if history and history[-1].get('role') == 'user':
             history.append({'role': 'assistant', 'content': fallback_content})
-
-    def _append_partial_response_to_history(self, fallback_content: str):
-        """Persist the currently rendered partial response before error/stop cleanup."""
-        history = self._agent_history if self._agent_history is not None else self._conversation_history
-        resp = self._agent_response or self._current_response
-        if not history or history[-1].get('role') == 'assistant':
-            return
-
-        content = ""
-        thinking = ""
-        try:
-            if resp:
-                content = self._strip_fake_tool_results(getattr(resp, '_content', '') or '').strip()
-                sections = getattr(resp, '_thinking_sections', []) or []
-                thinking = '\n\n'.join(
-                    s._thinking_text.strip() for s in sections
-                    if getattr(s, '_thinking_text', '').strip()
-                )
-        except (AttributeError, RuntimeError):
-            content = ""
-            thinking = ""
-
-        final_content = content or fallback_content
-        if fallback_content and fallback_content not in final_content:
-            final_content = f"{final_content}\n\n{fallback_content}".strip()
-
-        msg = {'role': 'assistant', 'content': final_content}
-        if thinking:
-            msg['thinking'] = thinking
-        history.append(msg)
 
     # ---------- 工具执行状态 ----------
 
@@ -1083,7 +998,7 @@ class AITab(
         仅用于不依赖 hou 模块的工具，如 execute_shell、search_local_doc 等。
         """
         try:
-            return self._local_mcp.execute_tool(tool_name, kwargs)
+            return self.mcp.execute_tool(tool_name, kwargs)
         except Exception as e:
             import traceback
             return {"success": False, "error": tr('ai.bg_exec_err', f"{e}\n{traceback.format_exc()[:300]}")}
@@ -1112,8 +1027,6 @@ class AITab(
         主线程槽函数执行完毕后自动清除标记。
         """
         # 使用锁确保一次只有一个工具调用（避免并发竞争）
-        if not getattr(self, '_embedded_mode', True):
-            return self.mcp.execute_tool(tool_name, kwargs)
         with self._tool_lock:
             # 清空队列（防止残留数据）
             while not self._tool_result_queue.empty():
@@ -1155,15 +1068,6 @@ class AITab(
         Returns:
             [result_dict, ...]（与 batch 顺序一致）
         """
-        if not getattr(self, '_embedded_mode', True):
-            results = []
-            for tool_name, kwargs in batch:
-                try:
-                    results.append(self.mcp.execute_tool(tool_name, kwargs))
-                except Exception as e:
-                    results.append({"success": False, "error": str(e)})
-            return results
-
         with self._tool_lock:
             while not self._tool_result_queue.empty():
                 try:
@@ -1593,7 +1497,7 @@ class AITab(
         pending_imgs = [img for img in self._pending_images if img is not None] if has_images else []
 
         # 显示用户消息（含图片缩略图）
-        user_msg_widget = self._add_user_message(text, images=pending_imgs)
+        self._add_user_message(text, images=pending_imgs)
         self.input_edit.clear()
         self._clear_pending_images()
         
@@ -1606,19 +1510,15 @@ class AITab(
         # 构建消息内容（文字或多模态）
         if pending_imgs:
             msg_content = self._build_multimodal_content(processed_text, pending_imgs)
-            user_history_index = len(self._conversation_history)
             _umsg = {'role': 'user', 'content': msg_content}
             self._conversation_history.append(_umsg)
             if self._send_context is not None:
                 self._send_context.append(_umsg)
         else:
-            user_history_index = len(self._conversation_history)
             _umsg = {'role': 'user', 'content': processed_text}
             self._conversation_history.append(_umsg)
             if self._send_context is not None:
                 self._send_context.append(_umsg)
-        if user_msg_widget:
-            user_msg_widget.set_history_range(user_history_index, user_history_index + 1)
         
         # 更新上下文统计
         self._update_context_stats()
@@ -1634,13 +1534,10 @@ class AITab(
         self._start_active_aurora()
         
         # ★ 记录用户当前的 Houdini 更新模式（Agent 结束后恢复）
-        if getattr(self, '_embedded_mode', True):
-            try:
-                import hou  # type: ignore
-                self._pre_agent_update_mode = hou.updateModeSetting()
-            except Exception:
-                self._pre_agent_update_mode = None
-        else:
+        try:
+            import hou  # type: ignore
+            self._pre_agent_update_mode = hou.updateModeSetting()
+        except Exception:
             self._pre_agent_update_mode = None
         # ★ 重置实时 cook 挂起标记：新一轮运行重新允许实时 cook
         # （上一轮因中断/超时挂起的状态不应延续到本轮）。
@@ -1671,13 +1568,6 @@ class AITab(
         """添加工具结果到执行流程（自动压缩长结果）"""
         result_text = str(result.get('result', result.get('error', '')))
         success = result.get('success', True)
-        if name == 'capture_viewport' and result.get('_viewport_image'):
-            label = "Auto viewport snapshot" if (arguments or {}).get('_auto') else "Viewport snapshot"
-            self._addViewportSnapshot.emit(
-                label,
-                result.get('_viewport_image', ''),
-                result.get('_image_media_type', 'image/jpeg'),
-            )
         
         # ★ 从工具结果和参数中提取节点路径，用于后处理裸节点名
         self._collect_node_paths_from_tool(result, arguments)
@@ -1748,21 +1638,6 @@ class AITab(
             prefix = "[err]" if not success else "[ok]"
             invoke_on_main(self, "_add_tool_result_ui", name, f"{prefix} {result_text}")
     
-    @QtCore.Slot(str, str, str)
-    def _on_add_viewport_snapshot(self, label: str, b64_data: str, media_type: str):
-        """Render a capture_viewport image as a clickable chat thumbnail."""
-        try:
-            image_tuple = self._image_tuple_from_b64(b64_data, media_type or 'image/jpeg')
-            resp = self._agent_response or self._current_response
-            if resp:
-                resp.add_viewport_snapshot(label, b64_data, media_type or 'image/jpeg')
-                self._scroll_agent_to_bottom(force=False)
-                return
-            if image_tuple:
-                self._add_user_message(label or "Viewport snapshot", images=[image_tuple])
-        except RuntimeError:
-            pass
-
     @QtCore.Slot(str, str)
     def _add_tool_result_ui(self, name: str, result: str):
         """在 UI 线程中添加工具结果"""
@@ -1884,7 +1759,7 @@ class AITab(
                 self._streaming_preview = StreamingCodePreview(tool_name, parent=resp)
                 self._streaming_preview_tool = tool_name
                 self._streaming_last_code = ""
-                resp.add_execution_detail(self._streaming_preview)
+                resp.details_layout.addWidget(self._streaming_preview)
                 self._scroll_agent_to_bottom()
 
             # 更新预览（StreamingCodePreview 内部做增量追加）
@@ -2037,7 +1912,7 @@ class AITab(
                         lambda _op=l_op, _paths=list(l_paths), _snap=None:
                             self._undo_node_operation(_op, _paths, _snap)
                     )
-                    resp.add_execution_detail(l_label)
+                    resp.details_layout.addWidget(l_label)
                     entry = (l_label, l_op, list(l_paths), None)
                     self._pending_ops.append(entry)
                     l_label.decided.connect(self._update_batch_bar)
@@ -2054,7 +1929,7 @@ class AITab(
                     lambda _op=op_type, _paths=list(paths), _snap=undo_snapshot:
                         self._undo_node_operation(_op, _paths, _snap)
                 )
-                resp.add_execution_detail(label)
+                resp.details_layout.addWidget(label)
                 
                 # ★ 追踪未决操作 → Undo All / Keep All 按钮可见
                 entry = (label, op_type, list(paths), undo_snapshot)
@@ -2068,12 +1943,6 @@ class AITab(
     
     def _navigate_to_node(self, node_path: str):
         """点击节点标签时，跳转到该节点并选中"""
-        if not getattr(self, '_embedded_mode', True):
-            try:
-                self._show_toast(f"Standalone UI cannot focus Houdini node directly: {node_path}")
-            except Exception:
-                pass
-            return
         try:
             import hou
             node = hou.node(node_path)
@@ -2239,9 +2108,6 @@ class AITab(
         - delete 操作 → 从快照递归重建该节点及所有子节点
         - modify 操作 → 恢复参数旧值
         """
-        if not getattr(self, '_embedded_mode', True):
-            self._show_toast("Standalone UI cannot undo Houdini node operations directly yet")
-            return
         try:
             import hou
         except ImportError:
@@ -2509,8 +2375,8 @@ class AITab(
         names = {'openai': 'OpenAI', 'deepseek': 'DeepSeek', 'glm': 'GLM（智谱AI）', 'ollama': 'Ollama', 'openrouter': 'OpenRouter'}
         
         key, ok = QtWidgets.QInputDialog.getText(
-            self, tr("key.title", names.get(provider, provider)),
-            tr("key.prompt"),
+            self, f"Set {names.get(provider, provider)} API Key",
+            "Enter API Key:",
             QtWidgets.QLineEdit.Password
         )
         
@@ -2518,35 +2384,7 @@ class AITab(
             self.client.set_api_key(key.strip(), persist=True, provider=provider)
             self._update_key_status()
 
-    def _on_clear_requested(self):
-        has_content = bool(
-            self._conversation_history
-            or self._context_summary
-            or self._pending_ops
-            or self._call_records
-        )
-        if not has_content and not (
-            self._agent_session_id == self._session_id and self._agent_session_id is not None
-        ):
-            self._show_toast(tr("clear.empty"), 1600)
-            return
-
-        running_current = (
-            self._agent_session_id == self._session_id and self._agent_session_id is not None
-        )
-        msg = tr("clear.confirm_running_msg") if running_current else tr("clear.confirm_msg")
-        ret = QtWidgets.QMessageBox.question(
-            self,
-            tr("clear.confirm_title"),
-            msg,
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
-        )
-        if ret == QtWidgets.QMessageBox.Yes:
-            self._on_clear()
-
     def _on_clear(self):
-        old_session_id = self._session_id
         # ── 如果当前 session 正在运行 agent，先停止 ──
         if self._agent_session_id == self._session_id and self._agent_session_id is not None:
             # 1) 请求后端线程停止
@@ -2577,53 +2415,37 @@ class AITab(
         self._batch_bar.setVisible(False)
         self._session_node_map.clear()
         
-        self._clear_chat_widgets()
+        while self.chat_layout.count() > 1:
+            item = self.chat_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         
         # 旧 todo_list 已被 deleteLater, 创建新的
         self.todo_list = self._create_todo_list(self.chat_container)
-        new_session_id = str(uuid.uuid4())[:8]
-        session_state = self._sessions.pop(old_session_id, {})
-        self._session_id = new_session_id
-        if session_state:
-            session_state['todo_list'] = self.todo_list
-            self._sessions[new_session_id] = session_state
-        else:
-            self._sessions[new_session_id] = {
-                'scroll_area': self.scroll_area,
-                'chat_container': self.chat_container,
-                'chat_layout': self.chat_layout,
-                'todo_list': self.todo_list,
-                'conversation_history': [],
-                'context_summary': '',
-                'current_response': None,
-                'token_stats': self._token_stats,
-            }
+        if self._session_id in self._sessions:
+            self._sessions[self._session_id]['todo_list'] = self.todo_list
         
         # 同步到 sessions 字典
         self._save_current_session_state()
         
         # ★ 清空后删除磁盘上的旧 session 文件（防止残留数据在重启后被恢复）
         try:
-            old_session_file = self._cache_dir / f"session_{old_session_id}.json"
+            old_session_file = self._cache_dir / f"session_{self._session_id}.json"
             if old_session_file.exists():
                 old_session_file.unlink()
-            new_session_file = self._cache_dir / f"session_{new_session_id}.json"
-            if new_session_file.exists():
-                new_session_file.unlink()
         except Exception:
             pass
-        # 重置标签名
-        for i in range(self.session_tabs.count()):
-            if self.session_tabs.tabData(i) == old_session_id:
-                self.session_tabs.setTabData(i, new_session_id)
-                self.session_tabs.setTabText(i, tr("session.default_label", self._session_counter))
-                break
-        self._sync_tabs_backup()
-        # ★ 立即更新 manifest（旧会话 ID 已从标签与缓存中移除）
+        # ★ 立即更新 manifest（移除已清空的会话条目）
         try:
             self._update_manifest()
         except Exception:
             pass
+        
+        # 重置标签名
+        for i in range(self.session_tabs.count()):
+            if self.session_tabs.tabData(i) == self._session_id:
+                self.session_tabs.setTabText(i, f"Chat {self._session_counter}")
+                break
         
         # 更新统计显示
         self._update_token_stats_display()
@@ -2711,7 +2533,7 @@ class AITab(
             stats = store.get_stats()
             core_mems = store.get_core_memories(max_count=10)
 
-            lines = ["**长期记忆系统状态**\n"]
+            lines = ["📊 **长期记忆系统状态**\n"]
             lines.append(f"- 情景记忆 (Episodic): {stats.get('episodic_count', 0)} 条")
             lines.append(f"- 语义记忆 (Semantic): {stats.get('semantic_count', 0)} 条")
             lines.append(f"- 策略记忆 (Procedural): {stats.get('procedural_count', 0)} 条")
@@ -2719,18 +2541,18 @@ class AITab(
             lines.append(f"- 向量维度: {stats.get('embedding_dim', 0)}")
 
             if core_mems:
-                lines.append(f"\n**核心记忆 (L0)** — {len(core_mems)} 条:")
+                lines.append(f"\n🧠 **核心记忆 (L0)** — {len(core_mems)} 条:")
                 for i, mem in enumerate(core_mems, 1):
                     conf = f"(conf={mem.confidence:.2f})" if hasattr(mem, 'confidence') else ""
                     lines.append(f"  {i}. [{mem.category}] {mem.rule} {conf}")
             else:
-                lines.append("\n核心记忆 (L0): 暂无")
+                lines.append("\n🧠 核心记忆 (L0): 暂无")
 
             # 显示成长指标
             if self._memory_initialized and self._growth_tracker:
                 try:
                     gm = self._growth_tracker.get_growth_metrics()
-                    lines.append(f"\n**成长指标:**")
+                    lines.append(f"\n📈 **成长指标:**")
                     lines.append(f"  - 成功率: {gm.get('success_rate', 0):.1%}")
                     lines.append(f"  - 错误率: {gm.get('error_rate', 0):.1%}")
                     lines.append(f"  - 成长分: {gm.get('growth_score', 0):.2f}")
@@ -2889,7 +2711,7 @@ class AITab(
 
     def _slash_skills(self):
         """/skills — 列出所有技能"""
-        result = self._local_mcp._tool_list_skills({})
+        result = self.mcp._tool_list_skills({})
         self._add_user_message("[/skills]")
         resp = self._add_ai_response()
         if result.get('success'):
@@ -3009,13 +2831,6 @@ class AITab(
 
     def _refresh_node_context(self):
         """刷新节点上下文栏（显示当前网络路径和选中节点）"""
-        if not getattr(self, '_embedded_mode', True):
-            try:
-                ctx = self.mcp.scene_context(timeout=2.0) if hasattr(self.mcp, "scene_context") else {}
-            except Exception:
-                ctx = {}
-            self.node_context_bar.update_context(ctx.get("network_path") or "/obj", ctx.get("selected_names") or [])
-            return
         try:
             import hou
             # 获取当前网络编辑器的工作路径
@@ -3038,13 +2853,6 @@ class AITab(
         返回场景上下文 dict，传给后台线程的 _auto_rag_retrieve 使用。
         包含：当前网络路径、选中节点类型、选中节点名。
         """
-        if not getattr(self, '_embedded_mode', True):
-            try:
-                if hasattr(self.mcp, "scene_context"):
-                    return self.mcp.scene_context(timeout=2.0)
-            except Exception:
-                pass
-            return {'network_path': '', 'selected_types': [], 'selected_names': []}
         ctx = {'network_path': '', 'selected_types': [], 'selected_names': []}
         try:
             import hou  # type: ignore

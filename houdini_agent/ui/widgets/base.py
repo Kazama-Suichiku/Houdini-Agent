@@ -1,9 +1,7 @@
 import math
-from typing import List
 from houdini_agent.qt_compat import QtWidgets, QtCore, QtGui
 
-from .theme import CursorTheme, _fmt_duration
-from ..i18n import tr
+from .theme import CursorTheme
 
 
 # ============================================================
@@ -166,54 +164,6 @@ class CollapsibleSection(QtWidgets.QWidget):
         label.setProperty("textStyle", style)
         self.content_layout.addWidget(label)
         return label
-
-
-class TurnTraceHeader(QtWidgets.QWidget):
-    """One-line controller for a response's thinking/tool trace."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._collapsed = False
-        self._elapsed = 0.0
-        self._targets: List[QtWidgets.QWidget] = []
-        self.setObjectName("turnTraceHeader")
-
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(6)
-
-        self._button = QtWidgets.QPushButton()
-        self._button.setFlat(True)
-        self._button.setCursor(QtCore.Qt.PointingHandCursor)
-        self._button.setObjectName("turnTraceToggle")
-        self._button.clicked.connect(self.toggle)
-        layout.addWidget(self._button)
-
-        self._line = QtWidgets.QFrame()
-        self._line.setFrameShape(QtWidgets.QFrame.HLine)
-        self._line.setObjectName("turnTraceLine")
-        layout.addWidget(self._line, 1)
-        self.set_elapsed(0.0, active=True)
-
-    def add_target(self, widget: QtWidgets.QWidget):
-        if widget not in self._targets:
-            self._targets.append(widget)
-            widget.setVisible(not self._collapsed)
-
-    def set_elapsed(self, seconds: float, active: bool = False):
-        self._elapsed = max(0.0, float(seconds or 0.0))
-        label = tr("status.processing") if active else tr("status.processed")
-        arrow = "›" if self._collapsed else "⌄"
-        self._button.setText(f"{label} {_fmt_duration(self._elapsed)} {arrow}")
-
-    def toggle(self):
-        self._collapsed = not self._collapsed
-        for widget in list(self._targets):
-            try:
-                widget.setVisible(not self._collapsed)
-            except RuntimeError:
-                pass
-        self.set_elapsed(self._elapsed, active=False)
 
 
 # ============================================================

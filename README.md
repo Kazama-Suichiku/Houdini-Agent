@@ -2,27 +2,9 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-> This project is a fork of the original [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent), originally developed by **KazamaSuichiku**. This fork keeps the upstream Houdini agent foundation and adds workflow, provider, UI, and memory-review improvements on top.
-
-An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, always-on workflow experience distillation and promotion review, a brain-inspired long-term memory system, a plugin hook system for community extensions, user-defined context rules, and a modern dark UI with bilingual support.
+An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, a plugin hook system for community extensions, user-defined context rules, and a modern dark UI with bilingual support.
 
 Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, query local documentation, create structured execution plans, learn from past interactions, and be extended via plugins — all within an iterative agent loop. A centralized **ToolRegistry** unifies core tools, skills, and plugin tools with mode-based access control.
-
-## Recent Fork Updates
-
-Compared with upstream [`Kazama-Suichiku/Houdini-Agent`](https://github.com/Kazama-Suichiku/Houdini-Agent), this fork currently adds the following user-facing changes:
-
-- **Custom Provider profiles** — multiple named Custom profiles can be stored at once, each with its own URL, API key, protocol, model list, context limit, vision support, Function Calling support, and visible-model checklist.
-- **Improved Custom model setup** — the Custom settings dialog supports add/delete profile buttons, separate profile-name editing, automatic model fetching, connection testing, checkable visible models, and legacy single-profile config migration.
-- **Anthropic Messages for Custom providers** — Custom profiles can choose either OpenAI-compatible Chat Completions or Anthropic Messages protocol; `/chat/completions`, `/messages`, and `/models` URLs are normalized automatically, with Anthropic `x-api-key` and `anthropic-version` headers handled by the client.
-- **Stable Custom model selection** — the main model selector is a fixed drop-down populated from enabled profile models, while profile editing keeps profile selection separate from name editing to avoid accidental overwrites.
-- **Richer agent timeline** — interleaved thinking, tool execution, viewport checkpoints, and final replies stay in order; verbose execution details such as tool calls, node diffs, shell previews, and viewport snapshots are collapsed by default.
-- **Unified execution trace header** — consecutive thinking/tool details are grouped under one collapsible per-turn trace with live `Processing` time and final `Processed` duration, instead of creating a separate fold for every operation.
-- **Better chat bubble reflow** — sent-message bubbles now estimate their ideal width from text and thumbnail content, using more available horizontal space while still capping long content to prevent layout overflow.
-- **Windows UTF-8 request safety** — standalone launch and AI requests force UTF-8 stdio/body encoding and remove emoji from request-path diagnostics, avoiding GBK console encoding failures on Windows.
-- **Retry and stop handling** — transient API failures use a configurable retry limit with retry logs in the response, and stopped runs preserve partial thinking/execution history instead of losing the in-progress trace.
-- **Chat/session polish** — per-message delete actions, long-text reflow on resize, clickable sent-image and `capture_viewport` thumbnails, automatic/manual session titles, and safer session cache updates are included.
-- **Workflow experience review** — completed tasks queue multiple distilled experience candidates, support rejected-item hide/delete, and can export curated semantic/procedural experiences to Markdown.
 
 ## Core Features
 
@@ -45,7 +27,6 @@ User request → AI plans → call tools → inspect results → call more tools
 - **Stop anytime** — interrupt the running agent loop at any point
 - **Smart context management** — round-based conversation trimming that never truncates user/assistant messages, only compresses tool results
 - **Long-term memory** — brain-inspired three-layer memory system (episodic, semantic, procedural) with reward-driven learning and automatic reflection
-- **Workflow experience review** — automatically extracts candidate lessons after completed tasks, strips thinking/tool noise, and promotes valid knowledge into long-term memory through a four-lane review board
 - **Plugin system** — external community extensions via `plugins/` directory with hook events, custom tools, UI buttons, and settings
 - **User Rules** — Cursor-style persistent context rules that are automatically injected into every AI request
 
@@ -59,26 +40,7 @@ User request → AI plans → call tools → inspect results → call more tools
 | **Ollama** (local) | `qwen2.5:14b`, any local model | Privacy-first, auto-detects available models |
 | **Duojie** (relay) | `claude-opus-4-6-gemini`, `claude-opus-4-6-max`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `gemini-3-flash`, `gemini-3.1-pro`, `glm-5-turbo`, `glm-5.1`, `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | Claude, Gemini, GLM, MiniMax via relay endpoint |
 | **OpenRouter** | `claude-sonnet-4.6`, `claude-opus-4.6`, `gpt-5.2`, `gemini-2.5-pro`, `deepseek-r1`, `grok-4.1-fast`, `llama-4-maverick`, `qwen3-235b` + 8 more | 16 models from all major providers via single API key |
-| **Custom** | User-configurable | Multiple named profiles for OpenAI-compatible or Anthropic Messages endpoints; configurable URL, API Key, model list, visible models, context limit, vision & FC support |
-
-### Custom Provider Profiles
-
-Custom providers are profile-based in this fork. A profile stores its protocol (`OpenAI Compatible` or `Anthropic Messages`), endpoint, key, model list, context limit, visible-model choices, and capability flags. The main model selector shows `Profile / model` entries, and you can check only the models that should appear in the main UI; if none are checked, all models in that profile remain visible.
-
-Connection testing and model fetching respect the selected protocol. OpenAI-compatible profiles use Chat Completions and `/models`; Anthropic profiles use Messages and Anthropic-style `/models`, including the required Anthropic headers. This makes Claude-compatible relays and OpenAI-compatible local servers usable side by side.
-
-#### Configure Custom Models
-
-1. Select **Custom** in the provider drop-down, then click the settings button beside it.
-2. Use the profile selector to choose an existing profile, or click **+** to add another URL/API-key group. The profile name field is independent from profile selection, so renaming one profile will not accidentally switch or overwrite another.
-3. Choose **OpenAI Compatible** for `/v1/chat/completions` style services such as LM Studio, vLLM, Text Generation WebUI, OpenAI-compatible relays, and many local servers. Choose **Anthropic Messages** for Claude-compatible `/v1/messages` style services.
-4. Enter either a base URL or a full endpoint. The client normalizes common forms automatically, including `/v1`, `/v1/chat/completions`, `/v1/messages`, and the matching `/models` endpoint for model discovery.
-5. Fill the API key if required. OpenAI-compatible profiles send `Authorization: Bearer ...`; Anthropic profiles send `x-api-key` and `anthropic-version`.
-6. Click the refresh button to fetch models from the API, or add model names manually. Check only the models you want in the main selector; leave all unchecked to show the whole profile model list.
-7. Set the context length and capability flags (`Supports image input`, `Supports Function Calling`), then use **Test Connection**. The test uses the first checked model, or the first model in the list when none are checked.
-8. Save the dialog. The header model selector is rebuilt as fixed `Profile / model` options, which avoids free-text model drift and keeps per-profile routing stable.
-
-Existing older single-profile Custom settings are migrated into the new profile list automatically when loaded.
+| **Custom** | User-configurable | Any OpenAI-compatible endpoint (LM Studio, vLLM, etc.); configurable URL, API Key, model name, context limit, vision & FC support |
 
 ### Vision / Image Input
 
@@ -100,11 +62,7 @@ Existing older single-profile Custom settings are migrated into the new profile 
 - **Token analytics** — real-time token count, reasoning tokens, cache hit rate, and per-model cost estimates (click for detailed breakdown)
 - **AuroraBar** — animated silver-white flowing gradient bar during AI generation
 - **Streaming VEX code preview** — real-time Cursor Apply-style code writing animation
-- **Structured response timeline** — thinking blocks, tool execution, retries, viewport checkpoints, and final replies remain ordered while detailed execution widgets stay collapsible
-- **Per-turn trace folding** — one compact header controls the whole thinking/tool trace for a response and keeps elapsed time visible after completion
-- **Adaptive message bubbles** — user bubbles widen according to their content and attached images, reducing unnecessary wrapping without reintroducing overflow
 - Multi-session tabs — run multiple independent conversations
-- Automatic and manual session titles
 - Copy button on AI responses
 - `Ctrl+Enter` to send messages
 - **Font scaling** — `Ctrl+=`/`Ctrl+-` to zoom, "Aa" button for slider control
@@ -113,7 +71,6 @@ Existing older single-profile Custom settings are migrated into the new profile 
 - **Plugin Manager** — tabbed dialog with Plugins, Tools, and Skills management (enable/disable, reload, settings)
 - **Rules Editor** — dialog for creating and managing persistent user context rules
 - **Memory Manager** — dialog for browsing, editing, and exporting long-term semantic memories
-- **Workflow Experience Review** — four-lane candidate / promoted / later / rejected board with distilled summaries, evidence, confidence, and promotion output in the detail pane
 - **PySide2 IME support** — full Chinese/Japanese/Korean input method support on both Windows and macOS
 
 ## Available Tools (40+)
@@ -213,8 +170,6 @@ Existing older single-profile Custom settings are migrated into the new profile 
 |------|-------------|
 | `search_memory` | Search the semantic memory store — retrieve relevant past experiences, rules, and strategies by category, abstraction level, and confidence scoring |
 
-Workflow experience distillation stays enabled by default: after a task finishes, the agent extracts candidate lessons from context, summarizes and scores them, then sends them to the review board for promotion, later review, or rejection.
-
 ### Plan Mode
 
 | Tool | Description |
@@ -297,7 +252,6 @@ Houdini-Agent/
     │   ├── theme_engine.py        # QSS template rendering & font-size scaling
     │   ├── font_settings_dialog.py # Font zoom slider dialog
     │   ├── memory_manager_dialog.py # Memory system UI — browse, edit, delete, export memories
-    │   ├── experience_review_dialog.py # Workflow experience review board — candidate, promoted, later, rejected lanes
     │   └── style_template.qss    # Centralized QSS theme stylesheet
     ├── skills/                     # Pre-built analysis scripts (auto-registered as skill:xxx tools)
     │   ├── __init__.py            # Skill registry, loader & ToolRegistry integration
@@ -322,7 +276,6 @@ Houdini-Agent/
         ├── tool_registry.py       # Unified ToolRegistry — centralizes core/skill/plugin/user tools
         ├── rules_manager.py       # User Rules manager (UI rules + file rules, prompt injection)
         ├── memory_store.py        # Three-layer memory (episodic/semantic/procedural) with SQLite
-        ├── experience_store.py    # Workflow experience candidates, distilled summaries, and promotion persistence
         ├── embedding.py           # Local text embedding (sentence-transformers / fallback)
         ├── reward_engine.py       # Reward scoring & memory importance updates
         ├── reflection.py          # Rule-based + LLM deep reflection module
@@ -435,26 +388,17 @@ The plan is displayed as an interactive `PlanViewer` card with a DAG flow diagra
 
 ### Brain-inspired Long-term Memory System
 
-A six-module system that enables the agent to learn and improve over time:
+A five-module system that enables the agent to learn and improve over time:
 
 | Module | Description |
 |--------|-------------|
 | `memory_store.py` | Three-layer SQLite storage — **Episodic** (specific task experiences), **Semantic** (abstracted rules from reflection), **Procedural** (problem-solving strategies with priority) |
-| `experience_store.py` | Workflow experience queue and promotion log — distills task context into conclusions, applicable scenarios, validation methods, and evidence while filtering `<think>`, Todo prompts, and tool chatter |
 | `embedding.py` | Local text embedding using `sentence-transformers/all-MiniLM-L6-v2` (384-dim) with fallback to character n-gram pseudo-vectors |
 | `reward_engine.py` | Dopamine-inspired reward scoring — success, efficiency, novelty, error penalty; drives memory importance strengthening/weakening with time decay |
 | `reflection.py` | Hybrid reflection — rule-based extraction after every task + periodic LLM deep reflection to generate semantic rules and strategy updates |
 | `growth_tracker.py` | Rolling-window metrics (error rate, success rate, tool call efficiency) + personality trait formation (efficiency bias, risk tolerance, verbosity, proactivity) |
 
 Memory is activated at query time: relevant episodic memories, semantic rules, and procedural strategies are retrieved via cosine similarity and injected into the system prompt.
-
-#### Workflow Experience Review & Promotion
-
-Workflow experience distillation and promotion stay enabled by default. After each task, the system extracts candidate lessons from the user goal, tool results, validation results, and final response, but it does not write raw reasoning traces directly into long-term memory.
-
-The review dialog uses a four-lane flow: **Candidate** keeps unreviewed lessons, **Promoted** marks items ready for long-term memory, **Later** preserves low-confidence but potentially useful samples, and **Rejected** archives invalid or duplicated items. The detail pane shows the distilled summary, raw evidence, quality score, confidence, and promotion path, and the title-bar close button follows the same close behavior as the in-dialog close action.
-
-Distillation prioritizes reusable knowledge: conclusion, applicable scenario, correct action, validation method, and counterexample boundary. The system filters `<think>` content, Todo continuation prompts, repeated tool logs, and plain progress text so process notes do not masquerade as durable experience.
 
 ### Plugin System
 
@@ -623,7 +567,6 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
-- **Current fork update** — **Custom providers, timeline, retries, and experience review**: Relative to upstream `Kazama-Suichiku/Houdini-Agent`, this fork adds multi-profile Custom provider management, visible-model selection, Custom Anthropic Messages protocol support, safer URL/model normalization, and more stable profile editing. Agent responses now preserve interleaved thinking/tool/viewport/final timeline entries, collapse verbose execution details, show configurable retry logs, and retain partial history when stopped. Chat/session handling adds per-message deletion, resize-safe wrapping, clickable sent-image and viewport thumbnails, automatic/manual session titles, and safer cache synchronization. Workflow experience review now extracts multiple candidates, filters process noise, supports rejected-item hide/delete, promotes reviewed knowledge into long-term memory, and exports curated Markdown.
 - **v1.5.5** — **DeepSeek V4 API adaptation + JSON Output**: New `deepseek-v4-flash` / `deepseek-v4-pro` models with explicit `thinking` parameter and `reasoning_effort` support. Old models (`deepseek-chat` / `deepseek-reasoner`) retained for compatibility (deprecated 2026/07/24). Default model migrated to `deepseek-v4-flash`. `chat_stream()` / `chat()` gain `response_format` parameter; reflection module uses `json_object` mode for reliable JSON output. V4 model pricing, context limits, and feature configs added.
 - **v1.5.4** — **Long-term memory global toggle**: Added enable/disable switch for the entire memory system. Multiple fixes.
 - **v1.5.3** — **Memory Manager dialog**: New `MemoryManagerDialog` UI for browsing, editing, deleting, and exporting semantic memories. `/memories` command support.
@@ -669,8 +612,7 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Author
 
-- Original project and author: [KazamaSuichiku](https://github.com/Kazama-Suichiku) / [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent)
-- This repository is a fork with additional optimizations and features documented above.
+KazamaSuichiku
 
 ## License
 
