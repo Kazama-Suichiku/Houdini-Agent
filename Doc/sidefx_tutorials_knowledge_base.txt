@@ -1,0 +1,91 @@
+# SideFX 官方教程索引知识库
+# 来源: https://www.sidefx.com/learn/learning-library/tutorials/
+# 抓取方式: 官方页面实际调用的 POST /tutorials/get-tutorials/ 接口，按分类分页拉取教程元数据。
+# 证据边界: 本文件主要记录官方教程的标题、描述、分类、版本、难度和学习路径。multivideotutorial 未逐段转写时，不把视频步骤写成确定技术规则。
+
+## SideFX Learning Library 数据接口与字段
+
+SideFX 官方教程页是 Vue 前端渲染，页面通过 `POST https://www.sidefx.com/tutorials/get-tutorials/` 获取教程列表。请求体字段 `filters` 是 JSON 字符串，常用筛选项包括 `page`、`title`、`user`、`categories`、`industries`、`version`、`level`、`o` 和 `paid`。返回字段包括 `id`、`slug`、`title`、`url`、`user`、`level`、`category`、`industry`、`tutorial_type`、`date`、`description`、`paid`、`version` 和 `image`。
+
+本次已拉取的官方分类：Pyro FX `26` 共 107 条，Copernicus `38` 共 41 条，AI & ML `33` 共 11 条，Lookdev `23` 共 247 条，VEX `24` 共 241 条，Python `28` 共 16 条。版本 ID 中 Houdini 21 为 `29`，Houdini 20.5 为 `28`。难度 ID 中 Beginner 为 `4`，Intermediate 为 `3`，Advanced 为 `7`，Masterclass 为 `2`，Node Reference 为 `8`。
+
+Agent 查询官方教程时，应优先使用这个索引推荐学习路径，再结合本地 SideFX 文档回答技术细节。视频教程描述只能证明主题和学习目标；只有 texttutorial、官方文档或可访问正文能支撑具体步骤。
+
+## 官方 Pyro FX 学习路径
+
+Pyro FX 官方教程库显示 Pyro 主题覆盖 dust/smoke、thruster、custom wind force、COPs pyro reveal、Karma/XPU volume AOV、destruction dust 等方向。入门路线建议先学体积和 dust/smoke，再学源、速度、wind/microsolver、渲染与 AOV，最后看 thruster 或 reveal 等镜头化项目。
+
+高信号教程：
+- `Dust Interaction | Full Beginner Pyro Course`，Houdini 20.5，Beginner，免费 texttutorial：描述强调 modern Pyro Solver workflow、voxel workflows、core foundations of pyro。
+- `JetPack Craig - Houdini (Pyro/Thrusters/XPU)`，Houdini 21，Beginner，免费 multivideotutorial：描述强调 deforming asset attachment、particles velocity pyro workflow、motion-based emission、Solaris/Karma XPU render。
+- `How to Create Thruster FX`，Houdini 21，Beginner，免费 multivideotutorial：描述强调 Pyro Thruster tools、procedural non-simulation exhausts、polygon inputs、length/jitter/thickness controls。
+- `How to create a custom wind force for the Pyro Solver`，Houdini 21，Beginner，免费 multivideotutorial：描述强调用 microsolver 为 Pyro Solver 创建 custom wind force。
+- `How to Make a Pyro Reveal Effect in COPs`，Houdini 21，Intermediate，免费 multivideotutorial：描述强调 Copernicus 中 animated masks、pyro simulation、texture blending 和 dynamic reveal。
+
+Agent 推荐 Pyro 教程时，应按任务目标选择：基础 dust/smoke 选 Dust Interaction；喷射/推进器选 Thruster 或 JetPack Craig；需要外力控制选 custom wind force；需要 COPs 纹理/遮罩驱动的 reveal 选 Pyro Reveal in COPs；渲染体积 AOV 或 Karma XPU 则选 volume AOV/lookdev 相关教程。
+
+## 官方 Copernicus 学习路径
+
+Copernicus 官方教程库覆盖 COPs 入门、ACES、PBR texturing、fluid solver、heightfield masks、organic textures、Pyro Reveal in COPs、lookdev/texture generation 等方向。Copernicus 适合作为图像/纹理/2D 或 VDB layer 工作流，不应默认替代三维 Pyro/DOP 求解。
+
+高信号教程：
+- `The Ultimate Copernicus Guide`，Houdini 20.5，Beginner，免费 texttutorial：描述为 Copernicus reference/documentation guide，适合查 COPs context 和节点概览。
+- `Building a Fluid Solver in Copernicus`，Houdini 21，Masterclass，免费 multivideotutorial：描述强调从零构建 fluid solver，理解 2D image processing system 的核心概念。
+- `How to Make a Pyro Reveal Effect in COPs`，Houdini 21，Intermediate，免费 multivideotutorial：适合学习 animated masks、pyro simulation、texture blending。
+- `PBR Texturing in Copernicus`，Houdini 21，Intermediate，免费 multivideotutorial：适合学习 COPs 生成材质纹理。
+- `How to Setup ACES for Rendering and Compositing`，Houdini 21，Beginner，免费 multivideotutorial：适合学习 rendering/compositing 色彩空间一致性。
+- `How to Generate Heightfield Masks Using Copernicus`，Houdini 21，Beginner，免费 multivideotutorial：适合学习用 COPs 生成和控制 heightfield masks。
+
+Agent 推荐 Copernicus 教程时，应先判断用户要图像纹理、材质贴图、mask、合成、2D flow 还是 COP Pyro reveal。基础概览优先 Ultimate Guide；需要原理优先 Fluid Solver；需要制作效果优先 Pyro Reveal、PBR Texturing、Heightfield Masks。
+
+## 官方 AI & ML 学习路径
+
+AI & ML 官方教程库数量较少但方向明确，覆盖 Houdini 21 Machine Learning Tools、FX Artists 训练模型、ML Sketching、ML Groom Deformer、PCA Dejitter、Tensorflow、ChatGPT/OpenAI 集成和 Stable Diffusion in PDG 等。Agent 不应把所有 AI 教程混为一类，要区分 Houdini 内建 ML 节点、外部模型推理、PDG 生成流程和 LLM 工具集成。
+
+高信号教程：
+- `Machine Learning Tools`，Houdini 21，Intermediate，免费 multivideotutorial：适合了解 Houdini 21 的 ML 工具入口。
+- `Training Machine Learning Models for FX Artists`，Houdini 20.5，Intermediate，免费 multivideotutorial：适合学习 FX artist 角度的训练流程。
+- `ML Sketching`，Houdini 20.5，Advanced，免费 texttutorial：适合学习 ML 辅助 sketch/workflow。
+- `ML Groom Deformer`，Houdini 20.5，Advanced，免费 texttutorial：适合学习 domain-specific ML deformer。
+- `PCA Dejitter`，Houdini 20.5，Intermediate，免费 texttutorial：适合学习 PCA/后处理去抖。
+- `How to Integrate ChatGPT (OpenAI)`，Houdini 19.5，Beginner，免费 multivideotutorial：适合 LLM/API 集成，不等同于 Houdini 内建 ML。
+
+Agent 处理 ML 问题时，应先问清目标是训练 Houdini 数据模型、用 ONNX 推理、做 PDG 生成、做角色/毛发 deformer，还是接入 LLM API。对 ML Volume Upres，仍以本地 `ML Train Volume Upres`、`ML Volume Tile Component`、`ML Volume Tile Inference`、`ML Volume Upres` 文档为技术依据。
+
+## 官方 Lookdev / 材质学习路径
+
+Lookdev 官方教程库规模很大，覆盖 MaterialX/Karma、Solaris、ACES、Copernicus texture generation、wet maps、tiling fixes、volume AOVs、PBR textures、scene assembly、lighting 等。Agent 推荐材质学习时，应按“材质基础 -> 纹理/程序生成 -> displacement/triplanar/primvars -> Solaris/Karma 渲染 -> ACES/lookdev pipeline”组织，而不是只推荐某个 shader 节点。
+
+高信号教程：
+- `How to Build Materials Using Primvars`，Houdini 21，Beginner，免费 multivideotutorial：适合学习从 geometry attributes/primvars 驱动材质。
+- `FIX Tiling Issues (MaterialX/XPU/Solaris)`，Houdini 21，Beginner，免费 multivideotutorial：适合处理贴图重复和 tiling 问题。
+- `Rendering WET-MAPS in Solaris (Karma XPU/MtlX)`，Houdini 21，Beginner，免费 multivideotutorial：适合学习 wet-map 到 Solaris/Karma/MaterialX 的渲染链路。
+- `How to Setup ACES for Rendering and Compositing`，Houdini 21，Beginner，免费 multivideotutorial：适合建立色彩管理基础。
+- `Creating Quartz! - With COPS!`，Houdini 21，Beginner，免费 multivideotutorial：适合学习 COPs 生成纹理、Solaris 建模/着色/灯光联动。
+
+Agent 在材质问题上应主动检查属性来源、primvar 名称、UV/triplanar 选择、displacement tessellation、Karma CPU/XPU 差异、ACES/color transform 和贴图重复问题。对“材质不好看”类请求，先拆成 base material、texture、displacement、mask/blend、lighting/color management 五个检查点。
+
+## 官方 VEX / Python 学习路径
+
+VEX 官方教程库覆盖 procedural math、procedural modeling、SDF operations、custom wind force、OpenCL SOP for VEX users、primvars、terrain/FX 等。Python 分类数量较少，重点在 Python States、Python/USD、SOP/CHOP/Python、ChatGPT/OpenAI 集成和交互工具。
+
+VEX 高信号教程：
+- `Mathematical Foundations for Procedural Artists`，Houdini 21，Intermediate，免费 multivideotutorial：适合补 procedural artists 的数学基础。
+- `How to create a custom wind force for the Pyro Solver`，Houdini 21，Beginner，免费 multivideotutorial：适合 VEX/微求解器驱动 Pyro 风场。
+- `How to Build Materials Using Primvars`，Houdini 21，Beginner，免费 multivideotutorial：适合理解 primvars/attributes 与材质连接。
+- `Opencl SOP for VEX users`，Houdini 20.5，Intermediate，免费 multivideotutorial：适合 VEX 用户过渡到 OpenCL。
+- `Fancy SDF Operations`，Houdini 21，Intermediate，免费 multivideotutorial：适合学习 SDF 程序化操作。
+
+Python 高信号教程：
+- `Python States`，Houdini 21，Intermediate，免费 multivideotutorial：适合学习交互状态和自定义工具。
+- `Interactive Python States`，Houdini 18，Intermediate，免费 texttutorial：适合补充 Python state 旧版基础。
+- `Mastering 3D Geometry with Python and USD`，Houdini 20.5，Advanced，免费 texttutorial：适合 Python/USD 几何处理。
+- `SOP, Chop and Python`，Houdini 18.5，Beginner，免费 texttutorial：适合学习 Python 与 SOP/CHOP 协作。
+
+Agent 推荐编程教程时，应优先区分 VEX 的几何/场并行处理、OpenCL 的 GPU 加速、Python 的自动化/工具/UI/USD 控制。生成方案时不要用 Python 替代高频几何处理；也不要用 VEX 处理 UI、文件系统、资产管理等 Python 更合适的任务。
+
+## 官方教程入库复盘
+
+官方教程库验证了本次经验库的几个方向：Pyro 学习应从体积、dust/smoke、源和速度控制开始，再进入 thruster、custom wind force、Karma/XPU 渲染和 COPs reveal；Copernicus 学习应从 COPs 概览、flow/solver 原理、texture/PBR、mask 和 ACES 进入；ML 学习应先分清 Houdini 内建 ML、ONNX 推理、训练流程和 LLM/PDG 集成；Lookdev 学习应把材质、贴图、位移、primvars、Solaris/Karma 和色彩管理串起来。
+
+因此，当用户询问“官方教程推荐”或“我应该学什么”时，Agent 应先按任务目标、版本、难度和是否免费筛选 SideFX 官方教程，而不是只给通用建议。对 multivideotutorial，除非有字幕/正文，不应把描述扩展成具体步骤；对 texttutorial 和本地 SideFX 文档，可以提炼更具体的节点和流程。

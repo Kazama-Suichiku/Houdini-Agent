@@ -11,9 +11,12 @@ import ssl
 import time
 import re
 from typing import List, Dict, Optional, Any, Callable, Generator, Tuple
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
+from houdini_agent import configure_text_output
 from shared.common_utils import load_config, save_config
+
+configure_text_output()
 
 # 强制使用本地 lib 目录中的依赖库
 _lib_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'lib')
@@ -21,7 +24,7 @@ if os.path.exists(_lib_path):
     # 将 lib 目录添加到 sys.path 最前面，确保优先使用
     if _lib_path in sys.path:
         sys.path.remove(_lib_path)
-    sys.path.insert(0, _lib_path)
+    sys.path.append(_lib_path)
 
 # 导入 requests
 HAS_REQUESTS = False
@@ -30,6 +33,87 @@ try:
     HAS_REQUESTS = True
 except ImportError:
     pass
+
+
+_CUSTOM_PROVIDER_ENDPOINTS = (
+    '/chat/completions',
+    '/messages',
+    '/models',
+)
+
+
+def _custom_provider_base_path(path: str) -> str:
+    base = (path or '').rstrip('/')
+    lower_base = base.lower()
+    for endpoint in _CUSTOM_PROVIDER_ENDPOINTS:
+        if lower_base.endswith(endpoint):
+            return base[:-len(endpoint)].rstrip('/')
+    return base
+
+
+def _join_endpoint(base_path: str, endpoint: str) -> str:
+    base = _custom_provider_base_path(base_path)
+    return f"{base}{endpoint}" if base else endpoint
+
+
+def normalize_custom_chat_url(api_url: str) -> str:
+    """Accept either an OpenAI-compatible base URL or a full chat endpoint."""
+    raw = (api_url or '').strip()
+    if not raw:
+        return ''
+
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        return raw.rstrip('/')
+
+    path = _join_endpoint(parts.path, '/chat/completions')
+
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def normalize_custom_messages_url(api_url: str) -> str:
+    """Accept either an Anthropic base URL or a full Messages endpoint."""
+    raw = (api_url or '').strip()
+    if not raw:
+        return ''
+
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        return raw.rstrip('/')
+
+    path = _join_endpoint(parts.path, '/messages')
+
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def normalize_custom_models_url(api_url: str) -> str:
+    """Return the OpenAI-compatible models endpoint for a custom provider URL."""
+    raw = (api_url or '').strip()
+    if not raw:
+        return ''
+
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        base = _custom_provider_base_path(raw)
+        return f"{base}/models" if base else 'models'
+
+    path = _join_endpoint(parts.path, '/models')
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def normalize_custom_anthropic_models_url(api_url: str) -> str:
+    """Return the Anthropic-compatible models endpoint for a custom provider URL."""
+    raw = (api_url or '').strip()
+    if not raw:
+        return ''
+
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        base = _custom_provider_base_path(raw)
+        return f"{base}/models" if base else 'models'
+
+    path = _join_endpoint(parts.path, '/models')
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 # ============================================================
@@ -1369,6 +1453,18 @@ except Exception as _e:
 
 class AIClient:
     """AI 客户端，支持流式传输、Function Calling、联网搜索"""
+
+    DEFAULT_RETRY_LIMIT = 5
+    MAX_RETRY_LIMIT = 20
+    MIN_RETRY_LIMIT = 1
+
+    @classmethod
+    def clamp_retry_limit(cls, value: Any) -> int:
+        try:
+            retries = int(value)
+        except (TypeError, ValueError):
+            retries = cls.DEFAULT_RETRY_LIMIT
+        return max(cls.MIN_RETRY_LIMIT, min(cls.MAX_RETRY_LIMIT, retries))
     
     OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
     DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -1393,7 +1489,9 @@ class AIClient:
     # Custom provider 运行时配置
     _CUSTOM_API_URL: str = ''
     _CUSTOM_SUPPORTS_FC: bool = True
-    _CUSTOM_ANTHROPIC_PROTOCOL: bool = False
+    _CUSTOM_PROFILES: List[Dict[str, Any]] = []
+    _CUSTOM_MODEL_ROUTES: Dict[str, Dict[str, Any]] = {}
+    _CUSTOM_MODEL_NAMES: Dict[str, str] = {}
 
     def __init__(self, api_key: Optional[str] = None):
         self._api_keys: Dict[str, Optional[str]] = {
@@ -1414,23 +1512,38 @@ class AIClient:
         self._ollama_base_url = "http://localhost:11434"
         
         # 网络配置
-        self._max_retries = 3
+        self._max_retries = self.DEFAULT_RETRY_LIMIT
+        self._server_error_max_retries = self.DEFAULT_RETRY_LIMIT
         self._retry_delay = 1.0
         self._chunk_timeout = 60  # Ollama 本地模型可能较慢，增加超时
         
         # ★ 持久化 HTTP Session（连接池 + Keep-Alive，避免每轮重新 TLS 握手）
         self._http_session = requests.Session()
         self._http_session.headers.update({
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
         })
         
         # 停止控制（使用 threading.Event 保证线程安全）
         import threading
         self._stop_event = threading.Event()
+
+    @staticmethod
+    def _json_body(payload: Dict[str, Any]) -> bytes:
+        """Serialize request JSON as UTF-8 bytes to avoid Windows locale encoders."""
+        return json.dumps(payload, ensure_ascii=False).encode('utf-8')
     
     def request_stop(self):
         """请求停止当前请求（线程安全）"""
         self._stop_event.set()
+
+    def set_retry_limit(self, retries: int):
+        """Set user-configurable network/server retry limit."""
+        retries = self.clamp_retry_limit(retries)
+        self._max_retries = retries
+        self._server_error_max_retries = retries
+
+    def retry_limit(self) -> int:
+        return self._server_error_max_retries
     
     def reset_stop(self):
         """重置停止标志（线程安全）"""
@@ -1473,6 +1586,18 @@ class AIClient:
     _OP_TOOLS = frozenset({
         'create_node', 'create_nodes_batch', 'connect_nodes',
         'set_node_parameter', 'create_wrangle_node',
+    })
+    _VISUAL_CHECKPOINT_TOOLS = frozenset({
+        'create_node', 'create_nodes_batch', 'connect_nodes',
+        'set_node_parameter', 'batch_set_parameters', 'create_wrangle_node',
+        'delete_node', 'copy_node', 'set_display_flag',
+        'layout_nodes', 'create_network_box', 'add_nodes_to_box',
+        'execute_python', 'run_skill', 'undo_redo',
+    })
+    _VISUAL_PHASE_COMPLETE_TOOLS = frozenset({
+        'verify_and_summarize',
+        'layout_nodes',
+        'set_display_flag',
     })
 
     @staticmethod
@@ -2072,7 +2197,7 @@ class AIClient:
         # ── 第 1 步：标记过时的工具结果 ──
         stale_count = self._mark_stale_tool_results(working_messages)
         if stale_count > 0:
-            print(f"[AI Client] 🔄 标记了 {stale_count} 个过时工具结果")
+            print(f"[AI Client] Marked {stale_count} stale tool results")
 
         current = self._estimate_messages_tokens(working_messages)
         if current <= target:
@@ -2081,7 +2206,7 @@ class AIClient:
         # ── 第 2 步：剥离旧轮次图片 ──
         n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
         if n_stripped > 0:
-            print(f"[AI Client] 🖼 剥离了 {n_stripped} 张旧图片")
+            print(f"[AI Client] Stripped {n_stripped} old images")
             current = self._estimate_messages_tokens(working_messages)
             if current <= target:
                 return working_messages
@@ -2177,7 +2302,7 @@ class AIClient:
             hint += '\n请继续当前任务，不要提及此压缩。'
             result.insert(insert_idx, {'role': 'system', 'content': hint})
 
-        print(f"[AI Client] 🗜️ 主动压缩: {n_rounds} 轮 → {len(rounds)} 轮, "
+        print(f"[AI Client] Proactive compression: {n_rounds} rounds -> {len(rounds)} rounds, "
               f"~{self._estimate_messages_tokens(result)} tokens (目标 {target})")
 
         return result
@@ -2257,7 +2382,7 @@ class AIClient:
                 result.extend(rnd)
 
             new_tokens = self._estimate_messages_tokens(result)
-            print(f"[AI Client] 📝 LLM 摘要: {n_rounds} 轮 → 摘要 + {len(to_keep)} 轮, "
+            print(f"[AI Client] LLM summary: {n_rounds} rounds -> summary + {len(to_keep)} rounds, "
                   f"~{new_tokens} tokens")
 
             return result
@@ -2316,11 +2441,40 @@ class AIClient:
             return True
         # Custom: 只要配置了 URL 就算可用（Key 可选）
         if provider == 'custom':
-            return bool(self._CUSTOM_API_URL)
+            return bool(self._CUSTOM_API_URL or self._CUSTOM_PROFILES)
         return bool(self._api_keys.get(provider))
 
-    def _get_api_key(self, provider: str) -> Optional[str]:
-        return self._api_keys.get((provider or 'openai').lower())
+    def _get_custom_profile(self, model: str = '') -> Dict[str, Any]:
+        if model:
+            profile = self._CUSTOM_MODEL_ROUTES.get(model)
+            if profile:
+                return profile
+        if self._CUSTOM_PROFILES:
+            return self._CUSTOM_PROFILES[0]
+        return {
+            'api_url': self._CUSTOM_API_URL,
+            'api_key': self._api_keys.get('custom') or '',
+            'protocol': 'openai',
+            'supports_fc': self._CUSTOM_SUPPORTS_FC,
+            'models': [],
+        }
+
+    def _get_custom_model_name(self, model: str = '') -> str:
+        return self._CUSTOM_MODEL_NAMES.get(model, model)
+
+    def _get_custom_protocol(self, model: str = '') -> str:
+        profile = self._get_custom_profile(model)
+        protocol = str(profile.get('protocol') or 'openai').strip().lower()
+        if protocol in ('anthropic', 'messages', 'anthropic_messages'):
+            return 'anthropic'
+        return 'openai'
+
+    def _get_api_key(self, provider: str, model: str = '') -> Optional[str]:
+        provider = (provider or 'openai').lower()
+        if provider == 'custom':
+            profile = self._get_custom_profile(model)
+            return profile.get('api_key') or self._api_keys.get('custom')
+        return self._api_keys.get(provider)
 
     def set_api_key(self, key: str, persist: bool = False, provider: str = 'openai') -> bool:
         provider = (provider or 'openai').lower()
@@ -2338,15 +2492,16 @@ class AIClient:
             return ok
         return True
 
-    def get_masked_key(self, provider: str = 'openai') -> str:
+    def get_masked_key(self, provider: str = 'openai', model: str = '') -> str:
         provider = (provider or 'openai').lower()
         # Ollama 显示本地状态
         if provider == 'ollama':
             return 'Local'
         # Custom: 显示 URL 缩略
         if provider == 'custom':
-            if self._CUSTOM_API_URL:
-                url = self._CUSTOM_API_URL
+            profile = self._get_custom_profile(model)
+            url = profile.get('api_url') or self._CUSTOM_API_URL
+            if url:
                 # 提取域名部分作为显示
                 try:
                     from urllib.parse import urlparse
@@ -2363,42 +2518,34 @@ class AIClient:
             return '*' * len(key)
         return key[:5] + '...' + key[-4:]
 
+    def get_route_info(self, provider: str = 'openai', model: str = '') -> Dict[str, Any]:
+        """Return the effective endpoint and request model used for a selection."""
+        provider = (provider or 'openai').lower()
+        info = {
+            'provider': provider,
+            'profile': '',
+            'api_url': self._get_api_url(provider, model),
+            'protocol': 'anthropic' if self._is_anthropic_protocol(provider, model) else 'openai',
+            'model': self._get_custom_model_name(model) if provider == 'custom' else model,
+            'context_limit': None,
+        }
+        if provider == 'custom':
+            profile = self._get_custom_profile(model)
+            info['profile'] = str(profile.get('name') or 'Custom')
+            try:
+                info['context_limit'] = int(profile.get('context_limit') or 128000)
+            except (TypeError, ValueError):
+                info['context_limit'] = 128000
+        return info
+
     def _is_anthropic_protocol(self, provider: str, model: str) -> bool:
         """判断是否应使用 Anthropic Messages 协议（而非 OpenAI 协议）"""
+        provider = (provider or '').lower()
+        if provider == 'duojie':
+            return model.lower() in self._DUOJIE_ANTHROPIC_MODELS
         if provider == 'custom':
-            return bool(self._CUSTOM_ANTHROPIC_PROTOCOL)
-        return provider == 'duojie' and model.lower() in self._DUOJIE_ANTHROPIC_MODELS
-
-    @staticmethod
-    def _build_image_block(img_b64: str, img_mt: str, use_anthropic: bool) -> dict:
-        """根据协议返回正确格式的图片内容块。"""
-        if use_anthropic:
-            # Anthropic Messages: {"type":"image","source":{"type":"base64",...}}
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img_mt,
-                    "data": img_b64,
-                }
-            }
-        # OpenAI Vision: {"type":"image_url","image_url":{"url":"data:..."}}
-        return {"type": "image_url", "image_url": {"url": f"data:{img_mt};base64,{img_b64}"}}
-
-    def _normalize_chat_url(self, url: str) -> str:
-        """将基础 URL 规范化为 chat completions 端点
-        
-        支持的输入格式：
-          - https://integrate.api.nvidia.com/v1          -> 追加 /chat/completions
-          - https://example.com/v1/chat/completions      -> 保持不变
-          - http://localhost:1234/v1                      -> 追加 /chat/completions
-        """
-        url = url.rstrip('/')
-        if url.endswith('/chat/completions'):
-            return url
-        if url.endswith('/v1'):
-            return url + '/chat/completions'
-        return url
+            return self._get_custom_protocol(model) == 'anthropic'
+        return False
 
     def _get_api_url(self, provider: str, model: str = '') -> str:
         provider = (provider or 'openai').lower()
@@ -2415,8 +2562,11 @@ class AIClient:
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
         elif provider == 'custom':
-            raw = self._CUSTOM_API_URL or self.OPENAI_API_URL
-            return self._normalize_chat_url(raw)
+            profile = self._get_custom_profile(model)
+            raw = profile.get('api_url') or self._CUSTOM_API_URL or self.OPENAI_API_URL
+            if self._get_custom_protocol(model) == 'anthropic':
+                return normalize_custom_messages_url(raw)
+            return normalize_custom_chat_url(raw)
         return self.OPENAI_API_URL
 
     def _get_vendor_name(self, provider: str) -> str:
@@ -2429,20 +2579,84 @@ class AIClient:
         return names.get(provider, provider)
 
     def set_custom_provider(self, api_url: str, api_key: str = '', supports_fc: bool = True,
-                            anthropic_protocol: bool = False):
+                            profiles: Optional[List[Dict[str, Any]]] = None):
         """设置 Custom Provider 的运行时配置
 
         Args:
-            api_url: API 端点 URL（OpenAI 兼容或 Anthropic Messages）
+            api_url: OpenAI 兼容的 API 端点 URL
             api_key: API Key（可为空）
             supports_fc: 是否支持原生 Function Calling
-            anthropic_protocol: True 则使用 Anthropic Messages 格式，False 使用 OpenAI Chat Completions 格式
+            profiles: 多组 Custom 配置，每组可包含独立 URL / API Key / 模型列表
         """
-        self._CUSTOM_API_URL = api_url.strip()
-        self._CUSTOM_SUPPORTS_FC = supports_fc
-        self._CUSTOM_ANTHROPIC_PROTOCOL = bool(anthropic_protocol)
-        if api_key:
-            self._api_keys['custom'] = api_key.strip()
+        normalized_profiles: List[Dict[str, Any]] = []
+        for idx, profile in enumerate(profiles or [], start=1):
+            if not isinstance(profile, dict):
+                continue
+            models = profile.get('models') or []
+            if isinstance(models, str):
+                models = [m.strip() for m in re.split(r'[,;\n]+', models) if m.strip()]
+            else:
+                models = [str(m).strip() for m in models if str(m).strip()]
+            enabled_models = profile.get('enabled_models') or []
+            if isinstance(enabled_models, str):
+                enabled_models = [m.strip() for m in re.split(r'[,;\n]+', enabled_models) if m.strip()]
+            else:
+                enabled_models = [str(m).strip() for m in enabled_models if str(m).strip()]
+            enabled_models = [m for m in enabled_models if m in models]
+            try:
+                context_limit = int(profile.get('context_limit') or 128000)
+            except (TypeError, ValueError):
+                context_limit = 128000
+            protocol = str(profile.get('protocol') or 'openai').strip().lower()
+            if protocol not in ('anthropic', 'messages', 'anthropic_messages'):
+                protocol = 'openai'
+            else:
+                protocol = 'anthropic'
+            raw_api_url = profile.get('api_url', '')
+            normalized_profiles.append({
+                'name': str(profile.get('name') or f'Custom {idx}').strip() or f'Custom {idx}',
+                'api_url': normalize_custom_messages_url(raw_api_url) if protocol == 'anthropic' else normalize_custom_chat_url(raw_api_url),
+                'api_key': str(profile.get('api_key') or '').strip(),
+                'protocol': protocol,
+                'models': models,
+                'enabled_models': enabled_models,
+                'context_limit': context_limit,
+                'supports_vision': bool(profile.get('supports_vision', False)),
+                'supports_fc': bool(profile.get('supports_fc', supports_fc)),
+            })
+        if not normalized_profiles:
+            normalized_profiles = [{
+                'name': 'Custom 1',
+                'api_url': normalize_custom_chat_url(api_url),
+                'api_key': (api_key or '').strip(),
+                'protocol': 'openai',
+                'models': [],
+                'enabled_models': [],
+                'context_limit': 128000,
+                'supports_vision': False,
+                'supports_fc': supports_fc,
+            }]
+
+        self._CUSTOM_PROFILES = normalized_profiles
+        self._CUSTOM_MODEL_ROUTES = {}
+        self._CUSTOM_MODEL_NAMES = {}
+
+        for profile in normalized_profiles:
+            profile_name = profile.get('name', 'Custom')
+            visible_models = profile.get('enabled_models') or profile.get('models', [])
+            for model in visible_models:
+                label = f"{profile_name} / {model}"
+                self._CUSTOM_MODEL_ROUTES[label] = profile
+                self._CUSTOM_MODEL_NAMES[label] = model
+                self._CUSTOM_MODEL_ROUTES.setdefault(model, profile)
+                self._CUSTOM_MODEL_NAMES.setdefault(model, model)
+
+        primary = normalized_profiles[0]
+        self._CUSTOM_API_URL = primary.get('api_url', '')
+        self._CUSTOM_SUPPORTS_FC = primary.get('supports_fc', supports_fc)
+        primary_key = primary.get('api_key') or (api_key or '').strip()
+        if primary_key:
+            self._api_keys['custom'] = primary_key
     
     def set_ollama_url(self, base_url: str):
         """设置 Ollama 服务地址"""
@@ -2481,10 +2695,9 @@ class AIClient:
         if not HAS_REQUESTS:
             return []
         
-        base = api_url.rstrip('/')
-        if base.endswith('/chat/completions'):
-            base = base[:-len('/chat/completions')]
-        models_url = base + '/models'
+        models_url = normalize_custom_models_url(api_url)
+        if not models_url:
+            return []
         
         headers = {'Content-Type': 'application/json'}
         if api_key:
@@ -2518,28 +2731,34 @@ class AIClient:
             except Exception as e:
                 return {'ok': False, 'error': f'无法连接 Ollama 服务: {str(e)}'}
         
-        api_key = self._get_api_key(provider)
+        default_model = self._get_default_model(provider)
+        api_key = self._get_api_key(provider, default_model)
         # Custom provider 允许无 API Key（本地服务等）
         if not api_key and provider != 'custom':
             return {'ok': False, 'error': f'缺少 API Key'}
         
         try:
             if HAS_REQUESTS:
-                headers = {'Content-Type': 'application/json'}
+                headers = {'Content-Type': 'application/json; charset=utf-8'}
                 if api_key:
                     headers['Authorization'] = f'Bearer {api_key}'
                 response = self._http_session.post(
-                    self._get_api_url(provider),
-                    json={'model': self._get_default_model(provider), 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1},
+                    self._get_api_url(provider, default_model),
+                    data=self._json_body({'model': default_model, 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1}),
                     headers=headers,
                     timeout=15,
                     proxies={'http': None, 'https': None}
                 )
-                return {'ok': True, 'url': self._get_api_url(provider), 'status': response.status_code}
+                return {'ok': True, 'url': self._get_api_url(provider, default_model), 'status': response.status_code}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
 
     def _get_default_model(self, provider: str) -> str:
+        if (provider or '').lower() == 'custom':
+            profile = self._get_custom_profile()
+            models = profile.get('enabled_models') or profile.get('models') or []
+            if models:
+                return models[0]
         defaults = {
             'openai': 'gpt-5.2', 
             'deepseek': 'deepseek-v4-flash',
@@ -2843,12 +3062,13 @@ class AIClient:
         解析 Anthropic SSE 事件流，yield 与 OpenAI 分支相同的内部 chunk 格式。
         """
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if (provider or '').lower() == 'custom' else model
         
         # 消息转换
         system_text, anth_messages = self._convert_messages_to_anthropic(messages)
         
         payload: Dict[str, Any] = {
-            'model': model,
+            'model': request_model,
             'messages': anth_messages,
             'max_tokens': max_tokens or 16384,
             'stream': True,
@@ -2876,19 +3096,19 @@ class AIClient:
         
         # 请求头（Anthropic 格式）
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'Accept': 'text/event-stream',
             'x-api-key': api_key,
             'anthropic-version': '2023-06-01',
         }
         
-        print(f"[AI Client] Anthropic protocol: {api_url} model={model}")
+        print(f"[AI Client] Anthropic protocol: {api_url} model={request_model}")
         
         for attempt in range(self._max_retries):
             try:
                 with self._http_session.post(
                     api_url,
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),
@@ -2973,7 +3193,7 @@ class AIClient:
                                 if thinking:
                                     if not _got_thinking:
                                         _got_thinking = True
-                                        print(f"[AI Client] 🧠 Anthropic thinking (首个 chunk, len={len(thinking)}, enable={_enable_thinking_flag})")
+                                        print(f"[AI Client] Anthropic thinking (first chunk, len={len(thinking)}, enable={_enable_thinking_flag})")
                                     if _enable_thinking_flag:
                                         results.append({"type": "thinking", "content": thinking})
                             
@@ -3134,10 +3354,11 @@ class AIClient:
                         timeout: int = 60) -> Dict[str, Any]:
         """Anthropic Messages 协议的非流式 Chat。"""
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if (provider or '').lower() == 'custom' else model
         system_text, anth_messages = self._convert_messages_to_anthropic(messages)
         
         payload: Dict[str, Any] = {
-            'model': model,
+            'model': request_model,
             'messages': anth_messages,
             'max_tokens': max_tokens,
         }
@@ -3151,7 +3372,7 @@ class AIClient:
                 payload['tool_choice'] = {'type': 'auto'}
         
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'x-api-key': api_key,
             'anthropic-version': '2023-06-01',
         }
@@ -3159,7 +3380,7 @@ class AIClient:
         for attempt in range(self._max_retries):
             try:
                 response = self._http_session.post(
-                    api_url, json=payload, headers=headers,
+                    api_url, data=self._json_body(payload), headers=headers,
                     timeout=timeout, proxies={'http': None, 'https': None}
                 )
                 response.raise_for_status()
@@ -3233,7 +3454,7 @@ class AIClient:
             return
         
         provider = (provider or 'openai').lower()
-        api_key = self._get_api_key(provider)
+        api_key = self._get_api_key(provider, model)
         
         # Ollama / Custom（无 Key）不需要 API Key 验证
         if provider not in ('ollama', 'custom') and not api_key:
@@ -3251,9 +3472,10 @@ class AIClient:
             return
         
         api_url = self._get_api_url(provider, model)
+        request_model = self._get_custom_model_name(model) if provider == 'custom' else model
         
         payload = {
-            'model': model,
+            'model': request_model,
             'messages': messages,
             'temperature': temperature,
             'stream': True,
@@ -3290,7 +3512,7 @@ class AIClient:
         
         # 构建请求头
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
             'Accept': 'text/event-stream',
         }
         
@@ -3309,7 +3531,7 @@ class AIClient:
             try:
                 with self._http_session.post(
                     api_url,
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     stream=True,
                     timeout=(10, self._chunk_timeout),  # (连接超时, 读取超时)
@@ -3404,7 +3626,7 @@ class AIClient:
                                 _field = ('reasoning_content' if 'reasoning_content' in delta
                                           else 'thinking_content' if 'thinking_content' in delta
                                           else 'reasoning')
-                                print(f"[AI Client] 🧠 收到 {_field}（首个 chunk，len={len(_thinking_text)}，enable_thinking={_enable_thinking}）")
+                                print(f"[AI Client] Received {_field} (first chunk, len={len(_thinking_text)}, enable_thinking={_enable_thinking})")
                             if _enable_thinking:
                                 results.append({"type": "thinking", "content": _thinking_text})
                         
@@ -3652,12 +3874,14 @@ class AIClient:
             return {'ok': False, 'error': '需要安装 requests 库'}
 
         provider = (provider or 'openai').lower()
-        api_key = self._get_api_key(provider)
+        api_key = self._get_api_key(provider, model)
         if not api_key and provider not in ('ollama', 'custom'):
             return {'ok': False, 'error': f'缺少 API Key'}
 
+        request_model = self._get_custom_model_name(model) if provider == 'custom' else model
+
         payload = {
-            'model': model,
+            'model': request_model,
             'messages': messages,
             'temperature': temperature,
         }
@@ -3682,7 +3906,7 @@ class AIClient:
             payload['tool_choice'] = tool_choice
         
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
         }
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
@@ -3705,7 +3929,7 @@ class AIClient:
             try:
                 response = self._http_session.post(
                     self._get_api_url(provider, model),
-                    json=payload,
+                    data=self._json_body(payload),
                     headers=headers,
                     timeout=timeout,
                     proxies={'http': None, 'https': None}
@@ -3820,11 +4044,12 @@ class AIClient:
         consecutive_same_calls = 0  # 连续相同调用计数
         last_call_signature = None
         server_error_retries = 0    # 连续服务端错误重试计数
-        max_server_retries = 3      # 最多重试 3 次服务端错误
+        max_server_retries = self._server_error_max_retries
         
         # ★ Cursor 风格：同轮去重缓存
         # 如果 AI 在同一 turn 中用相同参数调用相同工具，直接返回缓存结果
         # key: "tool_name:sorted_args_json" → value: result dict
+        pending_visual_checkpoint_tools = []
         _turn_dedup_cache: Dict[str, dict] = {}
         
         # ★ 消息清洗 dirty 标志（避免每轮都 O(n) 遍历消息列表）
@@ -4047,7 +4272,7 @@ class AIClient:
                             
                         elif is_server_transient or is_compress_fail:
                             # ---- 临时服务器错误：先等待重试，不急着裁剪 ----
-                            wait_seconds = 5 * server_error_retries
+                            wait_seconds = min(20, 5 * server_error_retries)
                             if on_content:
                                 on_content(f"\n[服务端暂时不可用，{wait_seconds}秒后重试 ({server_error_retries}/{max_server_retries})...]\n")
                             time.sleep(wait_seconds)
@@ -4065,17 +4290,6 @@ class AIClient:
                             
                         else:
                             # ---- 4xx 格式问题 → 移除末尾可能有问题的消息 ----
-                            # 先剥离尾部注入的多模态 user 消息（capture_viewport 回注的图片块）
-                            # 这类消息不在 tool/assistant 清理范围内，但格式错误会导致连续 400
-                            while (working_messages and cleanup_count < 5 and
-                                   working_messages[-1].get('role') == 'user' and
-                                   working_messages[-1] is not messages[0] and
-                                   isinstance(working_messages[-1].get('content'), list) and
-                                   any(p.get('type') in ('image_url', 'image')
-                                       for p in working_messages[-1]['content']
-                                       if isinstance(p, dict))):
-                                working_messages.pop()
-                                cleanup_count += 1
                             while (working_messages and cleanup_count < 20 and
                                    working_messages[-1].get('role') in ('tool', 'system')
                                    and working_messages[-1] is not messages[0]):
@@ -4483,15 +4697,111 @@ class AIClient:
                 if supports_vision and result.get('_viewport_image'):
                     _img_b64 = result['_viewport_image']
                     _img_mt = result.get('_image_media_type', 'image/jpeg')
-                    _use_anth = self._is_anthropic_protocol(provider, model)
                     working_messages.append({
                         'role': 'user',
                         'content': [
                             {"type": "text", "text": "[viewport snapshot attached — please analyze the current viewport state, check for visual issues or confirm the result is correct]"},
-                            self._build_image_block(_img_b64, _img_mt, _use_anth)
+                            {"type": "image_url", "image_url": {"url": f"data:{_img_mt};base64,{_img_b64}"}}
                         ]
                     })
-                    print(f"[AI Client] 📸 视口截图已注入消息 ({len(_img_b64)//1024}KB, {'anthropic' if _use_anth else 'openai'} format)")
+                    print(f"[AI Client] Viewport snapshot injected ({len(_img_b64)//1024}KB base64)")
+
+            # Auto visual checkpoint:
+            # Scene-changing tools only mark the viewport as needing review.
+            # We take the screenshot when a phase-completion tool succeeds, so
+            # the model verifies stage results instead of every individual edit.
+            if any(
+                pc[1] == 'capture_viewport'
+                and isinstance(results_ordered[_ci], dict)
+                and results_ordered[_ci].get('success')
+                for _ci, pc in enumerate(parsed_calls)
+            ):
+                pending_visual_checkpoint_tools = []
+
+            if (
+                supports_vision
+                and not self._stop_event.is_set()
+                and parsed_calls
+                and not any(pc[1] == 'capture_viewport' for pc in parsed_calls)
+            ):
+                _round_changed_tools = []
+                _phase_complete_tools = []
+                for _ri, (_tid, _tn, _ta, _tc) in enumerate(parsed_calls):
+                    _rr = results_ordered[_ri]
+                    if (
+                        _tn in self._VISUAL_CHECKPOINT_TOOLS
+                        and isinstance(_rr, dict)
+                        and _rr.get('success')
+                    ):
+                        _round_changed_tools.append(_tn)
+                    if (
+                        _tn in self._VISUAL_PHASE_COMPLETE_TOOLS
+                        and isinstance(_rr, dict)
+                        and _rr.get('success')
+                    ):
+                        _phase_complete_tools.append(_tn)
+
+                if _round_changed_tools:
+                    pending_visual_checkpoint_tools.extend(_round_changed_tools)
+
+                if pending_visual_checkpoint_tools and _phase_complete_tools:
+                    _auto_args = {"width": 960, "height": 540}
+                    _auto_args_for_ui = {**_auto_args, "_auto": True}
+                    if on_tool_call:
+                        on_tool_call('capture_viewport', _auto_args_for_ui)
+                    try:
+                        _auto_result = self._tool_executor('capture_viewport', **_auto_args)
+                    except Exception as _auto_e:
+                        _auto_result = {
+                            "success": False,
+                            "error": f"Auto visual checkpoint failed: {_auto_e}",
+                        }
+
+                    tool_calls_history.append({
+                        'tool_name': 'capture_viewport',
+                        'arguments': {
+                            **_auto_args_for_ui,
+                            "after_tools": pending_visual_checkpoint_tools,
+                            "phase_complete_tools": _phase_complete_tools,
+                        },
+                        'result': _auto_result,
+                    })
+                    if on_tool_result:
+                        on_tool_result('capture_viewport', _auto_args_for_ui, _auto_result)
+
+                    if isinstance(_auto_result, dict) and _auto_result.get('_viewport_image'):
+                        _img_b64 = _auto_result['_viewport_image']
+                        _img_mt = _auto_result.get('_image_media_type', 'image/jpeg')
+                        _reason = ", ".join(dict.fromkeys(pending_visual_checkpoint_tools))
+                        _phase = ", ".join(dict.fromkeys(_phase_complete_tools))
+                        working_messages.append({
+                            'role': 'user',
+                            'content': [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "[auto visual checkpoint attached after phase completion: "
+                                        f"{_phase}. Changed tools since last visual check: {_reason}. "
+                                        "First inspect the screenshot for obvious visual "
+                                        "problems, scale/framing issues, missing geometry, or incorrect "
+                                        "display output. If it looks correct, continue or finalize; if not, "
+                                        "fix the Houdini network and verify again.]"
+                                    ),
+                                },
+                                {"type": "image_url", "image_url": {"url": f"data:{_img_mt};base64,{_img_b64}"}},
+                            ],
+                        })
+                        print(
+                            f"[AI Client] Auto visual checkpoint injected at phase completion "
+                            f"({_phase}; {len(pending_visual_checkpoint_tools)} pending scene-changing tool(s)) "
+                            f"({len(_img_b64)//1024}KB base64)"
+                        )
+                        pending_visual_checkpoint_tools = []
+                    elif isinstance(_auto_result, dict):
+                        print(
+                            "[AI Client] Auto visual checkpoint skipped: "
+                            f"{_auto_result.get('error') or _auto_result.get('result')}"
+                        )
 
             if should_break_tool_limit:
                 return {
@@ -4648,7 +4958,8 @@ class AIClient:
             return False
         # Custom provider 根据用户配置决定
         if provider == 'custom':
-            return self._CUSTOM_SUPPORTS_FC
+            profile = self._get_custom_profile(model)
+            return bool(profile.get('supports_fc', self._CUSTOM_SUPPORTS_FC))
         # 其他云端模型都支持
         return True
     
@@ -4855,7 +5166,7 @@ class AIClient:
         consecutive_same_calls = 0
         last_call_signature = None
         server_error_retries = 0    # 连续服务端错误重试计数
-        max_server_retries = 3      # 最多重试 3 次服务端错误
+        max_server_retries = self._server_error_max_retries
         
         while iteration < max_iterations:
             if self._stop_event.is_set():
@@ -4968,7 +5279,7 @@ class AIClient:
                             )
                         else:
                             # 临时服务器错误：等待，第2次开始才裁剪
-                            wait_seconds = 5 * server_error_retries
+                            wait_seconds = min(20, 5 * server_error_retries)
                             if on_content:
                                 on_content(f"\n[服务端暂时不可用，{wait_seconds}秒后重试 ({server_error_retries}/{max_server_retries})...]\n")
                             time.sleep(wait_seconds)
@@ -5266,11 +5577,10 @@ class AIClient:
             
             if _viewport_imgs:
                 # 多模态消息：文本 + 图片
-                _use_anth = self._is_anthropic_protocol(provider, model)
                 _content_parts = [{"type": "text", "text": f"[TOOL_RESULT]\n{prompt}\n[viewport snapshot attached — please analyze the current viewport state]"}]
                 for _vimg_b64, _vimg_mt in _viewport_imgs:
-                    _content_parts.append(self._build_image_block(_vimg_b64, _vimg_mt, _use_anth))
-                    print(f"[AI Client] 📸 视口截图已注入消息 (JSON mode, {len(_vimg_b64)//1024}KB, {'anthropic' if _use_anth else 'openai'} format)")
+                    _content_parts.append({"type": "image_url", "image_url": {"url": f"data:{_vimg_mt};base64,{_vimg_b64}"}})
+                    print(f"[AI Client] Viewport snapshot injected (JSON mode, {len(_vimg_b64)//1024}KB)")
                 working_messages.append({'role': 'user', 'content': _content_parts})
             else:
                 working_messages.append({

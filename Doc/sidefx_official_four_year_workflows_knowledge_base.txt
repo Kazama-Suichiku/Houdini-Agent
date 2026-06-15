@@ -1,0 +1,93 @@
+# SideFX 近四年官方教程工作流知识库
+# 来源: https://www.sidefx.com/learn/learning-library/tutorials/
+# 采集范围: 2022-06-10 之后的官方 Learning Library 元数据；本次本地索引覆盖 24 个分类、513 个去重教程。
+# 已抓取分类: Modeling、VFX、Animation、Crowds、Hair & Fur、Terrain、Vellum、Fluids、PDG、Pyro FX、Destruction FX、Copernicus、MPM、Cloth、Particles、Karma、Oceans、Procedural Model、Geo Processing、Solaris、AI & ML、Lookdev、VEX、Python。
+# 证据边界: 本文件只吸收标题、描述、分类、版本、难度、教程类型能支撑的学习路径和 Agent 决策规则。multivideotutorial 未逐段转写时，不把视频内具体节点连线、参数数值、操作顺序写成确定事实。
+
+## 官方教程证据分层与 Agent 使用原则
+SideFX Learning Library 的元数据适合用于学习路径、任务分流和待核验列表；texttutorial、官方节点文档和本地 SideFX 文档适合支撑更具体的节点/参数规则；只有视频标题和描述的 multivideotutorial 只能证明主题、版本、难度和目标，不足以证明完整制作步骤。
+
+Agent 推荐教程时应先分清用户任务属于哪一类：SOP/建模、DOP/FX、Pyro、RBD、Vellum/Cloth、Fluids/Oceans、COP/Copernicus、Solaris/Karma/Lookdev、AI/ML/PDG/Python。再根据版本、难度、是否免费、是否 texttutorial、是否官方文档可交叉验证来排序。不要把项目课的镜头特例抽象成通用规则；要把它标成案例索引。
+
+当用户问“我该学什么”或“官方教程怎么走”时，Agent 应优先给路径而不是孤立链接。路径格式建议是“基础概念 -> 核心上下文 -> 可控源/属性 -> solver 或生成网络 -> 缓存/验证 -> 渲染/交付”。对弱覆盖方向要明确说“官方项目案例较多，但系统基础线不足，需要结合节点文档和实际 Houdini 验证”。
+
+## SOP / 建模 / Geo Processing 官方路线
+近四年官方索引里 SOP/建模覆盖很强，相关高信号教程包括 `How To create a Procedural Bonsai Tree`、`Fancy SDF Operations`、`Create a procedural Lego Wall`、`Project Elderwood | Cliffs`、`Procedural Herringbone Pattern Using VEX & MaterialX`、`Procedural Modeling: Create a Sci-Fi Camera`、`Project Skylark | Bottles`、`Project Skylark | Trimsheet`、`How to Build Materials Using Primvars`。
+
+可入库经验：程序化建模应优先被理解为“几何属性和数据流设计”，而不是单个节点技巧。常见路线是建立输入约束、生成或清理属性、用 VEX/SDF/Boolean/Copy/Instance/HeightField 等组合形成可重复结构，再把关键属性传给材质、USD 或 PDG 批处理。Agent 创建 SOP 网络时应暴露中间检查点：输入几何、关键 point/prim/detail attribute、mask、group、SDF/VDB、最终可渲染输出。
+
+SOP 任务的诊断顺序：先看几何数量和拓扑，再看属性域和属性范围，再看随机种子/比例/单位，最后看渲染。用户要求“更程序化”时，不应只增加随机噪声；应把控制项拆成可命名参数，例如模块尺寸、密度、mask、方向、层级、seed、variation、LOD 和导出属性。
+
+局限：官方索引里项目型 SOP 很多，但“现代 SOP 基础到 HDA 发布”的连续课程不完整。硬表面拓扑、UV、HDA 参数设计、资产版本化和生产规范需要结合本地文档、节点 help 或实际 Houdini 测试补齐。
+
+## DOP / FX 总体官方路线
+近四年 DOP/FX 官方索引强，但偏 Pyro、MPM、Particles 和项目 FX。高信号教程包括 `Dust Interaction | Full Beginner Pyro Course`、`Introduction to Particles`、`MPM Fundamentals`、`MPM H21 Masterclass`、`How to Create Sand Disintegration Effect Using MPM Solver`、`Small MPM: Simulating falling snow`、`How to create a custom wind force for the Pyro Solver`、`Cinematic Ocean FX`。
+
+可入库经验：FX 网络应按 source -> representation -> solver -> control fields/constraints -> post process -> cache -> render 组织。source 负责可控输入，representation 负责选择 particles、volume/VDB、packed RBD、Vellum geometry、FLIP particles、MPM particles 等数据形态，solver 负责时间积分，control fields/constraints 负责艺术指导，post process 负责 meshing、filtering、retime、AOV 或导出。
+
+Agent 遇到“模拟不对”要先判断是哪一层失败：源不稳定、数据形态不适合、solver 参数不匹配、碰撞代理错误、时间步/substeps 不足、缓存版本混乱，还是渲染阶段遮盖了问题。不要先建议提高分辨率；先做低分辨率 preview、字段可视化、碰撞代理检查、单位/帧率检查和短帧段缓存。
+
+局限：官方元数据没有独立 DOP 总类；RBD、Vellum、FLIP 的系统基础线分散。Agent 在这些方向给具体节点步骤前，应优先检索本地节点文档或请求实际场景验证。
+
+## Pyro / Fire / Smoke 官方路线
+Pyro 官方高信号教程包括 `Dust Interaction | Full Beginner Pyro Course`、`Introduction to Volumes I - Dust Interaction`、`Create smoke tendrils simulation`、`How to create a custom wind force for the Pyro Solver`、`How to Create Thruster FX`、`JetPack Craig - Houdini (Pyro/Thrusters/XPU)`、`How to Make a Pyro Reveal Effect in COPs`、`IPOPs Volumes AOVs for Karma CPU & XPU!`。
+
+官方路线应从 dust/smoke 和 volume 基础开始，再进入 source、vel、temperature、density、燃烧/冷却、custom wind/microsolver、thruster/jetpack 这类镜头化效果，最后进入 Solaris/Karma XPU 和 volume AOV/lookdev。Pyro Reveal 属于 Copernicus 与 Pyro 交叉任务，可作为 animated mask、pyro simulation、texture blending 的学习方向。
+
+Agent 规则：火焰/烟雾问题先检查 `density`、`temperature`、`fuel`、`flame`、`vel`、source scale、voxel size、time scale、cooling、buoyancy、边界和碰撞。thruster/jetpack 类效果优先考虑运动驱动 emission、粒子速度或 polygon input 生成方向性排气；需要方向性风场时优先考虑 custom field/microsolver 思路；需要渲染诊断时把 simulation fields 与 Karma volume material/AOV 分开看。
+
+局限：除 texttutorial 和官方文档外，multivideotutorial 不能证明具体节点连线和参数数值。付费教程只作为主题索引，不沉淀专有工具实现。
+
+## RBD / 破碎官方路线
+RBD/破碎近四年覆盖中等，官方索引里常见案例包括 `Castle Wall Tool`、`Destruction II - SOP Level RBD`、`RBD Collision Techniques`、`H19.5 Foundations | Smashing Wine Glass`、`Houdini RBD II - Ground Destruction`、`Multi Layered Destruction`、`Blackhawk Destruction FX`，以及与 Pyro dust、MPM、Solaris/Karma 交付交叉的项目课。
+
+可入库经验：破碎任务要拆成 prefracture、packed pieces、name/id、constraint network、collision proxy、activation、solver、secondary debris/dust、post fracture cleanup、render handoff。Agent 创建或诊断 RBD 时，优先检查 piece 命名唯一性、packed transform、碰撞形状、约束类型和强度、激活时机、scale、substeps、缓存位置。
+
+RBD 与 Pyro 常联动：破碎产生的速度、冲击、碎片 mask 或接触区域可以驱动 dust/smoke source。不要把 dust 当作 RBD 求解的一部分；应把 rigid body 主运动、二次碎片、尘烟和渲染 AOV 分层缓存。
+
+局限：本次官方索引虽然有 Destruction FX 分类，但系统化 Houdini 21 RBD 全流程基础不够集中。约束分层、胶水/软约束、packed workflow 性能优化和 Solaris 资产交付需要继续用节点文档或实际 hip 验证。
+
+## Vellum / Cloth / CFX 官方路线
+Vellum 近四年官方索引有项目案例和 CFX 交叉内容，包括 `Mastering Vellum Fluids & Cloth Interaction`、`Vellum Paperplane and Pyro`、`SDF-based Softbody`、`Creating a Dark Scene with Falling Books Using Vellum and Solaris`、`Simulate USD variants with Vellum`、`Umbrella vellum, rain particles, ACES render in COPs`、`Mastering Muscles`。
+
+可入库经验：Vellum/Cloth 应被看作 constraint-based simulation。核心检查点是 geometry resolution、constraint 类型、pin/attach、bend/stretch/stiffness、collision thickness、substeps、mass、damping、rest state、target/animation blend。Agent 回答布料或软体问题时，应先确认用户需要 cloth、softbody、hair、grain、fluid-like Vellum 还是 muscle/CFX，而不是把 Vellum 统称为布料。
+
+Vellum 适合轻量交互、布料/软体/颗粒类镜头效果，也常作为 lookdev 输入，例如 wet-map、接触 mask、USD variants 或 Solaris 场景装配。复杂角色服装、长期稳定模拟和高强度碰撞需要更严格的碰撞代理、分层约束和缓存策略。
+
+局限：官方索引里 Cloth 分类很小，Vellum 项目多但基础线不完整。pin/attach/constraint 设计、碰撞厚度调参、角色布料稳定性和服装生产流程仍需本地文档或实践验证。
+
+## Fluids / FLIP / 水体 / Oceans 官方路线
+Fluids/Oceans 官方索引覆盖低到中等，高信号教程包括 `Fluids I - FLIP Simulations`、`The Submarine | FLIP Fluids`、`Advanced Large Scale Fluid FX`、`Cinematic Ocean FX`、`Create Wetmaps with COPS`、`Rendering WET-MAPS in Solaris (Karma XPU/MtlX)`、`Building a Fluid Solver in Copernicus`。
+
+Agent 必须区分三类“流体”：三维物理 FLIP/水体模拟、Oceans/海面频谱与大尺度水体、Copernicus/COP 里的二维 flow 或图像反馈。COP fluid solver 是 2D/image-processing 语境，不能等同 3D FLIP。Vellum fluids 适合某些颗粒/黏性/小尺度交互，也不能直接替代 FLIP。
+
+FLIP 诊断顺序：先检查 scene scale、particle separation、source emission、collision volume/proxy、narrow band/边界、substeps、velocity transfer、reseeding、surface meshing、whitewater/wetmap、cache。水体场景要把模拟、meshing、foam/spray/wetmap、材质、lighting、compositing 分开缓存和验证。
+
+局限：近四年官方免费连续 FLIP 路线不足，白水、粘性液体、岸线泡沫、船体交互、窄带 FLIP、meshing 和缓存优化覆盖分散。Agent 给详细步骤前应检索官方节点 help 或本地文档。
+
+## COP / Copernicus 官方路线
+Copernicus 官方教程近四年增长很快，高信号教程包括 `The Ultimate Copernicus Guide`、`Building a Fluid Solver in Copernicus`、`How to Make a Pyro Reveal Effect in COPs`、`PBR Texturing in Copernicus`、`How to Generate Heightfield Masks Using Copernicus`、`How to Setup ACES for Rendering and Compositing`、`Creating Quartz! - With COPS!`、`Eikonal Contour Plotting in Copernicus`。
+
+Copernicus 任务先分流：图像处理、纹理/PBR、mask、heightfield mask、ACES/color、2D flow、COP Pyro reveal、ONNX inference。基础概念是 context、layers、cables、cooking、GPU/OpenCL、feedback/block、cache 和输出层管理。复杂 COP 网络应优先组织 layers/cables 和缓存边界，而不是把所有逻辑塞进单个不可诊断的网络。
+
+性能规则：检查分辨率、静态输入是否进入反馈 loop、traditional/compiled cooking、passthrough、cache、vRAM、是否每帧重复 cook 大纹理。COP Flow 或 COP Fluid Solver 适合快速视觉预览、纹理流动、2D solver 原理和风格化效果；需要三维体积遮挡、浮力、碰撞和真实体积渲染时，应转回 Pyro/FLIP/DOP 或 SOP Pyro。
+
+局限：Masterclass 或 multivideotutorial 的数学推导和具体节点步骤未转写时不入库为确定流程。ACES/COP/Solaris 的具体色彩链步骤需要教程正文或官方文档交叉验证。
+
+## 渲染 / Solaris / Karma / Lookdev 官方路线
+这是近四年官方教程覆盖最强的方向之一。高信号教程包括 `How to work with Solaris`、`Intro to Karma Concepts`、`How to Build Materials Using Primvars`、`FIX Tiling Issues (MaterialX/XPU/Solaris)`、`Refining Karma Renders`、`How to Setup ACES for Rendering and Compositing`、`Rendering WET-MAPS in Solaris (Karma XPU/MtlX)`、`Creating Quartz! - With COPS!`、`IPOPs Volumes AOVs for Karma CPU & XPU!`。
+
+Agent 处理渲染/lookdev 时，应把问题拆成 USD/Solaris 场景装配、MaterialX 材质、geometry primvars/attributes、texture/COPs、displacement/tessellation、lighting、camera、Karma CPU/XPU、AOV、ACES/color management、compositing。不要把“材质不好看”只归因于 shader；先确认属性来源、贴图色彩空间、UV/triplanar、位移细分、mask 范围、灯光和 view transform。
+
+Solaris/Karma 路线建议：先学 USD/Solaris stage 和 render settings，再学 MaterialX 和 primvars，再学 Karma CPU/XPU 差异、采样/噪声、AOV 和合成交付。体积、粒子、wet-map、COP-generated texture 都要有明确的属性/层/通道命名，避免渲染阶段找不到字段或使用了错误 color transform。
+
+局限：Lookdev 分类很宽，混有建模、FX、付费项目课。具体 MaterialX 节点参数、Karma 优化数值和生产灯光模板需要官方文档或实际渲染验证。
+
+## AI / ML / PDG / Python 官方路线
+AI & ML 官方索引较小但方向明确，高信号教程包括 `Machine Learning Tools`、`Training Machine Learning Models for FX Artists`、`ML Sketching`、`ML Groom Deformer`、`PCA Dejitter`、`Tensorflow System In Houdini`、`Stable Diffusion in PDG`、`How to Integrate ChatGPT (OpenAI)`、`Python States`、`Mastering 3D Geometry with Python and USD`。
+
+Agent 应先区分用户说的 AI/ML 是 Houdini 内建 example-based ML、ML Volume Upres、ONNX inference、COP/PDG 推理、外部 TensorFlow/Stable Diffusion、还是 LLM API 集成。Houdini 内建 ML 要求训练和推理的数据表示一致；ML Volume Upres 要求低分辨率大形体先正确、低/高分训练样本成对且覆盖目标分布、必须看 validation/holdout 和 tile seam。
+
+PDG 适合批量生成、wedges、数据准备、外部工具调度和资产输出；Python 适合工具、UI、HOM/USD 自动化、文件和 pipeline；VEX/OpenCL 适合高频几何/场并行计算。Agent 不应建议用 Python 替代高频点级处理，也不应把 ChatGPT/OpenAI 集成等同于 Houdini 内建 ML。
+
+局限：OpenAI/ChatGPT、Stable Diffusion、TensorFlow 等外部 API/依赖变化快。回答这些现代 API 细节时必须查当前官方文档；本知识库只保留 Houdini 工作流层面的分类和边界。

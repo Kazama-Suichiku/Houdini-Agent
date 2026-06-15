@@ -5,6 +5,9 @@ Houdini Agent - Launcher
 import sys
 import os
 
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+
 # ============================================================
 # 强制使用本地 lib 目录中的依赖库
 # ============================================================
@@ -14,7 +17,16 @@ _LIB_DIR = os.path.join(_ROOT_DIR, 'lib')
 if os.path.exists(_LIB_DIR):
     if _LIB_DIR in sys.path:
         sys.path.remove(_LIB_DIR)
-    sys.path.insert(0, _LIB_DIR)
+    sys.path.append(_LIB_DIR)
+
+try:
+    import importlib
+    if 'houdini_agent' in sys.modules:
+        importlib.reload(sys.modules['houdini_agent'])
+    else:
+        import houdini_agent  # noqa: F401
+except Exception:
+    pass
 
 # ============================================================
 
@@ -30,9 +42,9 @@ def detect_dcc():
 
 def launch_houdini_agent():
     """启动 Houdini Agent"""
-    tool_path = os.path.join(os.path.dirname(__file__), "houdini_agent")
-    if tool_path not in sys.path:
-        sys.path.insert(0, tool_path)
+    root_path = os.path.dirname(__file__)
+    if root_path not in sys.path:
+        sys.path.insert(0, root_path)
     
     # 清理旧包名残留（HOUDINI_HIP_MANAGER → houdini_agent 迁移）
     old_mods = [k for k in sys.modules if k.startswith('HOUDINI_HIP_MANAGER')]
@@ -40,12 +52,13 @@ def launch_houdini_agent():
         del sys.modules[k]
     
     try:
-        if 'main' in sys.modules:
+        module_name = 'houdini_agent.main'
+        if module_name in sys.modules:
             import importlib
-            import main
+            import houdini_agent.main as main
             importlib.reload(main)
         else:
-            import main
+            import houdini_agent.main as main
         
         return main.show_tool()
     except Exception as e:
@@ -74,6 +87,31 @@ def show_tool():
     global _agent_window
     _agent_window = launch()
     return _agent_window
+
+def show_embedded_tool():
+    """Explicit fallback entry for the in-Houdini embedded window."""
+    global _agent_window
+    if detect_dcc() != "houdini":
+        print("Error: Houdini not detected.")
+        return None
+    root_path = os.path.dirname(__file__)
+    if root_path not in sys.path:
+        sys.path.insert(0, root_path)
+    try:
+        module_name = 'houdini_agent.main'
+        if module_name in sys.modules:
+            import importlib
+            import houdini_agent.main as main
+            importlib.reload(main)
+        else:
+            import houdini_agent.main as main
+        _agent_window = main.show_embedded_tool()
+        return _agent_window
+    except Exception as e:
+        print(f"Failed to launch embedded Houdini Agent: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 if __name__ == "__main__":
     show_tool()

@@ -7,24 +7,36 @@ Houdini Agent - 主窗口
 import os
 import json
 import atexit
-import hou
 from pathlib import Path
 from houdini_agent.qt_compat import QtWidgets, QtGui, QtCore
 from houdini_agent.ui.ai_tab import AITab
 
 
+def _get_hou():
+    try:
+        import hou  # type: ignore
+        return hou
+    except Exception:
+        return None
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Houdini Agent 主窗口"""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, embedded: bool = True, mcp_client=None, bridge_url: str = ""):
+        self._embedded = bool(embedded)
+        self._mcp_client = mcp_client
+        self._bridge_url = bridge_url or ""
+        self._hou = _get_hou() if self._embedded else None
         # 尝试获取 Houdini 主窗口作为父窗口
-        if parent is None:
+        if self._embedded and parent is None and self._hou is not None:
             try:
-                parent = hou.qt.mainWindow()
+                parent = self._hou.qt.mainWindow()
             except:
                 pass
         
         super().__init__(parent)
+        self.setProperty("houdiniAgentTextScaleRoot", True)
         self.setWindowTitle("Houdini Agent")
         self.setMinimumSize(420, 600)
         
@@ -58,10 +70,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # 2. atexit（Python 解释器关闭时触发）
         atexit.register(self._atexit_save)
         # 3. Houdini 专用：监听 hipFile 事件（切换场景时也保存）
-        try:
-            hou.hipFile.addEventCallback(self._on_hip_event)
-        except Exception:
-            pass
+        if self._embedded and self._hou is not None:
+            try:
+                self._hou.hipFile.addEventCallback(self._on_hip_event)
+            except Exception:
+                pass
 
     def init_ui(self, central_widget):
         """初始化UI"""
@@ -69,7 +82,12 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        self.ai_tab = AITab(workspace_dir=self._workspace_dir)
+        self.ai_tab = AITab(
+            workspace_dir=self._workspace_dir,
+            embedded=self._embedded,
+            mcp_client=self._mcp_client,
+            bridge_url=self._bridge_url,
+        )
         layout.addWidget(self.ai_tab)
 
     def force_quit_application(self):
@@ -172,8 +190,10 @@ class MainWindow(QtWidgets.QMainWindow):
     
     def _on_hip_event(self, event_type):
         try:
-            if event_type in (hou.hipFileEventType.BeforeClear,
-                              hou.hipFileEventType.BeforeLoad):
+            if not self._embedded or self._hou is None:
+                return
+            if event_type in (self._hou.hipFileEventType.BeforeClear,
+                              self._hou.hipFileEventType.BeforeLoad):
                 self._save_workspace_once()
         except Exception:
             pass

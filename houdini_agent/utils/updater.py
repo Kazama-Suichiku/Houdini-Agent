@@ -159,7 +159,7 @@ def check_update(timeout: float = 8.0) -> dict:
     except ImportError:
         lib_dir = str(_PROJECT_ROOT / "lib")
         if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
+            sys.path.append(lib_dir)
         import requests  # type: ignore
     
     # 加载 ETag 缓存
@@ -282,7 +282,7 @@ def download_and_apply(progress_callback=None) -> dict:
     except ImportError:
         lib_dir = str(_PROJECT_ROOT / "lib")
         if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
+            sys.path.append(lib_dir)
         import requests  # type: ignore
     
     tmp_dir = None
