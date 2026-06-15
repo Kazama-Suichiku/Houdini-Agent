@@ -283,6 +283,13 @@ class HeaderMixin:
         act_memory.setToolTip(tr('memory.menu_tooltip'))
         act_memory.toggled.connect(self._on_memory_toggle_from_menu)
 
+        # Cook 实时模式开关（默认开启）—— checkable action
+        act_cook = menu.addAction(tr('cook.menu_label'))
+        act_cook.setCheckable(True)
+        act_cook.setChecked(bool(getattr(self, '_cook_realtime_mode', True)))
+        act_cook.setToolTip(tr('cook.menu_tooltip'))
+        act_cook.toggled.connect(self._on_cook_mode_toggle_from_menu)
+
         menu.addSeparator()
         
         # 语言子菜单
@@ -330,6 +337,13 @@ class HeaderMixin:
                 bridge.mount_buttons()
         except Exception:
             pass
+
+    def _on_cook_mode_toggle_from_menu(self, checked: bool):
+        """溢出菜单切换 Cook 实时模式开关"""
+        try:
+            self.set_cook_realtime_mode(bool(checked))
+        except Exception as e:
+            print(f"[Header] Cook mode toggle failed: {e}")
 
     def _on_memory_toggle_from_menu(self, checked: bool):
         """溢出菜单切换长期记忆系统开关"""

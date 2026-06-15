@@ -622,6 +622,16 @@ _ZH = {
     'memory.menu_tooltip': '启用后，AI 会积累经验并在对话中注入历史偏好；关闭后每次对话都是全新的。默认关闭。',
     'memory.toggle.enabled': '已启用长期记忆系统',
     'memory.toggle.disabled': '已关闭长期记忆系统（本次及后续对话不再注入历史经验）',
+    'cook.menu_label': 'Cook 实时模式',
+    'cook.menu_tooltip': '开启（默认）：保持 Auto 更新，工具执行后同步计算并反馈 cook 耗时，可实时看到视口变化。关闭：Agent 运行期间切换为 Manual 更新，防止重型节点 cook 阻塞界面。',
+    'cook.mode_realtime': '实时模式（Auto + 同步 cook）',
+    'cook.mode_protect': '保护模式（Manual）',
+    'cook.mode_switched': '已切换 Cook 模式：{}',
+    'cook.note_done': '[Cook] 显示节点已重新计算，耗时 {}s。',
+    'cook.note_slow': '[Cook][警告] 慢 cook：本次计算耗时 {}s（超过 60s）。最耗时节点：{}。请慎重重复 cook 该节点；如需继续大量编辑，建议在 ··· 菜单关闭“Cook 实时模式”切换到 Manual 保护模式，避免界面长时间冻结。',
+    'cook.note_interrupted': '[Cook] 计算被用户中断（已耗时 {}s，未完成）。结果可能未完全更新。',
+    'cook.note_switched_manual': '为避免视口重绘反复 cook 导致卡死，已自动切换为 Manual 更新模式，并在本次任务剩余阶段暂停自动 cook（视口不再自动刷新）。请告知用户：可在 Houdini 右上角更新模式手动切回 Auto，或在 ··· 菜单调整 Cook 模式。继续操作该重型节点时请谨慎。',
+    'cook.note_errors': '计算时以下节点报错：{}。',
 
     # ===== Plugin System =====
     'plugin.menu_label': '插件管理',
@@ -1211,6 +1221,16 @@ _EN = {
     'memory.menu_tooltip': 'When enabled, the assistant accumulates experience and injects past preferences into each chat. When off, every conversation starts fresh. Off by default.',
     'memory.toggle.enabled': 'Long-term memory enabled',
     'memory.toggle.disabled': 'Long-term memory disabled (no past experience will be injected going forward)',
+    'cook.menu_label': 'Realtime Cook',
+    'cook.menu_tooltip': 'On (default): keep Auto update; after each tool the display nodes are cooked synchronously and the cook time is reported, so you see viewport changes live. Off: switch to Manual update while the agent runs, preventing heavy-node cooks from freezing the UI.',
+    'cook.mode_realtime': 'Realtime (Auto + sync cook)',
+    'cook.mode_protect': 'Protected (Manual)',
+    'cook.mode_switched': 'Cook mode switched: {}',
+    'cook.note_done': '[Cook] Display nodes recooked in {}s.',
+    'cook.note_slow': '[Cook] WARNING slow cook: this recook took {}s (over 60s). Heaviest node: {}. Be cautious re-cooking this node; for further heavy editing consider turning off "Realtime Cook" in the ... menu to switch to Manual protection mode and avoid long UI freezes.',
+    'cook.note_interrupted': '[Cook] Cook was interrupted by the user after {}s (incomplete). Results may not be fully updated.',
+    'cook.note_switched_manual': 'To prevent the viewport redraw from repeatedly re-cooking and freezing, the session was automatically switched to Manual update mode and auto-cook is paused for the rest of this task (the viewport will not refresh automatically). Tell the user they can switch back to Auto from Houdini\'s update-mode dropdown (top-right), or adjust Cook mode in the ... menu. Proceed cautiously with this heavy node.',
+    'cook.note_errors': 'Cook errors on: {}.',
 
     # ===== Plugin System =====
     'plugin.menu_label': 'Plugins',
