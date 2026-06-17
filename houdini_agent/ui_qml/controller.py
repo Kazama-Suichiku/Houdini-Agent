@@ -78,6 +78,10 @@ VISION_MODELS = {
 BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
            "list_skills", "search_memory", "execute_shell"}
 
+# 经 bridge 调 Houdini 侧工具时，若 Houdini 已关闭/断开，返回这条而不是卡超时或抛原始 socket 错误
+_BRIDGE_LOST_MSG = ("Houdini 连接已断开（可能已关闭 Houdini 或 Bridge 未运行）。"
+                    "当前无法读取或修改场景，请重新打开 Houdini 后重试。")
+
 # read-only tools available during the Plan planning phase
 PLAN_READONLY = {"get_network_structure", "get_node_parameters", "list_children",
                  "get_node_inputs", "search_node_types", "semantic_search_nodes",
@@ -2107,11 +2111,15 @@ class Controller(QObject):
                     pass
             return res
         if getattr(self._session, "bridge", None) is not None:
+            if self._session.bridge.ping() is None:
+                return {"success": False, "error": _BRIDGE_LOST_MSG}
             try:
                 res = self._session.mcp.execute_tool(tool_name, kwargs)
                 self._last_activity = time.monotonic()
                 return res
             except Exception as e:
+                if self._session.bridge.ping() is None:
+                    return {"success": False, "error": _BRIDGE_LOST_MSG}
                 return {"success": False, "error": str(e)}
         if tool_name in BG_SAFE:
             try:
@@ -3142,9 +3150,13 @@ class Controller(QObject):
         if sess is None:
             return {"success": False, "error": "无会话"}
         if getattr(sess, "bridge", None) is not None:
+            if sess.bridge.ping() is None:
+                return {"success": False, "error": _BRIDGE_LOST_MSG}
             try:
                 return sess.mcp.execute_tool(name, kwargs)
             except Exception as e:
+                if sess.bridge.ping() is None:
+                    return {"success": False, "error": _BRIDGE_LOST_MSG}
                 return {"success": False, "error": str(e)}
         with self._tool_lock:
             while not self._tool_q.empty():
