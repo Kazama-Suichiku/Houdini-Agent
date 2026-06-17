@@ -30,6 +30,23 @@ _API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _VERSION_FILE = _PROJECT_ROOT / "VERSION"
 
+
+def _version_candidates():
+    """可能放置 VERSION 的位置（兼容源码运行与 PyInstaller 打包）。
+    打包后 __file__ 推导未必可靠，需优先用 _MEIPASS / 可执行文件目录兜底。"""
+    roots = []
+    mei = getattr(sys, "_MEIPASS", None)        # PyInstaller：VERSION 打到 _internal 根
+    if mei:
+        roots.append(Path(mei))
+    roots.append(_PROJECT_ROOT)                  # 源码：<repo>/VERSION
+    try:                                         # 独立程序：exe 同级 / exe 下 _internal
+        exe_dir = Path(sys.executable).resolve().parent
+        roots.append(exe_dir)
+        roots.append(exe_dir / "_internal")
+    except Exception:
+        pass
+    return roots
+
 # ETag 缓存文件（用于减少 GitHub API 计数、应对 403 限流）
 _ETAG_CACHE_FILE = _PROJECT_ROOT / "cache" / "update_cache.json"
 
@@ -47,11 +64,18 @@ _PRESERVE_PATHS = frozenset({
 # ==========================================================
 
 def get_local_version() -> str:
-    """读取本地 VERSION 文件，返回版本字符串，失败返回 '0.0.0'"""
-    try:
-        return _VERSION_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        return "0.0.0"
+    """读取本地 VERSION 文件，返回版本字符串，失败返回 '0.0.0'。
+    依次尝试多个候选位置，兼容源码运行与打包（避免打包后误报 0.0.0）。"""
+    for root in _version_candidates():
+        try:
+            f = root / "VERSION"
+            if f.is_file():
+                txt = f.read_text(encoding="utf-8").strip()
+                if txt:
+                    return txt
+        except Exception:
+            continue
+    return "0.0.0"
 
 
 def _parse_version(v: str) -> Tuple[int, ...]:
