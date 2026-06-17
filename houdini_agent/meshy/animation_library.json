@@ -1,0 +1,2978 @@
+{
+"_comment": "Meshy 动画库目录（用于 meshy_search_animations 语义/关键词检索）。来源 docs.meshy.ai/en/api/animation-library，已核对的 id 0-603 子集（官方完整范围 0-696，文档页尾部未能抓取；缺失的 id 可由 meshy_animate 直接以 action_id 透传）。",
+"id_range": [
+0,
+696
+],
+"verified_max_id": 603,
+"count": 592,
+"categories": [
+"BodyMovements",
+"DailyActions",
+"Dancing",
+"Fighting",
+"WalkAndRun"
+],
+"actions": [
+{
+"id": 0,
+"name": "Idle",
+"category": "DailyActions"
+},
+{
+"id": 1,
+"name": "Walking_Woman",
+"category": "WalkAndRun"
+},
+{
+"id": 2,
+"name": "Alert",
+"category": "DailyActions"
+},
+{
+"id": 3,
+"name": "Arise",
+"category": "DailyActions"
+},
+{
+"id": 4,
+"name": "Attack",
+"category": "Fighting"
+},
+{
+"id": 5,
+"name": "BackLeft_run",
+"category": "WalkAndRun"
+},
+{
+"id": 6,
+"name": "BackRight_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 7,
+"name": "BeHit_FlyUp",
+"category": "Fighting"
+},
+{
+"id": 8,
+"name": "Dead",
+"category": "Fighting"
+},
+{
+"id": 9,
+"name": "ForwardLeft_Run_Fight",
+"category": "Fighting"
+},
+{
+"id": 10,
+"name": "ForwardRight_Run_Fight",
+"category": "Fighting"
+},
+{
+"id": 11,
+"name": "Idle_02",
+"category": "DailyActions"
+},
+{
+"id": 12,
+"name": "Idle_03",
+"category": "DailyActions"
+},
+{
+"id": 13,
+"name": "Jump_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 14,
+"name": "Run_02",
+"category": "WalkAndRun"
+},
+{
+"id": 15,
+"name": "Run_03",
+"category": "WalkAndRun"
+},
+{
+"id": 16,
+"name": "RunFast",
+"category": "WalkAndRun"
+},
+{
+"id": 17,
+"name": "Skill_01",
+"category": "BodyMovements"
+},
+{
+"id": 18,
+"name": "Skill_02",
+"category": "BodyMovements"
+},
+{
+"id": 19,
+"name": "Skill_03",
+"category": "BodyMovements"
+},
+{
+"id": 20,
+"name": "Walk_Fight_Back",
+"category": "WalkAndRun"
+},
+{
+"id": 21,
+"name": "Walk_Fight_Forward",
+"category": "WalkAndRun"
+},
+{
+"id": 22,
+"name": "FunnyDancing_01",
+"category": "Dancing"
+},
+{
+"id": 23,
+"name": "FunnyDancing_02",
+"category": "Dancing"
+},
+{
+"id": 24,
+"name": "FunnyDancing_03",
+"category": "Dancing"
+},
+{
+"id": 25,
+"name": "Agree_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 26,
+"name": "Angry_Stomp",
+"category": "DailyActions"
+},
+{
+"id": 27,
+"name": "Big_Heart_Gesture",
+"category": "BodyMovements"
+},
+{
+"id": 28,
+"name": "Big_Wave_Hello",
+"category": "DailyActions"
+},
+{
+"id": 29,
+"name": "Call_Gesture",
+"category": "BodyMovements"
+},
+{
+"id": 30,
+"name": "Casual_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 31,
+"name": "Catching_Breath",
+"category": "BodyMovements"
+},
+{
+"id": 32,
+"name": "Chair_Sit_Idle_F",
+"category": "DailyActions"
+},
+{
+"id": 33,
+"name": "Chair_Sit_Idle_M",
+"category": "DailyActions"
+},
+{
+"id": 34,
+"name": "Checkout_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 35,
+"name": "Clapping_Run",
+"category": "BodyMovements"
+},
+{
+"id": 36,
+"name": "Confused_Scratch",
+"category": "DailyActions"
+},
+{
+"id": 37,
+"name": "Discuss_While_Moving",
+"category": "DailyActions"
+},
+{
+"id": 38,
+"name": "Dozing_Elderly",
+"category": "DailyActions"
+},
+{
+"id": 39,
+"name": "Excited_Walk_F",
+"category": "BodyMovements"
+},
+{
+"id": 40,
+"name": "Excited_Walk_M",
+"category": "BodyMovements"
+},
+{
+"id": 41,
+"name": "Formal_Bow",
+"category": "DailyActions"
+},
+{
+"id": 42,
+"name": "Gentlemans_Bow",
+"category": "DailyActions"
+},
+{
+"id": 43,
+"name": "Handbag_Walk",
+"category": "BodyMovements"
+},
+{
+"id": 44,
+"name": "Happy_jump_f",
+"category": "BodyMovements"
+},
+{
+"id": 45,
+"name": "Indoor_Play",
+"category": "BodyMovements"
+},
+{
+"id": 46,
+"name": "Jump_Rope",
+"category": "BodyMovements"
+},
+{
+"id": 47,
+"name": "Listening_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 48,
+"name": "Mirror_Viewing",
+"category": "DailyActions"
+},
+{
+"id": 49,
+"name": "Motivational_Cheer",
+"category": "DailyActions"
+},
+{
+"id": 50,
+"name": "Phone_Call_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 51,
+"name": "Shouting_Angrily",
+"category": "BodyMovements"
+},
+{
+"id": 52,
+"name": "Sit_to_Stand_Transition_F",
+"category": "DailyActions"
+},
+{
+"id": 53,
+"name": "Sit_to_Stand_Transition_M",
+"category": "DailyActions"
+},
+{
+"id": 54,
+"name": "Squat_Stance",
+"category": "Dancing"
+},
+{
+"id": 55,
+"name": "Stage_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 56,
+"name": "Stand_and_Chat",
+"category": "DailyActions"
+},
+{
+"id": 57,
+"name": "Stand_to_Sit_Transition_M",
+"category": "DailyActions"
+},
+{
+"id": 58,
+"name": "Step_to_Sit_Transition",
+"category": "DailyActions"
+},
+{
+"id": 59,
+"name": "Victory_Cheer",
+"category": "BodyMovements"
+},
+{
+"id": 60,
+"name": "Walk_to_Sit",
+"category": "DailyActions"
+},
+{
+"id": 61,
+"name": "happy_jump_m",
+"category": "BodyMovements"
+},
+{
+"id": 62,
+"name": "penguin_walk",
+"category": "BodyMovements"
+},
+{
+"id": 63,
+"name": "Arm_Circle_Shuffle",
+"category": "Dancing"
+},
+{
+"id": 64,
+"name": "All_Night_Dance",
+"category": "Dancing"
+},
+{
+"id": 65,
+"name": "Bass_Beats",
+"category": "Dancing"
+},
+{
+"id": 66,
+"name": "Boom_Dance",
+"category": "Dancing"
+},
+{
+"id": 67,
+"name": "Bubble_Dance",
+"category": "Dancing"
+},
+{
+"id": 68,
+"name": "Cherish_Pop_Dance",
+"category": "Dancing"
+},
+{
+"id": 69,
+"name": "Crystal_Beads",
+"category": "Dancing"
+},
+{
+"id": 70,
+"name": "Cardio_Dance",
+"category": "Dancing"
+},
+{
+"id": 71,
+"name": "Denim_Pop_Dance",
+"category": "Dancing"
+},
+{
+"id": 72,
+"name": "Dont_You_Dare",
+"category": "Dancing"
+},
+{
+"id": 73,
+"name": "Fast_Lightning",
+"category": "Dancing"
+},
+{
+"id": 74,
+"name": "Gangnam_Groove",
+"category": "Dancing"
+},
+{
+"id": 75,
+"name": "Indoor_Swing",
+"category": "Dancing"
+},
+{
+"id": 76,
+"name": "Love_You_Pop_Dance",
+"category": "Dancing"
+},
+{
+"id": 77,
+"name": "Magic_Genie",
+"category": "Dancing"
+},
+{
+"id": 78,
+"name": "Not_Your_Mom",
+"category": "Dancing"
+},
+{
+"id": 79,
+"name": "OMG_Groove",
+"category": "Dancing"
+},
+{
+"id": 80,
+"name": "Pop_Dance_LSA2",
+"category": "Dancing"
+},
+{
+"id": 81,
+"name": "Pod_Baby_Groove",
+"category": "Dancing"
+},
+{
+"id": 82,
+"name": "Shake_It_Off_Dance",
+"category": "Dancing"
+},
+{
+"id": 83,
+"name": "Superlove_Pop_Dance",
+"category": "Dancing"
+},
+{
+"id": 84,
+"name": "You_Groove",
+"category": "Dancing"
+},
+{
+"id": 85,
+"name": "Axe_Stance",
+"category": "Fighting"
+},
+{
+"id": 86,
+"name": "Basic_Jump",
+"category": "Fighting"
+},
+{
+"id": 87,
+"name": "Boxing_Practice",
+"category": "Fighting"
+},
+{
+"id": 88,
+"name": "Chest_Pound_Taunt",
+"category": "Fighting"
+},
+{
+"id": 89,
+"name": "Combat_Stance",
+"category": "Fighting"
+},
+{
+"id": 90,
+"name": "Counterstrike",
+"category": "Fighting"
+},
+{
+"id": 91,
+"name": "Double_Blade_Spin",
+"category": "Fighting"
+},
+{
+"id": 92,
+"name": "Double_Combo_Attack",
+"category": "Fighting"
+},
+{
+"id": 93,
+"name": "Dodge_and_Counter",
+"category": "Fighting"
+},
+{
+"id": 94,
+"name": "Flying_Fist_Kick",
+"category": "Fighting"
+},
+{
+"id": 95,
+"name": "Gun_Hold_Left_Turn",
+"category": "Fighting"
+},
+{
+"id": 96,
+"name": "Kung_Fu_Punch",
+"category": "Fighting"
+},
+{
+"id": 97,
+"name": "Left_Slash",
+"category": "Fighting"
+},
+{
+"id": 98,
+"name": "Run_and_Shoot",
+"category": "Fighting"
+},
+{
+"id": 99,
+"name": "Reaping_Swing",
+"category": "Fighting"
+},
+{
+"id": 100,
+"name": "Rightward_Spin",
+"category": "Fighting"
+},
+{
+"id": 101,
+"name": "Sword_Shout",
+"category": "BodyMovements"
+},
+{
+"id": 102,
+"name": "Sword_Judgment",
+"category": "Fighting"
+},
+{
+"id": 103,
+"name": "Simple_Kick",
+"category": "Fighting"
+},
+{
+"id": 104,
+"name": "Side_Shot",
+"category": "Fighting"
+},
+{
+"id": 105,
+"name": "Triple_Combo_Attack",
+"category": "Fighting"
+},
+{
+"id": 106,
+"name": "Confident_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 107,
+"name": "Confident_Strut",
+"category": "WalkAndRun"
+},
+{
+"id": 108,
+"name": "Flirty_Strut",
+"category": "WalkAndRun"
+},
+{
+"id": 109,
+"name": "Groovy_Walk",
+"category": "BodyMovements"
+},
+{
+"id": 110,
+"name": "Hello_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 111,
+"name": "Injured_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 112,
+"name": "Monster_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 113,
+"name": "Mummy_Stagger",
+"category": "BodyMovements"
+},
+{
+"id": 114,
+"name": "Proud_Strut",
+"category": "WalkAndRun"
+},
+{
+"id": 115,
+"name": "Quick_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 116,
+"name": "Run_to_Walk_Transition",
+"category": "WalkAndRun"
+},
+{
+"id": 117,
+"name": "Red_Carpet_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 118,
+"name": "Skip_Forward",
+"category": "WalkAndRun"
+},
+{
+"id": 119,
+"name": "Slow_Orc_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 120,
+"name": "Touch_and_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 121,
+"name": "Thoughtful_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 122,
+"name": "Texting_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 123,
+"name": "Unsteady_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 124,
+"name": "Walking_with_Phone",
+"category": "WalkAndRun"
+},
+{
+"id": 125,
+"name": "Charged_Spell_Cast",
+"category": "Fighting"
+},
+{
+"id": 126,
+"name": "Charged_Spell_Cast_1",
+"category": "Fighting"
+},
+{
+"id": 127,
+"name": "Charged_Ground_Slam",
+"category": "Fighting"
+},
+{
+"id": 128,
+"name": "Heavy_Hammer_Swing",
+"category": "Fighting"
+},
+{
+"id": 129,
+"name": "mage_soell_cast",
+"category": "Fighting"
+},
+{
+"id": 130,
+"name": "mage_soell_cast_1",
+"category": "Fighting"
+},
+{
+"id": 131,
+"name": "mage_soell_cast_2",
+"category": "Fighting"
+},
+{
+"id": 132,
+"name": "mage_soell_cast_3",
+"category": "Fighting"
+},
+{
+"id": 133,
+"name": "mage_soell_cast_4",
+"category": "Fighting"
+},
+{
+"id": 134,
+"name": "mage_soell_cast_5",
+"category": "Fighting"
+},
+{
+"id": 135,
+"name": "mage_soell_cast_6",
+"category": "Fighting"
+},
+{
+"id": 136,
+"name": "mage_soell_cast_7",
+"category": "Fighting"
+},
+{
+"id": 137,
+"name": "mage_soell_cast_8",
+"category": "Fighting"
+},
+{
+"id": 138,
+"name": "Block1",
+"category": "Fighting"
+},
+{
+"id": 139,
+"name": "Block2",
+"category": "Fighting"
+},
+{
+"id": 140,
+"name": "Block3",
+"category": "Fighting"
+},
+{
+"id": 141,
+"name": "Block4",
+"category": "Fighting"
+},
+{
+"id": 142,
+"name": "Block5",
+"category": "Fighting"
+},
+{
+"id": 143,
+"name": "Block6",
+"category": "Fighting"
+},
+{
+"id": 144,
+"name": "Block8",
+"category": "Fighting"
+},
+{
+"id": 145,
+"name": "Block9",
+"category": "Fighting"
+},
+{
+"id": 146,
+"name": "Block10",
+"category": "Fighting"
+},
+{
+"id": 147,
+"name": "Sword_Parry",
+"category": "Fighting"
+},
+{
+"id": 148,
+"name": "Sword_Parry_Backward",
+"category": "Fighting"
+},
+{
+"id": 149,
+"name": "Two_Handed_Parry",
+"category": "Fighting"
+},
+{
+"id": 150,
+"name": "Hit_Reaction_with_Bow",
+"category": "Fighting"
+},
+{
+"id": 151,
+"name": "Sword_Parry_Backward_1",
+"category": "Fighting"
+},
+{
+"id": 152,
+"name": "Sword_Parry_Backward_2",
+"category": "Fighting"
+},
+{
+"id": 153,
+"name": "Sword_Parry_Backward_3",
+"category": "Fighting"
+},
+{
+"id": 154,
+"name": "Sword_Parry_Backward_4",
+"category": "Fighting"
+},
+{
+"id": 155,
+"name": "Sword_Parry_Backward_5",
+"category": "Fighting"
+},
+{
+"id": 156,
+"name": "Stand_Dodge",
+"category": "Fighting"
+},
+{
+"id": 157,
+"name": "Stand_Dodge_1",
+"category": "Fighting"
+},
+{
+"id": 158,
+"name": "Roll_Dodge",
+"category": "Fighting"
+},
+{
+"id": 159,
+"name": "Roll_Dodge_1",
+"category": "Fighting"
+},
+{
+"id": 160,
+"name": "Roll_Dodge_2",
+"category": "Fighting"
+},
+{
+"id": 161,
+"name": "Roll_Dodge_3",
+"category": "Fighting"
+},
+{
+"id": 162,
+"name": "Stand_Dodge_2",
+"category": "Fighting"
+},
+{
+"id": 163,
+"name": "Roll_Dodge_4",
+"category": "Fighting"
+},
+{
+"id": 164,
+"name": "Stand_Dodge_3",
+"category": "Fighting"
+},
+{
+"id": 165,
+"name": "Kneeling_Reload",
+"category": "Fighting"
+},
+{
+"id": 166,
+"name": "Running_Reload",
+"category": "Fighting"
+},
+{
+"id": 167,
+"name": "Slow_Walk_Reload",
+"category": "Fighting"
+},
+{
+"id": 168,
+"name": "Prone_Reload",
+"category": "Fighting"
+},
+{
+"id": 169,
+"name": "Forward_Reload_Subtle",
+"category": "Fighting"
+},
+{
+"id": 170,
+"name": "Standing_Reload",
+"category": "Fighting"
+},
+{
+"id": 171,
+"name": "Hit_Reaction_to_Waist",
+"category": "Fighting"
+},
+{
+"id": 172,
+"name": "Electrocution_Reaction",
+"category": "Fighting"
+},
+{
+"id": 173,
+"name": "Slap_Reaction",
+"category": "Fighting"
+},
+{
+"id": 174,
+"name": "Face_Punch_Reaction",
+"category": "Fighting"
+},
+{
+"id": 175,
+"name": "Face_Punch_Reaction_1",
+"category": "Fighting"
+},
+{
+"id": 176,
+"name": "Face_Punch_Reaction_2",
+"category": "Fighting"
+},
+{
+"id": 177,
+"name": "Gunshot_Reaction",
+"category": "Fighting"
+},
+{
+"id": 178,
+"name": "Hit_Reaction",
+"category": "Fighting"
+},
+{
+"id": 179,
+"name": "Hit_Reaction_1",
+"category": "Fighting"
+},
+{
+"id": 180,
+"name": "Shot_in_the_Back_and_Fall",
+"category": "Fighting"
+},
+{
+"id": 181,
+"name": "Electrocuted_Fall",
+"category": "Fighting"
+},
+{
+"id": 182,
+"name": "Shot_and_Blown_Back",
+"category": "Fighting"
+},
+{
+"id": 183,
+"name": "Shot_and_Fall_Backward",
+"category": "Fighting"
+},
+{
+"id": 184,
+"name": "Shot_and_Fall_Forward",
+"category": "Fighting"
+},
+{
+"id": 185,
+"name": "Shot_and_Slow_Fall_Backward",
+"category": "Fighting"
+},
+{
+"id": 186,
+"name": "Strangled_and_Fall_Forward",
+"category": "Fighting"
+},
+{
+"id": 187,
+"name": "Knock_Down",
+"category": "Fighting"
+},
+{
+"id": 188,
+"name": "Fall_Dead_from_Abdominal_Injury",
+"category": "Fighting"
+},
+{
+"id": 189,
+"name": "dying_backwards",
+"category": "Fighting"
+},
+{
+"id": 190,
+"name": "Knock_Down_1",
+"category": "Fighting"
+},
+{
+"id": 191,
+"name": "Left_Jab_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 192,
+"name": "Right_Jab_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 193,
+"name": "Left_Hook_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 194,
+"name": "Right_Uppercut_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 195,
+"name": "Right_Upper_Hook_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 196,
+"name": "Left_Uppercut_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 197,
+"name": "Left_Short_Hook_from_Guard",
+"category": "Fighting"
+},
+{
+"id": 198,
+"name": "Punch_Combo",
+"category": "Fighting"
+},
+{
+"id": 199,
+"name": "Weapon_Combo",
+"category": "Fighting"
+},
+{
+"id": 200,
+"name": "Punch_Combo_1",
+"category": "Fighting"
+},
+{
+"id": 201,
+"name": "Punch_Combo_2",
+"category": "Fighting"
+},
+{
+"id": 202,
+"name": "Weapon_Combo_1",
+"category": "Fighting"
+},
+{
+"id": 203,
+"name": "Punch_Combo_3",
+"category": "Fighting"
+},
+{
+"id": 204,
+"name": "Punch_Combo_4",
+"category": "Fighting"
+},
+{
+"id": 205,
+"name": "Punch_Combo_5",
+"category": "Fighting"
+},
+{
+"id": 206,
+"name": "Spartan_Kick",
+"category": "Fighting"
+},
+{
+"id": 207,
+"name": "Roundhouse_Kick",
+"category": "Fighting"
+},
+{
+"id": 208,
+"name": "Lunge_Roundhouse_Kick",
+"category": "Fighting"
+},
+{
+"id": 209,
+"name": "Boxing_Guard_Right_Straight_Kick",
+"category": "Fighting"
+},
+{
+"id": 210,
+"name": "Boxing_Guard_Prep_Straight_Punch",
+"category": "Fighting"
+},
+{
+"id": 211,
+"name": "Boxing_Guard_Step_Knee_Strike",
+"category": "Fighting"
+},
+{
+"id": 212,
+"name": "Elbow_Strike",
+"category": "Fighting"
+},
+{
+"id": 213,
+"name": "Leg_Sweep",
+"category": "Fighting"
+},
+{
+"id": 214,
+"name": "Punch_Forward_with_Both_Fists",
+"category": "Fighting"
+},
+{
+"id": 215,
+"name": "High_Kick",
+"category": "Fighting"
+},
+{
+"id": 216,
+"name": "Lunge_Spin_Kick",
+"category": "Fighting"
+},
+{
+"id": 217,
+"name": "Sweeping_Kick",
+"category": "Fighting"
+},
+{
+"id": 218,
+"name": "Step_in_High_Kick",
+"category": "Fighting"
+},
+{
+"id": 219,
+"name": "Right_Hand_Sword_Slash",
+"category": "Fighting"
+},
+{
+"id": 220,
+"name": "Shield_Push_Left",
+"category": "Fighting"
+},
+{
+"id": 221,
+"name": "Charged_Upward_Slash",
+"category": "Fighting"
+},
+{
+"id": 222,
+"name": "Draw_and_Shoot_from_Back",
+"category": "Fighting"
+},
+{
+"id": 223,
+"name": "Draw_and_Shoot_from_Back_1",
+"category": "Fighting"
+},
+{
+"id": 224,
+"name": "Archery_Shot",
+"category": "Fighting"
+},
+{
+"id": 225,
+"name": "Archery_Shot_1",
+"category": "Fighting"
+},
+{
+"id": 226,
+"name": "Archery_Shot_2",
+"category": "Fighting"
+},
+{
+"id": 227,
+"name": "Archery_Shot_3",
+"category": "Fighting"
+},
+{
+"id": 228,
+"name": "Walk_Forward_with_Bow_Aimed",
+"category": "Fighting"
+},
+{
+"id": 229,
+"name": "Draw_and_Shoot_from_Back_2",
+"category": "Fighting"
+},
+{
+"id": 230,
+"name": "Walk_Backward_with_Bow_Aimed",
+"category": "Fighting"
+},
+{
+"id": 231,
+"name": "Archery_Aim_with_Lateral_Scan",
+"category": "Fighting"
+},
+{
+"id": 232,
+"name": "Cowboy_Quick_Draw_Shooting",
+"category": "Fighting"
+},
+{
+"id": 233,
+"name": "Walk_Backward_While_Shooting",
+"category": "Fighting"
+},
+{
+"id": 234,
+"name": "Walk_Forward_While_Shooting",
+"category": "Fighting"
+},
+{
+"id": 235,
+"name": "Forward_Roll_and_Fire",
+"category": "Fighting"
+},
+{
+"id": 236,
+"name": "Draw_and_Shoot_Left",
+"category": "Fighting"
+},
+{
+"id": 237,
+"name": "Charged_Axe_Chop",
+"category": "Fighting"
+},
+{
+"id": 238,
+"name": "Axe_Spin_Attack",
+"category": "Fighting"
+},
+{
+"id": 239,
+"name": "Crouch_Pull_and_Throw",
+"category": "Fighting"
+},
+{
+"id": 240,
+"name": "Thrust_Slash",
+"category": "Fighting"
+},
+{
+"id": 241,
+"name": "Weapon_Combo_2",
+"category": "Fighting"
+},
+{
+"id": 242,
+"name": "Charged_Slash",
+"category": "Fighting"
+},
+{
+"id": 243,
+"name": "Idle_3",
+"category": "DailyActions"
+},
+{
+"id": 244,
+"name": "Idle_4",
+"category": "DailyActions"
+},
+{
+"id": 245,
+"name": "Idle_5",
+"category": "DailyActions"
+},
+{
+"id": 246,
+"name": "Idle_6",
+"category": "DailyActions"
+},
+{
+"id": 247,
+"name": "Idle_7",
+"category": "DailyActions"
+},
+{
+"id": 248,
+"name": "Idle_8",
+"category": "DailyActions"
+},
+{
+"id": 249,
+"name": "Idle_9",
+"category": "DailyActions"
+},
+{
+"id": 250,
+"name": "Idle_10",
+"category": "DailyActions"
+},
+{
+"id": 251,
+"name": "Idle_11",
+"category": "DailyActions"
+},
+{
+"id": 252,
+"name": "Idle_12",
+"category": "DailyActions"
+},
+{
+"id": 253,
+"name": "Idle_13",
+"category": "DailyActions"
+},
+{
+"id": 254,
+"name": "Idle_14",
+"category": "DailyActions"
+},
+{
+"id": 255,
+"name": "Angry_Ground_Stomp",
+"category": "DailyActions"
+},
+{
+"id": 256,
+"name": "Angry_Ground_Stomp_1",
+"category": "DailyActions"
+},
+{
+"id": 257,
+"name": "Angry_Ground_Stomp_2",
+"category": "DailyActions"
+},
+{
+"id": 258,
+"name": "CrouchLookAroundBow",
+"category": "DailyActions"
+},
+{
+"id": 259,
+"name": "Step_Forward_and_Push",
+"category": "DailyActions"
+},
+{
+"id": 260,
+"name": "Push_Forward_and_Stop",
+"category": "DailyActions"
+},
+{
+"id": 261,
+"name": "Push_and_Walk_Forward",
+"category": "DailyActions"
+},
+{
+"id": 262,
+"name": "Crouch_and_Push_Forward",
+"category": "DailyActions"
+},
+{
+"id": 263,
+"name": "Sleep_on_Desk",
+"category": "DailyActions"
+},
+{
+"id": 264,
+"name": "Cough_While_Sleeping",
+"category": "DailyActions"
+},
+{
+"id": 265,
+"name": "Groan_Holding_Stomach_in_Sleep",
+"category": "DailyActions"
+},
+{
+"id": 266,
+"name": "Lie_Down_Hands_Spread",
+"category": "DailyActions"
+},
+{
+"id": 267,
+"name": "Sleep_Normally",
+"category": "DailyActions"
+},
+{
+"id": 268,
+"name": "Sit_and_Doze_Off",
+"category": "DailyActions"
+},
+{
+"id": 269,
+"name": "sleep",
+"category": "DailyActions"
+},
+{
+"id": 270,
+"name": "Toss_and_Turn",
+"category": "DailyActions"
+},
+{
+"id": 271,
+"name": "Wake_Up_and_Look_Up",
+"category": "DailyActions"
+},
+{
+"id": 272,
+"name": "Lie_on_Chair_Sunbathe_and_Sleep",
+"category": "DailyActions"
+},
+{
+"id": 273,
+"name": "Male_Run_Forward_Pick_Up_Left",
+"category": "DailyActions"
+},
+{
+"id": 274,
+"name": "Female_Crouch_Pick_Up_Place_Side",
+"category": "DailyActions"
+},
+{
+"id": 275,
+"name": "Female_Run_Forward_Pick_Up_Right",
+"category": "DailyActions"
+},
+{
+"id": 276,
+"name": "Male_Bend_Over_Pick_Up",
+"category": "DailyActions"
+},
+{
+"id": 277,
+"name": "Female_Crouch_Pick_Fruit_Basket_Stand",
+"category": "DailyActions"
+},
+{
+"id": 278,
+"name": "Female_Stand_Pick_Fruit_Basket",
+"category": "DailyActions"
+},
+{
+"id": 279,
+"name": "Female_Crouch_Pick_Gun_Point_Forward",
+"category": "DailyActions"
+},
+{
+"id": 280,
+"name": "Female_Crouch_Pick_Throw_Forward",
+"category": "DailyActions"
+},
+{
+"id": 281,
+"name": "Female_Bend_Over_Pick_Up_Inspect",
+"category": "DailyActions"
+},
+{
+"id": 282,
+"name": "Female_Walk_Pick_Put_In_Pocket",
+"category": "DailyActions"
+},
+{
+"id": 283,
+"name": "Pull_Radish",
+"category": "DailyActions"
+},
+{
+"id": 284,
+"name": "Collect_Object",
+"category": "DailyActions"
+},
+{
+"id": 285,
+"name": "open_door",
+"category": "DailyActions"
+},
+{
+"id": 286,
+"name": "open_door_1",
+"category": "DailyActions"
+},
+{
+"id": 287,
+"name": "open_door_2",
+"category": "DailyActions"
+},
+{
+"id": 288,
+"name": "open_door_3",
+"category": "DailyActions"
+},
+{
+"id": 289,
+"name": "open_door_4",
+"category": "DailyActions"
+},
+{
+"id": 290,
+"name": "Wave_One_Hand",
+"category": "DailyActions"
+},
+{
+"id": 291,
+"name": "Wave_for_Help",
+"category": "DailyActions"
+},
+{
+"id": 292,
+"name": "Gesture_with_Hand_on_Gun",
+"category": "DailyActions"
+},
+{
+"id": 293,
+"name": "Wave_for_Help_1",
+"category": "DailyActions"
+},
+{
+"id": 294,
+"name": "Wave_for_Help_2",
+"category": "DailyActions"
+},
+{
+"id": 295,
+"name": "Wave_for_Help_3",
+"category": "DailyActions"
+},
+{
+"id": 296,
+"name": "Wave_for_Help_4",
+"category": "DailyActions"
+},
+{
+"id": 297,
+"name": "Personalized_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 298,
+"name": "Cheer_with_Both_Hands_Up",
+"category": "DailyActions"
+},
+{
+"id": 299,
+"name": "Stand_Clap_and_Sit_Down",
+"category": "DailyActions"
+},
+{
+"id": 300,
+"name": "Sit_Cheer_with_Left_Hand",
+"category": "DailyActions"
+},
+{
+"id": 301,
+"name": "Cheer_with_Both_Hands_1",
+"category": "DailyActions"
+},
+{
+"id": 302,
+"name": "Stand_Wave_and_Sit_Down",
+"category": "DailyActions"
+},
+{
+"id": 303,
+"name": "Cheer_with_Both_Hands",
+"category": "DailyActions"
+},
+{
+"id": 304,
+"name": "Seated_Fist_Pump",
+"category": "DailyActions"
+},
+{
+"id": 305,
+"name": "Stand_Cheer_and_Sit_Down",
+"category": "DailyActions"
+},
+{
+"id": 306,
+"name": "Cheer_with_One_Hand_Up",
+"category": "DailyActions"
+},
+{
+"id": 307,
+"name": "Sitting_Answering_Questions",
+"category": "DailyActions"
+},
+{
+"id": 308,
+"name": "Talk_Passionately",
+"category": "DailyActions"
+},
+{
+"id": 309,
+"name": "Talk_with_Left_Hand_on_Hip",
+"category": "DailyActions"
+},
+{
+"id": 310,
+"name": "Talk_with_Left_Hand_Raised",
+"category": "DailyActions"
+},
+{
+"id": 311,
+"name": "Stand_Talking_Angry",
+"category": "DailyActions"
+},
+{
+"id": 312,
+"name": "Phone_Conversation",
+"category": "DailyActions"
+},
+{
+"id": 313,
+"name": "Talk_with_Hands_Open",
+"category": "DailyActions"
+},
+{
+"id": 314,
+"name": "Talk_with_Right_Hand_Open",
+"category": "DailyActions"
+},
+{
+"id": 315,
+"name": "Hand_on_Hip_Gesture",
+"category": "DailyActions"
+},
+{
+"id": 316,
+"name": "Headache_Relief",
+"category": "DailyActions"
+},
+{
+"id": 317,
+"name": "Shrug",
+"category": "DailyActions"
+},
+{
+"id": 318,
+"name": "Scheming_Hand_Rub",
+"category": "DailyActions"
+},
+{
+"id": 319,
+"name": "air_squat",
+"category": "DailyActions"
+},
+{
+"id": 320,
+"name": "bicep_curl",
+"category": "DailyActions"
+},
+{
+"id": 321,
+"name": "bicycle_crunch",
+"category": "DailyActions"
+},
+{
+"id": 322,
+"name": "circle_crunch",
+"category": "DailyActions"
+},
+{
+"id": 323,
+"name": "golf_drive",
+"category": "DailyActions"
+},
+{
+"id": 324,
+"name": "idle_to_push_up",
+"category": "DailyActions"
+},
+{
+"id": 325,
+"name": "jump_push_up",
+"category": "DailyActions"
+},
+{
+"id": 326,
+"name": "jumping_jacks",
+"category": "DailyActions"
+},
+{
+"id": 327,
+"name": "kettlebell_swing",
+"category": "DailyActions"
+},
+{
+"id": 328,
+"name": "push_up_to_idle",
+"category": "DailyActions"
+},
+{
+"id": 329,
+"name": "push_up",
+"category": "DailyActions"
+},
+{
+"id": 330,
+"name": "situps",
+"category": "DailyActions"
+},
+{
+"id": 331,
+"name": "Sumo_High_Pull",
+"category": "DailyActions"
+},
+{
+"id": 333,
+"name": "Look_Around_Dumbfounded",
+"category": "DailyActions"
+},
+{
+"id": 334,
+"name": "Lower_Weapon_Look_Raise",
+"category": "DailyActions"
+},
+{
+"id": 335,
+"name": "Axe_Breathe_and_Look_Around",
+"category": "DailyActions"
+},
+{
+"id": 336,
+"name": "Long_Breathe_and_Look_Around",
+"category": "DailyActions"
+},
+{
+"id": 337,
+"name": "Torch_Look_Around",
+"category": "DailyActions"
+},
+{
+"id": 338,
+"name": "Short_Breathe_and_Look_Around",
+"category": "DailyActions"
+},
+{
+"id": 339,
+"name": "Walking_Scan_with_Sudden_Look_Back",
+"category": "DailyActions"
+},
+{
+"id": 340,
+"name": "Crawl_and_Look_Back",
+"category": "DailyActions"
+},
+{
+"id": 341,
+"name": "Walk_Slowly_and_Look_Around",
+"category": "DailyActions"
+},
+{
+"id": 342,
+"name": "Stand_and_Drink",
+"category": "DailyActions"
+},
+{
+"id": 343,
+"name": "Sit_and_Drink",
+"category": "DailyActions"
+},
+{
+"id": 344,
+"name": "Stand_Up1",
+"category": "DailyActions"
+},
+{
+"id": 345,
+"name": "Stand_Up2",
+"category": "DailyActions"
+},
+{
+"id": 346,
+"name": "Stand_Up3",
+"category": "DailyActions"
+},
+{
+"id": 347,
+"name": "Stand_Up4",
+"category": "DailyActions"
+},
+{
+"id": 348,
+"name": "Stand_Up5",
+"category": "DailyActions"
+},
+{
+"id": 349,
+"name": "Stand_Up6",
+"category": "DailyActions"
+},
+{
+"id": 350,
+"name": "Stand_Up7",
+"category": "DailyActions"
+},
+{
+"id": 351,
+"name": "Stand_Up8",
+"category": "DailyActions"
+},
+{
+"id": 352,
+"name": "Stand_Up9",
+"category": "DailyActions"
+},
+{
+"id": 353,
+"name": "Stand_Up10",
+"category": "DailyActions"
+},
+{
+"id": 354,
+"name": "Sitting_Clap",
+"category": "DailyActions"
+},
+{
+"id": 355,
+"name": "Sit_Finger_Wag_No",
+"category": "DailyActions"
+},
+{
+"id": 356,
+"name": "Sit_Hands_on_Head_Lean_Back",
+"category": "DailyActions"
+},
+{
+"id": 357,
+"name": "Sit_Thumbs_Up_Right",
+"category": "DailyActions"
+},
+{
+"id": 358,
+"name": "Sit_Shout_Hands_on_Mouth",
+"category": "DailyActions"
+},
+{
+"id": 359,
+"name": "Look_Back_and_Sit",
+"category": "DailyActions"
+},
+{
+"id": 360,
+"name": "Sit_to_standTransition_Female_2",
+"category": "DailyActions"
+},
+{
+"id": 361,
+"name": "Sit_Dodge",
+"category": "DailyActions"
+},
+{
+"id": 362,
+"name": "Sit_Cross_Legged",
+"category": "DailyActions"
+},
+{
+"id": 363,
+"name": "Sit_Cross_Legged_on_Floor",
+"category": "DailyActions"
+},
+{
+"id": 364,
+"name": "Sit_on_Chair_Arms_Crossed",
+"category": "DailyActions"
+},
+{
+"id": 365,
+"name": "Kneel_on_One_Knee_and_Stand",
+"category": "DailyActions"
+},
+{
+"id": 366,
+"name": "falling_down",
+"category": "DailyActions"
+},
+{
+"id": 367,
+"name": "SideLying_Reach_Help",
+"category": "DailyActions"
+},
+{
+"id": 368,
+"name": "Angry_To_Tantrum_Sit",
+"category": "DailyActions"
+},
+{
+"id": 369,
+"name": "Lie_Back_Leg_Swing",
+"category": "DailyActions"
+},
+{
+"id": 370,
+"name": "Stand_To_Side_Lying",
+"category": "DailyActions"
+},
+{
+"id": 371,
+"name": "Sit_Lie_Bed",
+"category": "DailyActions"
+},
+{
+"id": 372,
+"name": "Prone_Reach_Help",
+"category": "DailyActions"
+},
+{
+"id": 375,
+"name": "Handstand_Flip",
+"category": "BodyMovements"
+},
+{
+"id": 376,
+"name": "Punch_Pose",
+"category": "BodyMovements"
+},
+{
+"id": 377,
+"name": "Relax_arms_then_strike_battle_pose",
+"category": "BodyMovements"
+},
+{
+"id": 378,
+"name": "Large_step_then_high_kick",
+"category": "BodyMovements"
+},
+{
+"id": 379,
+"name": "Side_jumps_in_horse_stance",
+"category": "BodyMovements"
+},
+{
+"id": 381,
+"name": "Step_Right_for_Exercise",
+"category": "BodyMovements"
+},
+{
+"id": 382,
+"name": "Jump_and_Slam_Back_Down",
+"category": "BodyMovements"
+},
+{
+"id": 384,
+"name": "Quick_Step_and_Spin_Dodge",
+"category": "BodyMovements"
+},
+{
+"id": 385,
+"name": "Boxing_Warmup",
+"category": "BodyMovements"
+},
+{
+"id": 386,
+"name": "Zombie_Scream",
+"category": "BodyMovements"
+},
+{
+"id": 387,
+"name": "Half_Squat_with_Thumb_Up",
+"category": "BodyMovements"
+},
+{
+"id": 388,
+"name": "Show_Both_Arm_Muscles",
+"category": "BodyMovements"
+},
+{
+"id": 389,
+"name": "Grip_and_Throw_Down",
+"category": "BodyMovements"
+},
+{
+"id": 390,
+"name": "Stand_on_Pole_and_Balance",
+"category": "BodyMovements"
+},
+{
+"id": 391,
+"name": "Head_Hold_in_Pain",
+"category": "BodyMovements"
+},
+{
+"id": 392,
+"name": "Ground_Flip_and_Sweep_Up",
+"category": "BodyMovements"
+},
+{
+"id": 393,
+"name": "baseball_pitching",
+"category": "BodyMovements"
+},
+{
+"id": 394,
+"name": "Backflip_and_Hooks",
+"category": "BodyMovements"
+},
+{
+"id": 395,
+"name": "Breakdance_1990",
+"category": "BodyMovements"
+},
+{
+"id": 396,
+"name": "Burpee_Exercise",
+"category": "BodyMovements"
+},
+{
+"id": 397,
+"name": "360_Power_Spin_Jump",
+"category": "BodyMovements"
+},
+{
+"id": 398,
+"name": "Crouch_Charge_and_Throw",
+"category": "BodyMovements"
+},
+{
+"id": 399,
+"name": "Step_Step_Turn_Kick",
+"category": "BodyMovements"
+},
+{
+"id": 401,
+"name": "Sprint_Roll_and_Flip",
+"category": "BodyMovements"
+},
+{
+"id": 402,
+"name": "Run_and_Leap",
+"category": "BodyMovements"
+},
+{
+"id": 403,
+"name": "Victory_Fist_Pump",
+"category": "BodyMovements"
+},
+{
+"id": 404,
+"name": "Crouch_and_Step_Back",
+"category": "BodyMovements"
+},
+{
+"id": 405,
+"name": "Joyful_Dance_with_Hand_Sway",
+"category": "BodyMovements"
+},
+{
+"id": 406,
+"name": "Thomas_Flair_to_Jump_Up",
+"category": "BodyMovements"
+},
+{
+"id": 407,
+"name": "Wall_Push_Jump_and_Flip",
+"category": "BodyMovements"
+},
+{
+"id": 408,
+"name": "Jazz_Hands",
+"category": "BodyMovements"
+},
+{
+"id": 409,
+"name": "Finger_Wag_No",
+"category": "BodyMovements"
+},
+{
+"id": 410,
+"name": "Kick_a_Soccer_Ball",
+"category": "BodyMovements"
+},
+{
+"id": 411,
+"name": "Neck_Slashing_Gesture",
+"category": "BodyMovements"
+},
+{
+"id": 412,
+"name": "victory",
+"category": "BodyMovements"
+},
+{
+"id": 413,
+"name": "Backflip_and_Rise",
+"category": "BodyMovements"
+},
+{
+"id": 414,
+"name": "Double_kick_forward",
+"category": "BodyMovements"
+},
+{
+"id": 415,
+"name": "Happy_Sway_Standing",
+"category": "BodyMovements"
+},
+{
+"id": 416,
+"name": "Hit_in_Back_While_Running",
+"category": "BodyMovements"
+},
+{
+"id": 417,
+"name": "Hop_with_Arms_Raised",
+"category": "BodyMovements"
+},
+{
+"id": 419,
+"name": "Jump_to_Catch_and_Fall",
+"category": "BodyMovements"
+},
+{
+"id": 420,
+"name": "Left_Hand_Bitten_Step_Back",
+"category": "BodyMovements"
+},
+{
+"id": 421,
+"name": "Over_Shoulder_Throw",
+"category": "BodyMovements"
+},
+{
+"id": 422,
+"name": "Rising_Flying_Kick",
+"category": "BodyMovements"
+},
+{
+"id": 425,
+"name": "Vault_with_Rifle",
+"category": "BodyMovements"
+},
+{
+"id": 426,
+"name": "Roll_Behind_Cover",
+"category": "BodyMovements"
+},
+{
+"id": 427,
+"name": "Vault_and_Land",
+"category": "BodyMovements"
+},
+{
+"id": 428,
+"name": "Unarmed_Vault",
+"category": "BodyMovements"
+},
+{
+"id": 429,
+"name": "Parkour_Vault",
+"category": "BodyMovements"
+},
+{
+"id": 430,
+"name": "Parkour_Vault_with_Roll",
+"category": "BodyMovements"
+},
+{
+"id": 431,
+"name": "Parkour_Vault_1",
+"category": "BodyMovements"
+},
+{
+"id": 432,
+"name": "Parkour_Vault_2",
+"category": "BodyMovements"
+},
+{
+"id": 433,
+"name": "Parkour_Vault_3",
+"category": "BodyMovements"
+},
+{
+"id": 434,
+"name": "Fast_Ladder_Climb",
+"category": "BodyMovements"
+},
+{
+"id": 435,
+"name": "Ladder_Climb_Finish",
+"category": "BodyMovements"
+},
+{
+"id": 436,
+"name": "Ladder_Mount_Start",
+"category": "BodyMovements"
+},
+{
+"id": 437,
+"name": "Slow_Ladder_Climb",
+"category": "BodyMovements"
+},
+{
+"id": 438,
+"name": "Ladder_Climb_Loop",
+"category": "BodyMovements"
+},
+{
+"id": 439,
+"name": "Climb_Left_with_Both_Limbs",
+"category": "BodyMovements"
+},
+{
+"id": 440,
+"name": "Climb_Right_with_Both_Limbs",
+"category": "BodyMovements"
+},
+{
+"id": 441,
+"name": "Climb_Stairs",
+"category": "BodyMovements"
+},
+{
+"id": 442,
+"name": "Fast_Stair_Climb",
+"category": "BodyMovements"
+},
+{
+"id": 444,
+"name": "climbing_up_wall",
+"category": "BodyMovements"
+},
+{
+"id": 445,
+"name": "diagonal_wall_run",
+"category": "BodyMovements"
+},
+{
+"id": 446,
+"name": "Hang_and_Climb_Left",
+"category": "BodyMovements"
+},
+{
+"id": 447,
+"name": "Hang_and_Climb_Rght",
+"category": "BodyMovements"
+},
+{
+"id": 448,
+"name": "Jump_and_Grab_Wall",
+"category": "BodyMovements"
+},
+{
+"id": 449,
+"name": "Climb_Up_Rope",
+"category": "BodyMovements"
+},
+{
+"id": 450,
+"name": "Wall_Flip",
+"category": "BodyMovements"
+},
+{
+"id": 451,
+"name": "One_Arm_Handstand",
+"category": "BodyMovements"
+},
+{
+"id": 452,
+"name": "Backflip",
+"category": "BodyMovements"
+},
+{
+"id": 453,
+"name": "Backflip_Sweep_Kick",
+"category": "BodyMovements"
+},
+{
+"id": 455,
+"name": "Sweep_Kick",
+"category": "BodyMovements"
+},
+{
+"id": 456,
+"name": "Jumping_Head_Scissor_Takedown",
+"category": "BodyMovements"
+},
+{
+"id": 457,
+"name": "Jumping_Punch",
+"category": "BodyMovements"
+},
+{
+"id": 458,
+"name": "Unicycle_Jump_Dismount",
+"category": "BodyMovements"
+},
+{
+"id": 459,
+"name": "Run_Jump_and_Roll",
+"category": "BodyMovements"
+},
+{
+"id": 460,
+"name": "Jump_with_Arms_Open",
+"category": "BodyMovements"
+},
+{
+"id": 461,
+"name": "Jump_with_Arms_and_Legs_Open",
+"category": "BodyMovements"
+},
+{
+"id": 462,
+"name": "Backflip_Jump",
+"category": "BodyMovements"
+},
+{
+"id": 463,
+"name": "Run_and_Jump",
+"category": "BodyMovements"
+},
+{
+"id": 464,
+"name": "Leap_and_Punch",
+"category": "BodyMovements"
+},
+{
+"id": 465,
+"name": "Leap_Right_and_Catch",
+"category": "BodyMovements"
+},
+{
+"id": 466,
+"name": "Regular_Jump",
+"category": "BodyMovements"
+},
+{
+"id": 467,
+"name": "Jump_Over_Obstacle_2",
+"category": "BodyMovements"
+},
+{
+"id": 468,
+"name": "Back_Jump",
+"category": "BodyMovements"
+},
+{
+"id": 470,
+"name": "Jumping_Down",
+"category": "BodyMovements"
+},
+{
+"id": 471,
+"name": "Jump_Over_Obstacle",
+"category": "BodyMovements"
+},
+{
+"id": 472,
+"name": "Jump_Over_Obstacle_1",
+"category": "BodyMovements"
+},
+{
+"id": 473,
+"name": "Quad_Jump_Left",
+"category": "BodyMovements"
+},
+{
+"id": 474,
+"name": "Quad_Jump_Up",
+"category": "BodyMovements"
+},
+{
+"id": 475,
+"name": "Quad_Climb_Right",
+"category": "BodyMovements"
+},
+{
+"id": 476,
+"name": "Hang_and_Push_with_Foot",
+"category": "BodyMovements"
+},
+{
+"id": 477,
+"name": "Rope_Hang_Idle",
+"category": "BodyMovements"
+},
+{
+"id": 478,
+"name": "Bar_Hang_Idle",
+"category": "BodyMovements"
+},
+{
+"id": 479,
+"name": "Upside_Down_Rope_Hang",
+"category": "BodyMovements"
+},
+{
+"id": 480,
+"name": "Upside_Down_Rope_Hang_1",
+"category": "BodyMovements"
+},
+{
+"id": 481,
+"name": "Upside_Down_Rope_Hang_2",
+"category": "BodyMovements"
+},
+{
+"id": 482,
+"name": "Grab_Wall_Midair_Idle",
+"category": "BodyMovements"
+},
+{
+"id": 483,
+"name": "Slow_Bar_Hang_Left",
+"category": "BodyMovements"
+},
+{
+"id": 484,
+"name": "Slow_Bar_Hang_Right",
+"category": "BodyMovements"
+},
+{
+"id": 485,
+"name": "Jump_and_Hang_on_Bar",
+"category": "BodyMovements"
+},
+{
+"id": 486,
+"name": "Wall_Support_to_Step_Down",
+"category": "BodyMovements"
+},
+{
+"id": 487,
+"name": "Climb_Attempt_and_Fall_3",
+"category": "BodyMovements"
+},
+{
+"id": 488,
+"name": "Climb_Attempt_and_Fall_4",
+"category": "BodyMovements"
+},
+{
+"id": 489,
+"name": "Climb_Attempt_and_Fall_5",
+"category": "BodyMovements"
+},
+{
+"id": 490,
+"name": "Fall_Down",
+"category": "BodyMovements"
+},
+{
+"id": 491,
+"name": "Fall_from_Bar",
+"category": "BodyMovements"
+},
+{
+"id": 492,
+"name": "Wall_Support_Jump_to_Ground",
+"category": "BodyMovements"
+},
+{
+"id": 493,
+"name": "Jump_Down_from_Wall",
+"category": "BodyMovements"
+},
+{
+"id": 494,
+"name": "Swing_on_Rope_to_Ground",
+"category": "BodyMovements"
+},
+{
+"id": 495,
+"name": "Grab_Bar_and_Swing_Forward",
+"category": "BodyMovements"
+},
+{
+"id": 496,
+"name": "Rope_Hang_Backflip_to_Crouch",
+"category": "BodyMovements"
+},
+{
+"id": 497,
+"name": "climbing_down_wall",
+"category": "BodyMovements"
+},
+{
+"id": 498,
+"name": "Climb_Attempt_and_Fall",
+"category": "BodyMovements"
+},
+{
+"id": 499,
+"name": "Climb_Attempt_and_Fall_1",
+"category": "BodyMovements"
+},
+{
+"id": 500,
+"name": "Climb_Attempt_and_Fall_2",
+"category": "BodyMovements"
+},
+{
+"id": 501,
+"name": "Leap_of_Faith",
+"category": "BodyMovements"
+},
+{
+"id": 502,
+"name": "Fall1",
+"category": "BodyMovements"
+},
+{
+"id": 503,
+"name": "Fall2",
+"category": "BodyMovements"
+},
+{
+"id": 504,
+"name": "Fall3",
+"category": "BodyMovements"
+},
+{
+"id": 505,
+"name": "Fall4",
+"category": "BodyMovements"
+},
+{
+"id": 506,
+"name": "Dive_Down_and_Land",
+"category": "BodyMovements"
+},
+{
+"id": 507,
+"name": "Dive_Down_and_Land_1",
+"category": "BodyMovements"
+},
+{
+"id": 508,
+"name": "Dive_Down_and_Land_2",
+"category": "BodyMovements"
+},
+{
+"id": 509,
+"name": "Lean_Forward_Sprint",
+"category": "WalkAndRun"
+},
+{
+"id": 510,
+"name": "Standard_Forward_Charge",
+"category": "WalkAndRun"
+},
+{
+"id": 511,
+"name": "Rifle_Charge",
+"category": "WalkAndRun"
+},
+{
+"id": 512,
+"name": "Male_Head_Down_Charge",
+"category": "WalkAndRun"
+},
+{
+"id": 513,
+"name": "Female_Head_Down_Charge",
+"category": "WalkAndRun"
+},
+{
+"id": 514,
+"name": "Female_Bow_Charge_Left_Hand",
+"category": "WalkAndRun"
+},
+{
+"id": 515,
+"name": "Female_Throwing_Stance_Charge",
+"category": "WalkAndRun"
+},
+{
+"id": 516,
+"name": "slide_light",
+"category": "WalkAndRun"
+},
+{
+"id": 517,
+"name": "slide_right",
+"category": "WalkAndRun"
+},
+{
+"id": 518,
+"name": "sliding_rool",
+"category": "WalkAndRun"
+},
+{
+"id": 519,
+"name": "sliding_stumble",
+"category": "WalkAndRun"
+},
+{
+"id": 520,
+"name": "Crouch_Walk_with_Torch",
+"category": "WalkAndRun"
+},
+{
+"id": 521,
+"name": "Crouch_Walk_Left_with_Torch",
+"category": "WalkAndRun"
+},
+{
+"id": 522,
+"name": "Crouch_Walk_Right_with_Torch",
+"category": "WalkAndRun"
+},
+{
+"id": 523,
+"name": "Cautious_Crouch_Walk_Backward",
+"category": "WalkAndRun"
+},
+{
+"id": 524,
+"name": "Cautious_Crouch_Walk_Forward",
+"category": "WalkAndRun"
+},
+{
+"id": 525,
+"name": "Cautious_Crouch_Walk_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 526,
+"name": "Cautious_Crouch_Walk_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 527,
+"name": "Crouch_Walk_Left_with_Gun",
+"category": "WalkAndRun"
+},
+{
+"id": 528,
+"name": "Walk_Left_with_Gun",
+"category": "WalkAndRun"
+},
+{
+"id": 529,
+"name": "Walk_Backward_with_Gun",
+"category": "WalkAndRun"
+},
+{
+"id": 530,
+"name": "run_fast_3",
+"category": "WalkAndRun"
+},
+{
+"id": 531,
+"name": "Sprint_and_Sudden_Stop",
+"category": "WalkAndRun"
+},
+{
+"id": 532,
+"name": "run_fast_4",
+"category": "WalkAndRun"
+},
+{
+"id": 533,
+"name": "run_fast_5",
+"category": "WalkAndRun"
+},
+{
+"id": 534,
+"name": "run_fast_6",
+"category": "WalkAndRun"
+},
+{
+"id": 535,
+"name": "run_fast_7",
+"category": "WalkAndRun"
+},
+{
+"id": 536,
+"name": "run_fast_8",
+"category": "WalkAndRun"
+},
+{
+"id": 537,
+"name": "run_fast_9",
+"category": "WalkAndRun"
+},
+{
+"id": 538,
+"name": "run_fast_10",
+"category": "WalkAndRun"
+},
+{
+"id": 539,
+"name": "run_fast_2",
+"category": "WalkAndRun"
+},
+{
+"id": 540,
+"name": "Injured_Walk_Backward",
+"category": "WalkAndRun"
+},
+{
+"id": 541,
+"name": "Walk_Backward_with_Gun_1",
+"category": "WalkAndRun"
+},
+{
+"id": 542,
+"name": "Walk_Backward_with_Grenade",
+"category": "WalkAndRun"
+},
+{
+"id": 543,
+"name": "Step_Back",
+"category": "WalkAndRun"
+},
+{
+"id": 544,
+"name": "Walk_Backward",
+"category": "WalkAndRun"
+},
+{
+"id": 545,
+"name": "Walk_Backward_with_Bow",
+"category": "WalkAndRun"
+},
+{
+"id": 546,
+"name": "Walk_Backward_with_Sword",
+"category": "WalkAndRun"
+},
+{
+"id": 547,
+"name": "Walk_Backward_with_Bow_1",
+"category": "WalkAndRun"
+},
+{
+"id": 548,
+"name": "Walk_Backward_with_Sword_Shield",
+"category": "WalkAndRun"
+},
+{
+"id": 549,
+"name": "Crawl_Backward",
+"category": "WalkAndRun"
+},
+{
+"id": 550,
+"name": "Carry_Heavy_Cannon_Forward",
+"category": "WalkAndRun"
+},
+{
+"id": 551,
+"name": "Carry_Heavy_Object_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 552,
+"name": "Carry_Water_Bucket_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 553,
+"name": "Elderly_Shaky_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 554,
+"name": "Funky_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 555,
+"name": "Limping_Walk_1",
+"category": "WalkAndRun"
+},
+{
+"id": 556,
+"name": "Limping_Walk_2",
+"category": "WalkAndRun"
+},
+{
+"id": 557,
+"name": "Limping_Walk_3",
+"category": "WalkAndRun"
+},
+{
+"id": 558,
+"name": "Limping_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 559,
+"name": "Sneaky_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 560,
+"name": "Spear_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 561,
+"name": "Step_Hip_Hop_Dance",
+"category": "WalkAndRun"
+},
+{
+"id": 562,
+"name": "Stumble_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 563,
+"name": "Stylish_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 564,
+"name": "Tightrope_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 565,
+"name": "Walk_with_Umbrella",
+"category": "WalkAndRun"
+},
+{
+"id": 566,
+"name": "walking_2",
+"category": "WalkAndRun"
+},
+{
+"id": 567,
+"name": "Walk_with_Walker_Support",
+"category": "WalkAndRun"
+},
+{
+"id": 568,
+"name": "Swim_Idle",
+"category": "WalkAndRun"
+},
+{
+"id": 569,
+"name": "Swim_Forward",
+"category": "WalkAndRun"
+},
+{
+"id": 570,
+"name": "swimming_to_edge",
+"category": "WalkAndRun"
+},
+{
+"id": 571,
+"name": "Run_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 572,
+"name": "Walk_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 573,
+"name": "Rifle_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 574,
+"name": "Walk_Turn_Left_with_Weapon",
+"category": "WalkAndRun"
+},
+{
+"id": 575,
+"name": "Combat_Idle_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 576,
+"name": "Idle_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 577,
+"name": "Idle_Step_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 578,
+"name": "Idle_Torch_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 579,
+"name": "Depressed_Full_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 580,
+"name": "Sword_and_Shield_Alert_Turn_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 581,
+"name": "Run_Sharp_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 582,
+"name": "Walk_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 583,
+"name": "Rifle_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 584,
+"name": "Walk_Turn_Right_with_Weapon",
+"category": "WalkAndRun"
+},
+{
+"id": 585,
+"name": "Combat_Idle_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 586,
+"name": "Idle_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 587,
+"name": "Idle_Step_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 588,
+"name": "Idle_Torch_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 589,
+"name": "Depressed_Full_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 590,
+"name": "Sword_and_Shield_Alert_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 591,
+"name": "Run_Turn_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 592,
+"name": "Strafe_Left_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 593,
+"name": "Strafe_Right_Run",
+"category": "WalkAndRun"
+},
+{
+"id": 594,
+"name": "Strafe_Left_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 595,
+"name": "Strafe_Right_Walk",
+"category": "WalkAndRun"
+},
+{
+"id": 596,
+"name": "Fast_Strafe_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 597,
+"name": "Fast_Strafe_Right",
+"category": "WalkAndRun"
+},
+{
+"id": 598,
+"name": "Strafe_Left_with_Rifle",
+"category": "WalkAndRun"
+},
+{
+"id": 599,
+"name": "Strafe_Right_with_Rifle",
+"category": "WalkAndRun"
+},
+{
+"id": 600,
+"name": "Strafe_Left_with_Sword_Shield",
+"category": "WalkAndRun"
+},
+{
+"id": 601,
+"name": "Strafe_Right_with_Sword_Shield",
+"category": "WalkAndRun"
+},
+{
+"id": 602,
+"name": "Idle_Strafe_Left",
+"category": "WalkAndRun"
+},
+{
+"id": 603,
+"name": "Idle_Strafe_Right",
+"category": "WalkAndRun"
+}
+]
+}

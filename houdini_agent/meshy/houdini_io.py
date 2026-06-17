@@ -148,6 +148,78 @@ def import_3d_asset(args):
     return _ok(msg)
 
 
+def import_rigged_character(args):
+    """把绑定/动画产出的 FBX(带骨架+蒙皮+动画)导入 Houdini（经典 Object 层 FBX 导入）。
+    用 hou.hipFile.importFBX 在 /obj 下建出 subnet：bone 层级 + 蒙皮几何(Capture/Deform)
+    + 关键帧动画，可直接在视口播放。"""
+    try:
+        import hou
+    except Exception:
+        return _err("未检测到 Houdini API")
+
+    fbx_path = (args.get("fbx_path") or "").strip()
+    if not fbx_path:
+        return _err("缺少 fbx_path")
+    if not os.path.isfile(fbx_path):
+        return _err("文件不存在: %s" % fbx_path)
+    if os.path.splitext(fbx_path)[1].lower() != ".fbx":
+        return _err("import_rigged_character 仅接受 .fbx（带骨架/蒙皮/动画）；"
+                    "普通静态模型请改用 import_3d_asset。")
+
+    # 记录导入前 /obj 下已有节点，便于在 importFBX 不返回节点时反查新建的 subnet
+    obj = hou.node("/obj")
+    before = set(c.path() for c in obj.children()) if obj else set()
+
+    try:
+        result = hou.hipFile.importFBX(fbx_path)
+    except Exception as e:
+        return _err("FBX 导入失败: %s" % e)
+
+    subnet = None
+    if isinstance(result, (tuple, list)) and result:
+        # importFBX 返回 (network_node, message)
+        cand = result[0]
+        if hasattr(cand, "path"):
+            subnet = cand
+    elif hasattr(result, "path"):
+        subnet = result
+    if subnet is None and obj is not None:
+        # 兜底：用导入前后差集找新建的根节点
+        new = [c for c in obj.children() if c.path() not in before]
+        if new:
+            subnet = new[0]
+    if subnet is None:
+        return _err("FBX 导入未返回节点（可能是空 FBX 或不含可导入内容）")
+
+    nm = args.get("name")
+    if nm:
+        safe = "".join(c if (c.isalnum() or c == "_") else "_" for c in str(nm))
+        if safe:
+            try:
+                subnet.setName(_unique_name(subnet.parent(), safe), unique_name=True)
+            except Exception:
+                pass
+
+    try:
+        subnet.moveToGoodPosition()
+    except Exception:
+        pass
+    try:
+        subnet.setSelected(True, clear_all_selected=True)
+    except Exception:
+        pass
+
+    info = ""
+    try:
+        kids = subnet.allSubChildren()
+        n_bone = sum(1 for n in kids if "bone" in n.type().name().lower())
+        info = "（%d 个子节点，含约 %d 根骨骼）" % (len(kids), n_bone)
+    except Exception:
+        pass
+    return _ok("已导入绑定角色: %s %s\n如 FBX 含关键帧，可直接在视口播放动画。"
+               % (subnet.path(), info))
+
+
 def export_node_to_glb(args):
     try:
         import hou

@@ -202,6 +202,31 @@ class MeshyClient:
             body["model_url"] = model_url
         return self._post("remesh", body)
 
+    # ---------- 绑定 / 动画 ----------
+    def create_rigging(self, input_task_id=None, model_url=None,
+                       height_meters=1.7, texture_image_url=None):
+        """对人形角色做自动绑定。input_task_id（Meshy 已生成的模型）优先，
+        否则用 model_url（公网 GLB 或 base64 data URI）。约束：双足人形、带贴图、
+        脸朝 +Z、≤30 万面。成功后返回 rig_task_id，并自带 walk/run 基础动画。"""
+        body = {"height_meters": float(height_meters or 1.7)}
+        if input_task_id:
+            body["input_task_id"] = input_task_id
+        elif model_url:
+            body["model_url"] = model_url
+        else:
+            raise MeshyError("rigging 需要 input_task_id 或 model_url 之一")
+        if texture_image_url:
+            body["texture_image_url"] = texture_image_url
+        return self._post("rigging", body)
+
+    def create_animation(self, rig_task_id, action_id):
+        """对一个已绑定的角色套一个预设动作。rig_task_id 来自绑定任务，
+        action_id 是动作库里的整数编号（0–696）。每次只生成一个动作。"""
+        if not rig_task_id:
+            raise MeshyError("animation 需要 rig_task_id")
+        body = {"rig_task_id": rig_task_id, "action_id": int(action_id)}
+        return self._post("animation", body)
+
     # ---------- 余额 ----------
     def balance(self):
         r = requests.get(config.API_BASE + config.ENDPOINTS["balance"],
