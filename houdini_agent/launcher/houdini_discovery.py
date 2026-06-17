@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Detect Houdini 20.5+ installs and install the auto-load package."""
+"""Detect Houdini 19.5+ installs and install the auto-load package.
+
+The external app talks to Houdini through the Bridge (pure Python, no Qt), so
+it can drive Houdini versions older than the QML-capable 21 line. Floor is
+19.5 (Python 3.9); 19.0 (Python 3.7) is intentionally excluded."""
 
 import json
 import os
@@ -8,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 
-MIN_VERSION = (20, 5)
+MIN_VERSION = (19, 5)
 
 
 def _version_tuple(text):
