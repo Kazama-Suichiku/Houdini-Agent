@@ -22,6 +22,9 @@ ENDPOINTS = {
     "image-to-image": "/openapi/v1/image-to-image",
     "retexture":     "/openapi/v1/retexture",
     "remesh":        "/openapi/v1/remesh",
+    # 绑定/动画（自动 rig 人形角色 + 套预设动作；rig→animate 两阶段）
+    "rigging":       "/openapi/v1/rigging",
+    "animation":     "/openapi/v1/animations",
     "balance":       "/openapi/v1/balance",
 }
 

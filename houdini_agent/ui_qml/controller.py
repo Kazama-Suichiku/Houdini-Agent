@@ -108,6 +108,7 @@ try:
     MESHY_INTERACTIVE_TOOLS = set(_meshy.INTERACTIVE_TOOLS)
     MESHY_BATCH_TOOLS = set(_meshy.BATCH_TOOLS)
     MESHY_MUTATING = set(_meshy.MUTATING_TOOLS)
+    MESHY_LOCAL_TOOLS = set(getattr(_meshy, "LOCAL_TOOLS", set()))
     CONFIRM_TOOLS = CONFIRM_TOOLS | set(_meshy.CONFIRM_TOOLS)
 except Exception as _meshy_err:
     _meshy = None
@@ -115,6 +116,7 @@ except Exception as _meshy_err:
     MESHY_INTERACTIVE_TOOLS = set()
     MESHY_BATCH_TOOLS = set()
     MESHY_MUTATING = set()
+    MESHY_LOCAL_TOOLS = set()
     print("[controller] meshy integration unavailable:", _meshy_err)
 
 # 各 Meshy 工具的中文标签（卡片标题、后台任务通知用）
@@ -123,6 +125,7 @@ MESHY_LABELS = {
     "meshy_text_to_image": "文生图", "meshy_image_to_image": "图生图",
     "meshy_retexture": "重打材质", "meshy_remesh": "重拓扑",
     "meshy_concept_to_3d": "概念图转3D",
+    "meshy_rig": "自动绑定", "meshy_animate": "套动作",
 }
 
 # QML UI strings — Chinese -> English (used by Controller.tr when lang == 'en')
@@ -2073,6 +2076,12 @@ class Controller(QObject):
         # 后台任务进度查询（本地、免费，不进 API）
         if tool_name == "meshy_task_status":
             return self._meshy_task_status(kwargs)
+        # 动作库检索（本地、免费、瞬时；不联网、不弹进度卡、不进 Houdini）
+        if tool_name in MESHY_LOCAL_TOOLS and _meshy is not None:
+            try:
+                return _meshy.search_animations(kwargs)
+            except Exception as e:
+                return {"success": False, "error": "动作库检索失败: %s" % e}
         # per-tool approval (confirm mode)
         if self._confirm_mode and tool_name in CONFIRM_TOOLS:
             if not self._await_confirm(tool_name, kwargs):
@@ -4065,7 +4074,7 @@ class Controller(QObject):
         cid = "c%d" % self._int_seq
         q = queue.Queue()
         self._interactive[cid] = q
-        self._sigConfirm.emit(cid, tool_name, self._arg_preview(kwargs))
+        self._sigConfirm.emit(cid, tool_name, self._confirm_preview(tool_name, kwargs))
         try:
             return bool(q.get(timeout=120))
         except queue.Empty:
@@ -4160,6 +4169,22 @@ class Controller(QObject):
             if s.endswith(tag[:k]):
                 return k
         return 0
+
+    def _confirm_preview(self, tool_name, kwargs):
+        """确认卡片的副标题：对绑定/动画这类计费工具，补一行预计 credits 花费。"""
+        base = self._arg_preview(kwargs)
+        a = kwargs if isinstance(kwargs, dict) else {}
+        extra = ""
+        if tool_name == "meshy_rig":
+            extra = "约 5 credits"
+        elif tool_name == "meshy_animate":
+            acts = a.get("actions") or []
+            n = len(acts) if isinstance(acts, (list, tuple)) else 1
+            n = max(1, min(n, 10))
+            extra = "%d 个动作 · 约 %d credits" % (n, n * 3)
+        if extra:
+            return (base + " · " + extra) if base else extra
+        return base
 
     @staticmethod
     def _arg_preview(a):

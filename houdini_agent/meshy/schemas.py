@@ -222,6 +222,89 @@ _CONCEPT_TO_3D = {
     },
 }
 
+_RIG = {
+    "type": "function",
+    "function": {
+        "name": "meshy_rig",
+        "description": (
+            "用 Meshy 给一个【人形角色】自动绑定骨骼/蒙皮（会消耗约 5 credits）。"
+            "硬性约束（不满足极可能失败、白烧 credits，调用前务必先跟用户确认角色满足）："
+            "①必须是双足人形且四肢/身体结构清晰；②必须带贴图（无贴图模型不支持）；"
+            "③朝向必须脸朝 +Z（glTF 正向）；④面数 ≤300000（超了先用 meshy_remesh 降面）。"
+            "来源二选一：source_task_id=之前某个 Meshy 生成任务的 task_id（最稳，免重传）；"
+            "或 model_path=本地 glb 路径/公网 URL。"
+            "若要绑定 Houdini 场景里已有的几何，请先调用 export_node_to_glb 导出再把路径传给 model_path"
+            "（但仍需自检是否人形/带贴图/朝向）。"
+            "成功返回 rig_task_id（用于后续 meshy_animate 套动作）和绑定好的 FBX 本地路径"
+            "（自带 walk/run 基础动画）——成功后应调用 import_rigged_character 导入 Houdini。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_task_id": {"type": "string",
+                                   "description": "Meshy 已生成模型的 task_id（与 model_path 二选一，优先用它）"},
+                "model_path": {"type": "string",
+                               "description": "本地模型 glb 路径或公网 URL（与 source_task_id 二选一）"},
+                "height_meters": {"type": "number",
+                                  "description": "角色身高（米），用于缩放估计，默认 1.7"},
+            },
+            "required": [],
+        },
+    },
+}
+
+_SEARCH_ANIM = {
+    "type": "function",
+    "function": {
+        "name": "meshy_search_animations",
+        "description": (
+            "【免费、不消耗 credits、不联网】在 Meshy 预设动作库（约 600 个动作，分 5 类："
+            "DailyActions/WalkAndRun/Fighting/Dancing/BodyMovements）里按自然语言检索动作（中英文均可）。"
+            "这是套动画的第一步。用法：用本工具检索后，【你自己】从结果里挑出 3–5 个最贴合当前任务/"
+            "用户意图的动作作为候选——不要把一长串动作原样甩给用户去翻。挑好这 3–5 个后，你来判断："
+            "①若意图明确，直接替用户决定用哪个/哪几个，进入 meshy_animate；"
+            "②若有多种合理选择或用户偏好不明，把这 3–5 个（名称+编号，最好附一句简短说明）列给用户做最终选择。"
+            "返回 [{id, name, category}]——id 就是 meshy_animate 要用的 action_id。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "动作意图，中英文均可（如'跳舞''attack''坐下'）；留空则返回一组常用基础动作"},
+                "limit": {"type": "integer",
+                          "description": "返回候选数量，默认 5（够你从中挑 3–5 个即可）；最多 40，一般无需调大"},
+            },
+            "required": [],
+        },
+    },
+}
+
+_ANIMATE = {
+    "type": "function",
+    "function": {
+        "name": "meshy_animate",
+        "description": (
+            "用 Meshy 给一个【已绑定的角色】套上一个或多个预设动作（每个动作约消耗 3 credits）。"
+            "前置：必须先有 meshy_rig 返回的 rig_task_id；动作编号建议先用 meshy_search_animations "
+            "检索并经用户确认后再传入。"
+            "actions 传 action_id 整数数组（也接受动作名字符串）；会逐个并行生成，每个动作产出一个带动画的 FBX。"
+            "返回每个动作对应的本地 FBX 路径——成功后应对每个结果调用 import_rigged_character 导入 Houdini。"
+            "注意：动作数量直接决定花费（N 个动作≈3N credits），生成前请把动作清单和预计花费告诉用户。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "rig_task_id": {"type": "string",
+                                "description": "绑定任务返回的 rig_task_id（必填）"},
+                "actions": {"type": "array",
+                            "items": {"type": ["integer", "string"]},
+                            "description": "要生成的动作列表：action_id 整数（0–696）或动作名；一次最多 10 个"},
+            },
+            "required": ["rig_task_id", "actions"],
+        },
+    },
+}
+
 _BALANCE = {
     "type": "function",
     "function": {
@@ -279,6 +362,27 @@ _IMPORT_ASSET = {
     },
 }
 
+_IMPORT_RIGGED = {
+    "type": "function",
+    "function": {
+        "name": "import_rigged_character",
+        "description": (
+            "把 Meshy 绑定/动画产出的【带骨架+蒙皮(+动画)的 FBX】导入 Houdini："
+            "在 /obj 下用 FBX 导入建出一个 subnet，含骨骼(bone 层级)、蒙皮几何(Capture/Deform)"
+            "与关键帧动画——可直接在视口播放。通常紧跟 meshy_rig / meshy_animate 之后调用，"
+            "用其返回的 fbx_path。每个动作 clip 各调用一次（会各建一个独立 subnet）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fbx_path": {"type": "string", "description": "本地 FBX 文件路径（绑定或动画产出）"},
+                "name": {"type": "string", "description": "可选：新建 subnet 的名字（如动作名）"},
+            },
+            "required": ["fbx_path"],
+        },
+    },
+}
+
 _EXPORT_GLB = {
     "type": "function",
     "function": {
@@ -301,15 +405,18 @@ _EXPORT_GLB = {
 # ---- 汇总 ----
 
 MESHY_TOOLS = [_TEXT_TO_3D, _IMAGE_TO_3D, _TEXT_TO_IMAGE, _IMAGE_TO_IMAGE,
-               _CONCEPT_TO_3D, _RETEXTURE, _REMESH, _BALANCE, _TASK_STATUS,
-               _IMPORT_ASSET, _EXPORT_GLB]
+               _CONCEPT_TO_3D, _RETEXTURE, _REMESH, _RIG, _SEARCH_ANIM, _ANIMATE,
+               _BALANCE, _TASK_STATUS, _IMPORT_ASSET, _IMPORT_RIGGED, _EXPORT_GLB]
 
 # 在 app 侧后台线程执行（调用 Meshy API，绝不进 Houdini/bridge）
 NETWORK_TOOLS = frozenset({
     "meshy_text_to_3d", "meshy_image_to_3d", "meshy_text_to_image",
     "meshy_image_to_image", "meshy_concept_to_3d", "meshy_retexture",
-    "meshy_remesh", "meshy_balance",
+    "meshy_remesh", "meshy_rig", "meshy_animate", "meshy_balance",
 })
+
+# 纯本地、免费、瞬时返回（不联网、不烧 credits、不弹进度卡）。controller 直接内联处理。
+LOCAL_TOOLS = frozenset({"meshy_search_animations"})
 
 # 人在环交互工具（controller 特殊编排，带画廊/多选/重生/二次编辑）
 INTERACTIVE_TOOLS = frozenset({
@@ -317,15 +424,16 @@ INTERACTIVE_TOOLS = frozenset({
 })
 
 # 在 Houdini 主线程执行（hou.*）
-HOUDINI_TOOLS = frozenset({"import_3d_asset", "export_node_to_glb"})
+HOUDINI_TOOLS = frozenset({"import_3d_asset", "import_rigged_character", "export_node_to_glb"})
 
-# 会消耗 credits → 需要确认门（balance 免费，不在内）
+# 会消耗 credits → 需要确认门（balance/search 免费，不在内）
 CONFIRM_TOOLS = frozenset({
     "meshy_text_to_3d", "meshy_image_to_3d", "meshy_retexture", "meshy_remesh",
+    "meshy_rig", "meshy_animate",
 })
 
 # 会修改场景（导入会建节点）→ 需 undo 分组 + 节点变更快照
-MUTATING_TOOLS = frozenset({"import_3d_asset"})
+MUTATING_TOOLS = frozenset({"import_3d_asset", "import_rigged_character"})
 
 ALL_TOOL_NAMES = frozenset(
     t["function"]["name"] for t in MESHY_TOOLS)

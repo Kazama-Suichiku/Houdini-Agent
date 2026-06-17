@@ -22,10 +22,11 @@ if _root not in _sys.path:
 
 from .schemas import (
     MESHY_TOOLS, NETWORK_TOOLS, HOUDINI_TOOLS, CONFIRM_TOOLS,
-    MUTATING_TOOLS, INTERACTIVE_TOOLS, ALL_TOOL_NAMES,
+    MUTATING_TOOLS, INTERACTIVE_TOOLS, LOCAL_TOOLS, ALL_TOOL_NAMES,
 )
 from .network_ops import (
     run_network, run_network_parallel, generate_concepts, concepts_to_3d,
+    run_animations, search_animations,
     list_library, fetch_library_asset, LIBRARY_KINDS,
     BATCH_TOOLS, MAX_PARALLEL,
 )
@@ -36,9 +37,10 @@ from . import telemetry
 
 __all__ = [
     "MESHY_TOOLS", "NETWORK_TOOLS", "HOUDINI_TOOLS", "CONFIRM_TOOLS",
-    "MUTATING_TOOLS", "INTERACTIVE_TOOLS", "ALL_TOOL_NAMES",
+    "MUTATING_TOOLS", "INTERACTIVE_TOOLS", "LOCAL_TOOLS", "ALL_TOOL_NAMES",
     "BATCH_TOOLS", "MAX_PARALLEL",
     "run_network", "run_network_parallel", "generate_concepts", "concepts_to_3d",
+    "run_animations", "search_animations",
     "list_library", "fetch_library_asset", "LIBRARY_KINDS",
     "has_api_key", "set_api_key", "get_api_key", "masked_key", "clear_api_key",
     "telemetry",
@@ -90,11 +92,20 @@ def register():
         reg.register(name, sch, handler=handler,
                      source="core", tags={"meshy", "network"}, modes=modes)
 
+    # 本地工具（免费、瞬时、不联网）：动作库检索
+    from .network_ops import search_animations as _search_anim
+    for name in LOCAL_TOOLS:
+        sch = schema_by_name.get(name)
+        if sch:
+            reg.register(name, sch, handler=lambda args, _f=_search_anim: _f(args or {}),
+                         source="core", tags={"meshy", "local"}, modes=modes)
+
     # Houdini 工具：handler 在主线程调 hou.*（延迟 import，注册时不需要 hou）
     try:
         from . import houdini_io
         hou_handlers = {
             "import_3d_asset": houdini_io.import_3d_asset,
+            "import_rigged_character": houdini_io.import_rigged_character,
             "export_node_to_glb": houdini_io.export_node_to_glb,
         }
         for name in HOUDINI_TOOLS:

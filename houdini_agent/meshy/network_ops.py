@@ -190,6 +190,185 @@ def _produce_remesh(client, kwargs, should_stop, on_progress=None):
     return _download_assets(client, task, task_id)
 
 
+# ---------------- 绑定 / 动画 ----------------
+
+def _download_rig_assets(client, task, task_id):
+    """下载绑定产物到 cache/meshy/<task_id>/：rigged FBX(优先) + GLB + 自带 walk/run。
+    绑定/动画接口返回的是 result.*_url 结构（不同于生成类的 model_urls）。"""
+    dest = config.assets_dir(task_id)
+    res = task.get("result") or {}
+    out = {"task_id": task_id, "rig_task_id": task_id, "asset_dir": dest,
+           "fbx": None, "glb": None, "basic_animations": {},
+           "consumed_credits": task.get("consumed_credits")}
+    fbx_url = res.get("rigged_character_fbx_url")
+    glb_url = res.get("rigged_character_glb_url")
+    if fbx_url:
+        out["fbx"] = client.download(fbx_url, os.path.join(dest, "rigged.fbx"))
+    if glb_url:
+        out["glb"] = client.download(glb_url, os.path.join(dest, "rigged.glb"))
+    ba = res.get("basic_animations") or {}
+    for key, fname in (("walking_fbx_url", "walking.fbx"),
+                       ("running_fbx_url", "running.fbx")):
+        u = ba.get(key)
+        if u:
+            try:
+                out["basic_animations"][key[:-4]] = client.download(
+                    u, os.path.join(dest, fname))
+            except Exception:
+                pass
+    return out
+
+
+def _download_anim_assets(client, task, task_id, label=""):
+    """下载单个动作 clip 的 FBX(优先) + GLB。"""
+    dest = config.assets_dir(task_id)
+    res = task.get("result") or {}
+    out = {"task_id": task_id, "label": label, "fbx": None, "glb": None,
+           "consumed_credits": task.get("consumed_credits")}
+    fbx_url = res.get("animation_fbx_url")
+    glb_url = res.get("animation_glb_url")
+    if fbx_url:
+        out["fbx"] = client.download(fbx_url, os.path.join(dest, "anim.fbx"))
+    if glb_url:
+        out["glb"] = client.download(glb_url, os.path.join(dest, "anim.glb"))
+    return out
+
+
+def _produce_rig(client, kwargs, should_stop, on_progress=None):
+    src = (kwargs.get("source_task_id") or "").strip()
+    model_path = kwargs.get("model_path")
+    height = kwargs.get("height_meters", 1.7)
+    if src:
+        rig_id = client.create_rigging(input_task_id=src, height_meters=height)
+    elif model_path:
+        rig_id = client.create_rigging(model_url=_model_to_arg(model_path),
+                                       height_meters=height)
+    else:
+        raise MeshyError("meshy_rig 需要 source_task_id 或 model_path 之一")
+    task = client.wait("rigging", rig_id, timeout=900,
+                       on_progress=lambda p, s: on_progress and on_progress("自动绑定", p, s),
+                       should_stop=should_stop)
+    return _download_rig_assets(client, task, rig_id)
+
+
+def _run_rig(client, kwargs, on_progress, should_stop):
+    data = _produce_rig(client, kwargs, should_stop, on_progress=on_progress)
+    rid = data.get("rig_task_id")
+    lines = ["自动绑定完成。", "rig_task_id: %s" % rid]
+    if data.get("fbx"):
+        lines.append("绑定 FBX: %s" % data["fbx"])
+    ba = data.get("basic_animations") or {}
+    if ba:
+        lines.append("自带基础动画: %s" % "、".join(ba.values()))
+    if data.get("consumed_credits") is not None:
+        lines.append("消耗 credits: %s" % data["consumed_credits"])
+    if data.get("fbx"):
+        lines.append("下一步：调用 import_rigged_character(fbx_path=\"%s\") 导入 Houdini。" % data["fbx"])
+    lines.append("若要套更多动作：先用 meshy_search_animations 选动作并经用户确认，"
+                 "再调用 meshy_animate(rig_task_id=\"%s\", actions=[...])。" % rid)
+    return _ok("\n".join(lines), data)
+
+
+def run_animations(rig_task_id, actions, on_progress=None, should_stop=None):
+    """对一个已绑定角色并行套多个动作。actions=动作 id/名字列表。
+    返回 (clips, unknown)；clips 每个含 fbx/action_id/action_name；全失败抛 MeshyError。"""
+    from . import animation_lib
+    resolved, unknown = animation_lib.resolve(actions)
+    if not resolved:
+        raise MeshyError("没有可识别的动作（无法解析：%s）" % (unknown or actions))
+    resolved = resolved[:10]   # 官方上限：一次最多 10 个 clip
+    client = MeshyClient()
+    total = len(resolved)
+    results = [None] * total
+    prog = [0] * total
+    errors = []
+    lock = threading.Lock()
+
+    def report():
+        if on_progress:
+            with lock:
+                avg = sum(prog) // total
+                done = sum(1 for p in prog if p >= 100)
+            on_progress("套动作", avg, "%d/%d" % (done, total))
+
+    def one(k, a):
+        def wp(p, s):
+            with lock:
+                prog[k] = p
+            report()
+        tid = client.create_animation(rig_task_id, a["id"])
+        print("[meshy] animation submitted: %s (action %s/%s)"
+              % (tid, a["id"], a["name"]))
+        task = client.wait("animation", tid, on_progress=wp,
+                           should_stop=should_stop, timeout=900)
+        data = _download_anim_assets(client, task, tid, label=a["name"])
+        data["action_id"] = a["id"]
+        data["action_name"] = a["name"]
+        with lock:
+            prog[k] = 100
+        report()
+        return data
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(total, MAX_PARALLEL)) as ex:
+        futs = {ex.submit(one, k, a): k for k, a in enumerate(resolved)}
+        for f in concurrent.futures.as_completed(futs):
+            k = futs[f]
+            try:
+                results[k] = f.result()
+            except Exception as e:
+                errors.append(str(e))
+                print("[meshy] animate failed:", e)
+    out = [r for r in results if r]
+    if not out:
+        raise MeshyError("动作生成全部失败：" + (errors[0] if errors else "未知原因"))
+    return out, unknown
+
+
+def _run_animate(client, kwargs, on_progress, should_stop):
+    rig_task_id = (kwargs.get("rig_task_id") or "").strip()
+    if not rig_task_id:
+        return _err("meshy_animate 需要 rig_task_id（先调用 meshy_rig 取得）")
+    actions = kwargs.get("actions") or []
+    if not actions:
+        return _err("meshy_animate 需要 actions（动作 id 或名字的列表）")
+    clips, unknown = run_animations(rig_task_id, actions,
+                                    on_progress=on_progress, should_stop=should_stop)
+    lines = ["套动作完成，共 %d 个：" % len(clips)]
+    for c in clips:
+        lines.append("- %s (action_id %s): %s"
+                     % (c.get("action_name"), c.get("action_id"), c.get("fbx") or "(无 FBX)"))
+    if unknown:
+        lines.append("未能识别、已跳过：%s" % unknown)
+    total_credits = sum(int(c.get("consumed_credits") or 0) for c in clips)
+    if total_credits:
+        lines.append("合计消耗 credits: %d" % total_credits)
+    lines.append("下一步：对每个 FBX 分别调用 import_rigged_character(fbx_path=...) 导入 Houdini。")
+    return _ok("\n".join(lines), {"clips": clips, "unknown": unknown})
+
+
+def search_animations(kwargs):
+    """本地检索动作库（免费、不联网、瞬时）。返回统一工具结果。"""
+    from . import animation_lib
+    q = (kwargs or {}).get("query", "")
+    try:
+        limit = int((kwargs or {}).get("limit", 5) or 5)
+    except (ValueError, TypeError):
+        limit = 5
+    limit = max(1, min(limit, 40))
+    items = animation_lib.search(q, limit=limit)
+    if not items:
+        return {"success": True, "error": "",
+                "result": "没匹配到动作，换个关键词试试（中英文均可）。",
+                "data": {"actions": []}}
+    lines = ["匹配到 %d 个候选动作（[]内为 action_id，供 meshy_animate 使用）：" % len(items)]
+    for a in items:
+        lines.append("- [%d] %s · %s" % (a["id"], a["name"], a.get("category", "")))
+    lines.append("请你从中挑 3–5 个最贴合当前任务的：意图明确就直接定下来进入 meshy_animate；"
+                 "若需用户拍板，再把这几个简短列给用户选。每个动作约 3 credits。")
+    return {"success": True, "error": "", "result": "\n".join(lines),
+            "data": {"actions": items}}
+
+
 # 产出器（支持并行的 4 个独立任务）；标签用于摘要文案
 _PRODUCERS = {
     "meshy_text_to_3d": (_produce_text_to_3d, "文生3D"),
@@ -213,6 +392,10 @@ def _run_balance(client, kwargs, on_progress, should_stop):
 def _run_dispatch(tool_name, client, kwargs, on_progress, should_stop):
     if tool_name == "meshy_balance":
         return _run_balance(client, kwargs, on_progress, should_stop)
+    if tool_name == "meshy_rig":
+        return _run_rig(client, kwargs, on_progress, should_stop)
+    if tool_name == "meshy_animate":
+        return _run_animate(client, kwargs, on_progress, should_stop)
     if tool_name in _PRODUCERS:
         return _run_single(tool_name, client, kwargs, on_progress, should_stop)
     return _err("未知的 Meshy 网络工具: %s" % tool_name)
