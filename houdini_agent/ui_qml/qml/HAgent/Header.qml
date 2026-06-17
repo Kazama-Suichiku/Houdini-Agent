@@ -31,6 +31,38 @@ Rectangle {
 
         Item { Layout.fillWidth: true }
 
+        // Meshy 入口（引流）：品牌 logo + 下拉菜单（官网 / 工作台 / 充值 / Key / 文档）
+        Item {
+            id: meshyBtn
+            implicitHeight: Math.round(28 * Theme.scale)
+            implicitWidth: mrow.implicitWidth + 14
+            Rectangle {
+                anchors.fill: parent; radius: Theme.radSm
+                color: mma.containsMouse ? Theme.surface : "transparent"
+                border.width: 1
+                border.color: mma.containsMouse ? Theme.accentLine : "transparent"
+                Behavior on color { ColorAnimation { duration: 120 } }
+            }
+            RowLayout {
+                id: mrow
+                anchors.centerIn: parent
+                spacing: 4
+                Image {
+                    source: "meshy-logo.svg"
+                    sourceSize.width: 30; sourceSize.height: 30
+                    Layout.preferredWidth: Math.round(16 * Theme.scale)
+                    Layout.preferredHeight: Math.round(16 * Theme.scale)
+                    fillMode: Image.PreserveAspectFit
+                }
+                Text { text: "▾"; color: Theme.textMute; font.pixelSize: Theme.fMicro }
+            }
+            MouseArea {
+                id: mma; anchors.fill: parent; hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { if (controller) meshyMenu.items = controller.meshyMenuItems(); meshyMenu.open() }
+            }
+        }
+
         Pill {
             id: provPill
             label: controller ? controller.providerLabel : "Provider"
@@ -50,6 +82,15 @@ Rectangle {
         }
         Pill { id: morePill; label: "···"
             onClicked: { if (controller) moreMenu.items = controller.overflowItems(); moreMenu.open() } }
+    }
+
+    MenuPopup {
+        id: meshyMenu
+        x: meshyBtn.x + meshyBtn.width - menuWidth + row.anchors.leftMargin
+        y: row.y + row.height
+        checkable: false
+        menuWidth: 200
+        onPicked: function(val) { if (controller) controller.openMeshy(val) }
     }
 
     MenuPopup {

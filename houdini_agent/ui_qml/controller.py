@@ -128,6 +128,17 @@ MESHY_LABELS = {
     "meshy_rig": "自动绑定", "meshy_animate": "套动作",
 }
 
+# Meshy 网页入口（引流）。全部为公开、面向用户的 URL；开源不含任何内部地址/机密。
+# QML 只传 key（home/workspace/apikey/pricing/docs），URL 集中在此一处便于审计。
+_MESHY_UTM = "utm_source=houdini-agent&utm_medium=plugin"
+_MESHY_URLS = {
+    "home":      "https://www.meshy.ai",
+    "workspace": "https://www.meshy.ai/workspace",
+    "apikey":    "https://www.meshy.ai/settings/api",
+    "pricing":   "https://www.meshy.ai/pricing",
+    "docs":      "https://docs.meshy.ai",
+}
+
 # QML UI strings — Chinese -> English (used by Controller.tr when lang == 'en')
 UI_EN = {
     "描述你想在场景里做的事…  (Enter 发送)": "Describe what to build in the scene…  (Enter to send)",
@@ -140,6 +151,11 @@ UI_EN = {
     "导出对话": "Export chat", "缓存位置": "Cache location", "检查更新": "Check update",
     "Meshy 资产库": "Meshy Library", "刷新": "Refresh", "加载更多": "Load more",
     "导入": "Import", "在 Meshy 打开": "Open in Meshy", "已过期": "Expired",
+    # Meshy 网页入口（引流）
+    "工作台": "Workspace", "充值": "Top up",
+    "打开 Meshy 官网": "Open Meshy.ai", "我的工作台": "My Workspace",
+    "充值 / 定价": "Top up / Pricing", "API Key 设置": "API Key settings",
+    "API 文档": "API docs", "无法打开链接：": "Couldn't open link: ",
     "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
     "请先配置 Meshy API Key": "Set a Meshy API Key first",
     "未配置 Meshy API Key": "No Meshy API Key configured",
@@ -1718,6 +1734,46 @@ class Controller(QObject):
         if self._provider == "custom" and not MODEL_MAP.get("custom"):
             self._revert_provider_from_custom()
 
+    # ---- external browser / Meshy 网页入口 ----
+    def _open_browser(self, url):
+        """在系统默认浏览器打开一个 URL（PySide6/2 兼容）。"""
+        try:
+            try:
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+            except ImportError:
+                from PySide2.QtGui import QDesktopServices
+                from PySide2.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(url))
+        except Exception as e:
+            print("[controller] open url failed:", e)
+            try:
+                self.toast.emit(self.tr("无法打开链接：") + str(url))
+            except Exception:
+                pass
+
+    @Slot(str)
+    def openMeshy(self, kind):
+        """打开某个 Meshy 公开网页（带 UTM 归因）。kind ∈ home/workspace/apikey/pricing/docs。"""
+        base = _MESHY_URLS.get(str(kind or ""))
+        if not base:
+            return
+        sep = "&" if "?" in base else "?"
+        self._open_browser(base + sep + _MESHY_UTM)
+
+    @Slot(result="QVariantList")
+    def meshyMenuItems(self):
+        """顶栏 Meshy 按钮的下拉项（val 传给 openMeshy）。"""
+        t = self.tr
+        return [
+            {"label": t("打开 Meshy 官网"), "val": "home"},
+            {"label": t("我的工作台"), "val": "workspace"},
+            {"label": t("充值 / 定价"), "val": "pricing"},
+            {"sep": True},
+            {"label": t("API Key 设置"), "val": "apikey"},
+            {"label": t("API 文档"), "val": "docs"},
+        ]
+
     # ---- node focus ----
     @Slot(str)
     def focusNode(self, path):
@@ -1725,17 +1781,7 @@ class Controller(QObject):
         # web links are not node paths — open them in the browser
         if p.startswith(("http://", "https://", "www.")):
             url = p if "://" in p else ("https://" + p)
-            try:
-                try:
-                    from PySide6.QtGui import QDesktopServices
-                    from PySide6.QtCore import QUrl
-                except ImportError:
-                    from PySide2.QtGui import QDesktopServices
-                    from PySide2.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl(url))
-            except Exception as e:
-                print("[controller] open url failed:", e)
-                self.toast.emit("无法打开链接：" + url)
+            self._open_browser(url)
             return
         try:
             import hou

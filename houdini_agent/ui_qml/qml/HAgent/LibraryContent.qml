@@ -66,6 +66,10 @@ Rectangle {
                 }
             }
             Pill {
+                label: lib.loc("工作台")
+                onClicked: if (controller) controller.openMeshy("workspace")
+            }
+            Pill {
                 label: lib.loc("刷新")
                 onClicked: if (controller) controller.refreshLibrary()
             }
@@ -121,6 +125,13 @@ Rectangle {
                         color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fMicro
                         elide: Text.ElideRight
                     }
+                }
+                Pill {
+                    visible: lib.account.connected
+                    label: lib.loc("充值")
+                    // 额度偏低时高亮，命中"没额度的那一刻"这个最值钱的转化点
+                    accent: lib.account.balance >= 0 && lib.account.balance < 20
+                    onClicked: if (controller) controller.openMeshy("pricing")
                 }
                 Pill {
                     label: lib.account.connected ? lib.loc("切换账号") : lib.loc("登录 / 配置 Key")
