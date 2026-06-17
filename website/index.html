@@ -43,6 +43,8 @@
   --mono:"Space Mono","Noto Sans SC",monospace;
   --maxw:1180px;
   --track:.18em;
+  /* Meshy brand (from Meshy Design System) — used only to mark Meshy-related bits */
+  --meshy:#c5f955; --meshy-hover:#a8e328; --meshy-ink:#0e0e0e; --meshy-soft:rgba(197,249,85,.12);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:84px}
@@ -107,6 +109,11 @@ header.nav.scrolled{
 .btn:hover{border-color:var(--accent-line);color:var(--text-bright)}
 .btn.solid{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
 .btn.solid:hover{filter:brightness(1.08)}
+/* Meshy-branded button + inline mark + accent text */
+.btn.meshy{border-color:var(--meshy);color:var(--meshy)}
+.btn.meshy:hover{border-color:var(--meshy);color:var(--meshy);background:var(--meshy-soft)}
+.meshy-ico{width:16px;height:16px;border-radius:4px;flex-shrink:0;display:inline-block}
+.meshy-grn{color:var(--meshy)}
 /* hamburger (hidden on desktop) */
 .nav-toggle{display:none;width:34px;height:34px;border:1px solid var(--border);background:transparent;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0}
 .nav-toggle span{display:block;width:16px;height:1.5px;background:var(--text);transition:.25s}
@@ -386,14 +393,14 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
 .lp .tkcost{margin-top:9px;font-family:var(--font-mono);font-size:13px;color:var(--ok)}
 
 /* live panel: meshy concept-gallery mock */
-.lp .mgal{border:1px solid var(--accent-line);background:var(--accent-soft);padding:11px}
-.lp .mgal-hd{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:9px}
+.lp .mgal{border:1px solid rgba(197,249,85,.3);background:rgba(197,249,85,.1);padding:11px}
+.lp .mgal-hd{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#c5f955;margin-bottom:9px}
 .lp .mgal-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
 .lp .mtile{aspect-ratio:1/1;border:1px solid var(--border);background:linear-gradient(140deg,var(--g1,#333),var(--g2,#141414));position:relative}
-.lp .mtile.sel{border:2px solid var(--accent)}
-.lp .mtile .mck{position:absolute;top:5px;right:5px;width:16px;height:16px;background:var(--accent);color:#0d0d0d;display:grid;place-items:center;font-size:10px;font-family:var(--font-mono)}
+.lp .mtile.sel{border:2px solid #c5f955}
+.lp .mtile .mck{position:absolute;top:5px;right:5px;width:16px;height:16px;background:#c5f955;color:#0e0e0e;display:grid;place-items:center;font-size:10px;font-family:var(--font-mono)}
 .lp .mgal-foot{margin-top:9px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:7px}
-.lp .mgal-foot .mgo{margin-left:auto;color:#0d0d0d;background:var(--accent);padding:4px 10px;cursor:pointer}
+.lp .mgal-foot .mgo{margin-left:auto;color:#0e0e0e;background:#c5f955;padding:4px 10px;cursor:pointer}
 
 /* ============================================================
    LIVE PANEL — interactive editorial demo (scoped under .lp)
@@ -595,7 +602,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
     </nav>
     <div class="nav-actions">
       <button class="langtog" id="langtog">EN / 中</button>
-      <a class="btn" href="https://www.meshy.ai" target="_blank" rel="noopener">Meshy &#8599;</a>
+      <a class="btn meshy" href="https://www.meshy.ai" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="Meshy" />Meshy</a>
       <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener">GitHub</a>
       <a class="btn solid" href="#download"><span class="zh">下载</span><span class="en">Download</span></a>
     </div>
@@ -628,7 +635,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
         <div class="hero-cta">
           <a class="btn solid" href="#download"><span class="zh">立即下载</span><span class="en">Download</span></a>
           <a class="btn" href="#generation"><span class="zh">看 3D 生成</span><span class="en">See 3D gen</span></a>
-          <a class="btn" href="https://www.meshy.ai" target="_blank" rel="noopener"><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
+          <a class="btn meshy" href="https://www.meshy.ai" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="" /><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
           <span class="ver">v2.0</span>
         </div>
         <div class="hero-stats">
@@ -902,12 +909,12 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
       <div class="kicker"><span class="ln"></span><span class="ml accent">02 — 3D Generation</span></div>
       <h2><span class="zh">从一句话，到<em>可用的 3D 资产</em>。</span><span class="en">From a sentence to <em>usable 3D assets</em>.</span></h2>
       <p>
-        <span class="zh">深度集成 <b>Meshy</b> AI 3D 生成。文生 3D、图生 3D、概念图画廊、图生图二次编辑、云资产库 —— 全部作为 Agent 的工具，由它在对话里自主编排，产物直接落进你的节点网络。</span>
-        <span class="en">Deeply integrated <b>Meshy</b> AI 3D generation — text-to-3D, image-to-3D, concept galleries, image-to-image editing and a cloud asset library. All exposed as agent tools, orchestrated in conversation, with results landing straight in your node graph.</span>
+        <span class="zh">深度集成 <b class="meshy-grn">Meshy</b> AI 3D 生成。文生 3D、图生 3D、概念图画廊、图生图二次编辑、云资产库 —— 全部作为 Agent 的工具，由它在对话里自主编排，产物直接落进你的节点网络。</span>
+        <span class="en">Deeply integrated <b class="meshy-grn">Meshy</b> AI 3D generation — text-to-3D, image-to-3D, concept galleries, image-to-image editing and a cloud asset library. All exposed as agent tools, orchestrated in conversation, with results landing straight in your node graph.</span>
       </p>
       <p style="margin-top:14px">
-        <span class="zh">还没有 Meshy？<a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--accent);border-bottom:1px solid var(--accent-line)">前往 Meshy 注册并获取 API Key &#8599;</a></span>
-        <span class="en">No Meshy account yet? <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--accent);border-bottom:1px solid var(--accent-line)">Sign up at Meshy and get an API key &#8599;</a></span>
+        <span class="zh">还没有 Meshy？<a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">前往 Meshy 注册并获取 API Key &#8599;</a></span>
+        <span class="en">No Meshy account yet? <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">Sign up at Meshy and get an API key &#8599;</a></span>
       </p>
     </div>
 
@@ -1319,7 +1326,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
       <div class="step">
         <div class="sn">03</div>
         <h4><span class="zh">配置 API Key</span><span class="en">Set an API key</span></h4>
-        <p><span class="zh">在程序内点「API Key…」保存到本机，或设置环境变量。想用 AI 3D 生成？再填一个 <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--accent)">Meshy API Key</a> 即可。</span><span class="en">Click "API Key…" in-app to save locally, or set an environment variable. Want AI 3D generation? Add a <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--accent)">Meshy API key</a> too.</span></p>
+        <p><span class="zh">在程序内点「API Key…」保存到本机，或设置环境变量。想用 AI 3D 生成？再填一个 <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API Key</a> 即可。</span><span class="en">Click "API Key…" in-app to save locally, or set an environment variable. Want AI 3D generation? Add a <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API key</a> too.</span></p>
       </div>
     </div>
 
