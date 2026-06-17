@@ -120,17 +120,27 @@ Popup {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
+
+            // ---- left: rule list ----
             Rectangle {
-                Layout.preferredWidth: 250
+                Layout.preferredWidth: Math.round(264 * Theme.scale)
                 Layout.fillHeight: true
-                color: Theme.surface
+                color: Theme.codeBg
                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
                 ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 12; spacing: 8
+                    anchors.fill: parent; anchors.margins: 16; spacing: 12
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { Layout.fillWidth: true; text: "RULES"; color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel }
-                        Pill { label: "+"; onClicked: { if (controller) controller.addRule(); panel.refresh(); panel.selected = Math.max(0, panel.rules.length - 1); panel.loadRule() } }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "RULES · " + panel.rules.length
+                            color: Theme.textMute; font.family: Theme.fontMono
+                            font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
+                        }
+                        Pill {
+                            label: panel.loc("新建"); accent: true
+                            onClicked: { if (controller) controller.addRule(); panel.refresh(); panel.selected = Math.max(0, panel.rules.length - 1); panel.loadRule() }
+                        }
                     }
                     ListView {
                         Layout.fillWidth: true
@@ -142,63 +152,179 @@ Popup {
                         flickDeceleration: 3600
                         maximumFlickVelocity: 7200
                         model: panel.rules
-                        spacing: 5
+                        spacing: 6
                         ScrollBar.vertical: SmartScrollBar {}
                         delegate: Rectangle {
                             required property int index
                             required property var modelData
                             width: ListView.view.width
-                            height: Math.round(48 * Theme.scale)
-                            color: index === panel.selected ? Theme.accentSoft : "transparent"
+                            height: Math.round(54 * Theme.scale)
+                            color: index === panel.selected ? Theme.accentSoft : Theme.surface
                             border.color: index === panel.selected ? Theme.accentLine : Theme.borderSoft
                             border.width: 1
                             radius: Theme.radSm
-                            Text { anchors.left: parent.left; anchors.leftMargin: 9; anchors.right: parent.right; anchors.rightMargin: 9; anchors.top: parent.top; anchors.topMargin: 7; text: modelData.title; elide: Text.ElideRight; color: modelData.enabled ? Theme.text : Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fSm }
-                            Text { anchors.left: parent.left; anchors.leftMargin: 9; anchors.bottom: parent.bottom; anchors.bottomMargin: 6; text: (modelData.source || "ui").toUpperCase(); color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: {
-                                if (panel.ruleDirty) { if (controller) controller.showToast("当前规则有未保存修改，请先提交或取消"); return }
-                                panel.selected = index; panel.loadRule()
-                            } }
+                            Rectangle {
+                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                width: 2; color: Theme.accent
+                                visible: index === panel.selected
+                            }
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12; anchors.rightMargin: 10
+                                anchors.topMargin: 8; anchors.bottomMargin: 8
+                                spacing: 3
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.title || panel.loc("未命名")
+                                    elide: Text.ElideRight
+                                    color: modelData.enabled === false ? Theme.textMute : Theme.text
+                                    font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    Text {
+                                        text: (modelData.source || "ui").toUpperCase()
+                                        color: Theme.textMute; font.family: Theme.fontMono
+                                        font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
+                                    }
+                                    Text {
+                                        text: modelData.readonly ? "READONLY" : (modelData.enabled === false ? "OFF" : "ON")
+                                        color: (!modelData.readonly && modelData.enabled !== false) ? Theme.ok : Theme.textMute
+                                        font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (panel.ruleDirty) { if (controller) controller.showToast(panel.loc("当前规则有未保存修改，请先提交或取消")); return }
+                                    panel.selected = index; panel.loadRule()
+                                }
+                            }
                         }
                     }
-                    Pill { label: panel.loc("打开插件目录").replace("插件", "规则"); onClicked: if (controller) controller.openRulesFolder() }
-                }
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.margins: 14
-                spacing: 10
-                RowLayout {
-                    Layout.fillWidth: true
-                    LabeledField { id: ruleTitle; Layout.fillWidth: true; label: "Title"; enabled: !panel.selectedRule().readonly; onTextChanged: if (!panel.selectedRule().readonly) panel.ruleDirty = true }
-                    CheckBox {
-                        id: ruleEnabled
-                        text: panel.loc("开")
-                        checked: true
-                        enabled: !panel.selectedRule().readonly
-                        palette.windowText: Theme.text
-                        onCheckedChanged: if (!panel.selectedRule().readonly) panel.ruleDirty = true
+                    Text {
+                        text: panel.loc("打开规则目录") + " →"
+                        color: dirMa.containsMouse ? Theme.accent : Theme.textMute
+                        font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                        MouseArea {
+                            id: dirMa; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: if (controller) controller.openRulesFolder()
+                        }
                     }
                 }
-                TextArea {
-                    id: ruleBody
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    readOnly: panel.selectedRule().readonly
-                    wrapMode: TextArea.Wrap
-                    color: Theme.text
-                    selectedTextColor: Theme.bg
-                    selectionColor: Theme.accent
-                    font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                    background: Rectangle { color: Theme.surface; border.color: Theme.border; border.width: 1; radius: Theme.radSm }
-                    onTextChanged: if (!panel.selectedRule().readonly) panel.ruleDirty = true
+            }
+
+            // ---- right: editor / empty state ----
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                // empty state
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 64, 360)
+                    visible: panel.rules.length === 0
+                    spacing: 10
+                    Text { Layout.alignment: Qt.AlignHCenter; text: "◇"; color: Theme.textMute; font.pixelSize: Theme.fXl }
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: panel.loc("还没有规则")
+                        color: Theme.textDim; font.family: Theme.fontDisplay; font.pixelSize: Theme.fLg
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        text: panel.loc("规则会注入到每次对话、长期生效。点左上角「新建」创建第一条。")
+                        color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                    }
                 }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text { Layout.fillWidth: true; text: panel.selectedRule().readonly ? (panel.selectedRule().path || "File rule, readonly") : "UI rule"; color: Theme.textMute; elide: Text.ElideRight; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
-                    Pill { label: panel.loc("删除"); visible: !panel.selectedRule().readonly && panel.rules.length > 0; onClicked: { if (controller) controller.deleteRule(panel.selectedRule().id) } }
-                    Pill { label: panel.loc("提交"); accent: true; visible: !panel.selectedRule().readonly && panel.rules.length > 0; onClicked: { if (!controller || controller.saveRule(panel.selectedRule().id, ruleTitle.text, ruleBody.text, ruleEnabled.checked)) { panel.ruleDirty = false; panel.refresh(); panel.loadRule() } } }
+
+                // editor
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 18
+                    visible: panel.rules.length > 0
+                    spacing: 12
+                    Text {
+                        text: panel.selectedRule().readonly ? "RULE · READONLY" : "RULE · 编辑"
+                        color: Theme.accent; font.family: Theme.fontMono
+                        font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 14
+                        LabeledField {
+                            id: ruleTitle; Layout.fillWidth: true; label: "TITLE"
+                            enabled: !panel.selectedRule().readonly
+                            onTextChanged: if (!panel.selectedRule().readonly) panel.ruleDirty = true
+                        }
+                        ColumnLayout {
+                            spacing: 5
+                            Text { text: "STATE"; color: Theme.textDim; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel }
+                            Item {
+                                id: ruleEnabled
+                                property bool checked: true
+                                implicitWidth: Math.round(76 * Theme.scale)
+                                implicitHeight: Math.round(30 * Theme.scale)
+                                Rectangle {
+                                    anchors.fill: parent; radius: Theme.radSm
+                                    color: ruleEnabled.checked ? Theme.accentSoft : "transparent"
+                                    border.width: 1
+                                    border.color: ruleEnabled.checked ? Theme.accentLine : Theme.border
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: ruleEnabled.checked ? panel.loc("启用") : panel.loc("停用")
+                                    color: ruleEnabled.checked ? Theme.accent : Theme.textMute
+                                    font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: !panel.selectedRule().readonly
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: { ruleEnabled.checked = !ruleEnabled.checked; panel.ruleDirty = true }
+                                }
+                            }
+                        }
+                    }
+                    Text { text: "CONTENT"; color: Theme.textDim; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        color: Theme.codeBg
+                        border.color: ruleBody.activeFocus ? Theme.accentLine : Theme.border
+                        border.width: 1; radius: Theme.radSm
+                        TextArea {
+                            id: ruleBody
+                            anchors.fill: parent; anchors.margins: 11
+                            readOnly: panel.selectedRule().readonly
+                            wrapMode: TextArea.Wrap
+                            color: Theme.text
+                            selectedTextColor: Theme.bg
+                            selectionColor: Theme.accent
+                            font.family: Theme.fontBody; font.pixelSize: Theme.fBody
+                            background: null
+                            placeholderText: panel.loc("写下这条规则的内容…")
+                            placeholderTextColor: Theme.textMute
+                            onTextChanged: if (!panel.selectedRule().readonly) panel.ruleDirty = true
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 10
+                        Text {
+                            Layout.fillWidth: true
+                            text: panel.selectedRule().readonly
+                                  ? (panel.selectedRule().path || panel.loc("文件规则 · 只读"))
+                                  : (panel.ruleDirty ? panel.loc("有未保存修改") : panel.loc("UI 规则"))
+                            color: (panel.ruleDirty && !panel.selectedRule().readonly) ? Theme.warn : Theme.textMute
+                            elide: Text.ElideMiddle
+                            font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                        }
+                        Pill { label: panel.loc("删除"); dashed: true; visible: !panel.selectedRule().readonly && panel.rules.length > 0; onClicked: { if (controller) controller.deleteRule(panel.selectedRule().id) } }
+                        Pill { label: panel.loc("提交"); accent: true; visible: !panel.selectedRule().readonly && panel.rules.length > 0; onClicked: { if (!controller || controller.saveRule(panel.selectedRule().id, ruleTitle.text, ruleBody.text, ruleEnabled.checked)) { panel.ruleDirty = false; panel.refresh(); panel.loadRule() } } }
+                    }
                 }
             }
         }

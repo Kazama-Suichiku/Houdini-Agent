@@ -162,6 +162,15 @@ UI_EN = {
     "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
     "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
     "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
+    # 规则编辑器
+    "新建": "New", "未命名": "Untitled", "打开规则目录": "Open rules folder",
+    "还没有规则": "No rules yet",
+    "规则会注入到每次对话、长期生效。点左上角「新建」创建第一条。":
+        "Rules are injected into every chat and persist. Click New (top-left) to create your first.",
+    "启用": "Enabled", "停用": "Disabled",
+    "文件规则 · 只读": "File rule · read-only", "有未保存修改": "Unsaved changes", "UI 规则": "UI rule",
+    "写下这条规则的内容…": "Write the rule content…",
+    "当前规则有未保存修改，请先提交或取消": "This rule has unsaved changes — submit or cancel first",
     "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
     "请先配置 Meshy API Key": "Set a Meshy API Key first",
     "未配置 Meshy API Key": "No Meshy API Key configured",
