@@ -128,6 +128,17 @@ MESHY_LABELS = {
     "meshy_rig": "自动绑定", "meshy_animate": "套动作",
 }
 
+# Meshy 网页快捷入口。均为公开、面向用户的页面 URL（不含任何内部地址/机密）。
+# QML 只传 key（home/workspace/apikey/pricing/docs），URL 集中在此一处便于维护。
+_MESHY_UTM = "utm_source=houdini-agent&utm_medium=plugin"
+_MESHY_URLS = {
+    "home":      "https://www.meshy.ai",
+    "workspace": "https://www.meshy.ai/workspace",
+    "apikey":    "https://www.meshy.ai/settings/api",
+    "pricing":   "https://www.meshy.ai/pricing",
+    "docs":      "https://docs.meshy.ai",
+}
+
 # QML UI strings — Chinese -> English (used by Controller.tr when lang == 'en')
 UI_EN = {
     "描述你想在场景里做的事…  (Enter 发送)": "Describe what to build in the scene…  (Enter to send)",
@@ -140,6 +151,26 @@ UI_EN = {
     "导出对话": "Export chat", "缓存位置": "Cache location", "检查更新": "Check update",
     "Meshy 资产库": "Meshy Library", "刷新": "Refresh", "加载更多": "Load more",
     "导入": "Import", "在 Meshy 打开": "Open in Meshy", "已过期": "Expired",
+    # Meshy 网页快捷入口
+    "工作台": "Workspace", "充值": "Top up",
+    "打开 Meshy 官网": "Open Meshy.ai", "我的工作台": "My Workspace",
+    "充值 / 定价": "Top up / Pricing", "API Key 设置": "API Key settings",
+    "API 文档": "API docs", "无法打开链接：": "Couldn't open link: ",
+    "+ 生成": "+ Generate", "+ 用 Meshy 生成": "+ Generate with Meshy",
+    "用 Meshy 生成一个 ": "Generate with Meshy: ", "去 Meshy 工作台": "Open Meshy Workspace",
+    "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "Meshy 定价": "Pricing",
+    "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
+    "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
+    "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
+    # 规则编辑器
+    "新建": "New", "未命名": "Untitled", "打开规则目录": "Open rules folder",
+    "还没有规则": "No rules yet",
+    "规则会注入到每次对话、长期生效。点左上角「新建」创建第一条。":
+        "Rules are injected into every chat and persist. Click New (top-left) to create your first.",
+    "启用": "Enabled", "停用": "Disabled",
+    "文件规则 · 只读": "File rule · read-only", "有未保存修改": "Unsaved changes", "UI 规则": "UI rule",
+    "写下这条规则的内容…": "Write the rule content…",
+    "当前规则有未保存修改，请先提交或取消": "This rule has unsaved changes — submit or cancel first",
     "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
     "请先配置 Meshy API Key": "Set a Meshy API Key first",
     "未配置 Meshy API Key": "No Meshy API Key configured",
@@ -332,6 +363,8 @@ class Controller(QObject):
     statusChanged = Signal()              # running phase label
     updateAvailableChanged = Signal()
     toast = Signal(str)                   # transient message
+    prefillComposer = Signal(str)         # text -> 预填输入框并聚焦（库里"+用 Meshy 生成"）
+    requestOpenHoudini = Signal()         # 断开时请求外部协调器弹启动器/重连 Houdini
     openFontDialog = Signal()             # request the font-size slider popup
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
@@ -1360,7 +1393,11 @@ class Controller(QObject):
             return False
 
     def _export_chat(self):
-        hist = self._session.history if self._session else []
+        # 优先用活动会话的实时历史；未连接 / 重启后会话未挂载时，回退到已恢复/已保存的会话历史，
+        # 这样"看得到历史却导不出"（_session 尚为空）的情况也能正常导出。
+        hist = list(self._session.history) if (self._session and getattr(self._session, "history", None)) else []
+        if not hist and self._sessions and 0 <= self._active < len(self._sessions):
+            hist = self._sessions[self._active].get("history", []) or []
         if not hist:
             self._info("导出对话", "当前会话没有可导出的内容。")
             return
@@ -1650,9 +1687,35 @@ class Controller(QObject):
         self.modelChanged.emit()
         self._save_prefs()
 
+    def _houdini_connected(self):
+        """会话存在且 Bridge 仍可达。独立 exe 下关闭 Houdini 后 _session 可能仍在、
+        但 bridge 已断，故用一次 ping 作为"是否真连着"的可靠信号；进程内会话无 bridge，视为已连。"""
+        s = self._session
+        if not s:
+            return False
+        b = getattr(s, "bridge", None)
+        if b is None:
+            return True
+        try:
+            return b.ping() is not None
+        except Exception:
+            return False
+
+    def _prompt_open_houdini(self, what):
+        """断开时引导用户打开 Houdini：说明情况 + 请求弹启动器（外部 exe 由协调器接住）。"""
+        try:
+            self.toast.emit(self.tr("Houdini 未连接，%s 需要先连接 Houdini，正在打开启动器…") % what)
+        except Exception:
+            pass
+        try:
+            self.requestOpenHoudini.emit()
+        except Exception:
+            pass
+
     def _open_custom_provider(self):
-        if not self._session:
+        if not self._houdini_connected():
             self._revert_provider_from_custom()
+            self._prompt_open_houdini(self.tr("配置自定义 Provider"))
             return
         try:
             cur = QSettings("HoudiniAI", "Assistant")
@@ -1718,6 +1781,67 @@ class Controller(QObject):
         if self._provider == "custom" and not MODEL_MAP.get("custom"):
             self._revert_provider_from_custom()
 
+    # ---- external browser / Meshy 网页入口 ----
+    def _open_browser(self, url):
+        """在系统默认浏览器打开一个 URL（PySide6/2 兼容）。"""
+        try:
+            try:
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+            except ImportError:
+                from PySide2.QtGui import QDesktopServices
+                from PySide2.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(url))
+        except Exception as e:
+            print("[controller] open url failed:", e)
+            try:
+                self.toast.emit(self.tr("无法打开链接：") + str(url))
+            except Exception:
+                pass
+
+    @Slot(str)
+    def openMeshy(self, kind):
+        """在浏览器打开某个 Meshy 公开网页（链接附带 utm 来源标记）。kind ∈ home/workspace/apikey/pricing/docs。"""
+        base = _MESHY_URLS.get(str(kind or ""))
+        if not base:
+            return
+        sep = "&" if "?" in base else "?"
+        self._open_browser(base + sep + _MESHY_UTM)
+
+    @Slot(str, result="QVariantList")
+    def imageModelItems(self, current=""):
+        """生图模型下拉项（画廊里"弹窗选模型"用）。current=当前模型，打勾。"""
+        cur = str(current or "")
+        models = [
+            ("nano-banana", self.tr("Nano Banana（默认 · 快）")),
+            ("nano-banana-2", "Nano Banana 2"),
+            ("nano-banana-pro", self.tr("Nano Banana Pro（高质量）")),
+            ("gpt-image-2", "GPT Image 2"),
+        ]
+        return [{"label": lbl, "val": val, "checked": (val == cur)}
+                for val, lbl in models]
+
+    @Slot(str)
+    def composePrefill(self, text):
+        """把一段起始提示词塞进输入框并聚焦（资产库"+用 Meshy 生成"快捷用）。"""
+        try:
+            self.prefillComposer.emit(str(text or ""))
+        except Exception:
+            pass
+
+    @Slot(result="QVariantList")
+    def meshyMenuItems(self):
+        """顶栏 Meshy 按钮的下拉项（val 传给 openMeshy）。"""
+        t = self.tr
+        return [
+            {"label": t("打开 Meshy 官网"), "val": "home"},
+            {"label": t("我的工作台"), "val": "workspace"},
+            {"label": t("充值 / 定价"), "val": "pricing"},
+            {"sep": True},
+            {"label": t("API Key 设置"), "val": "apikey"},
+            {"label": t("API 文档"), "val": "docs"},
+        ]
+
     # ---- node focus ----
     @Slot(str)
     def focusNode(self, path):
@@ -1725,17 +1849,7 @@ class Controller(QObject):
         # web links are not node paths — open them in the browser
         if p.startswith(("http://", "https://", "www.")):
             url = p if "://" in p else ("https://" + p)
-            try:
-                try:
-                    from PySide6.QtGui import QDesktopServices
-                    from PySide6.QtCore import QUrl
-                except ImportError:
-                    from PySide2.QtGui import QDesktopServices
-                    from PySide2.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl(url))
-            except Exception as e:
-                print("[controller] open url failed:", e)
-                self.toast.emit("无法打开链接：" + url)
+            self._open_browser(url)
             return
         try:
             import hou
@@ -2424,7 +2538,7 @@ class Controller(QObject):
                 ph = fields.get("phase")
                 if ph:
                     t["stage"] = _STAGE.get(ph, ph)
-            payload = {"token": token, "mode": mode, "op": token}
+            payload = {"token": token, "mode": mode, "op": token, "model": ai_model}
             payload.update(fields)
             try:
                 self._sigConcept.emit(json.dumps(payload, default=str))
@@ -2519,6 +2633,18 @@ class Controller(QObject):
                 except queue.Empty:
                     decision = {"action": "cancel"}
                 action = (decision or {}).get("action")
+
+                if action == "set_model":
+                    # 用户在画廊里换了生图模型：用相同提示词就地换模型重出（不绕回 Agent、不改提示词）
+                    nm = (decision.get("model") or "").strip()
+                    if nm:
+                        ai_model = nm
+                    cur_prompts = [c.get("prompt") for c in concepts if c.get("prompt")] or prompt_list
+                    pending = {"prompts": cur_prompts, "refs": base_refs}
+                    show(phase="gen", prompt=card_prompt, count=len(cur_prompts),
+                         images=[], selected=[], progress=0,
+                         note="切换模型 %s · 重新生成…" % ai_model)
+                    continue
 
                 if action == "regenerate":
                     # 不直接拿用户文字调 API：把反馈交回 Agent，让它理解意图、改写提示词后重做

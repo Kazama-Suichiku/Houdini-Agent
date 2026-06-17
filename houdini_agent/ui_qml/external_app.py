@@ -123,6 +123,16 @@ class ExternalCoordinator:
             except Exception as exc:
                 self.controller.toast.emit("启动 Houdini 失败：%s" % exc)
 
+    def prompt_relaunch(self):
+        """断开后由 UI 触发（如配置需要会话的功能时）：先探一次 Bridge，
+        已恢复就直接重连，否则重弹启动器让用户重新打开 Houdini。"""
+        self.connected = False
+        self.prompted = False
+        if self.check_bridge():
+            self.controller.toast.emit("已重新连接到 Houdini。")
+            return
+        self.show_launcher()
+
 
 def _app_icon():
     """品牌应用图标（运行时窗口/任务栏）。打包后取 _MEIPASS/assets，开发时取仓库 assets。"""
@@ -175,6 +185,10 @@ def show_tool():
         win.resize(440, 820)
 
     coord = ExternalCoordinator(win, controller, repo_root)
+    try:
+        controller.requestOpenHoudini.connect(coord.prompt_relaunch)
+    except Exception:
+        pass
     win._controller = controller
     win._coordinator = coord
     win.show()

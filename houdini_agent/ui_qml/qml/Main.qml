@@ -19,27 +19,8 @@ Rectangle {
         function onFontScaleChanged() { if (controller) Theme.scale = controller.fontScale }
     }
 
-    RowLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // Meshy 资产库抽屉：依附面板、向左外扩的列。
-        // 打开时 app.py 把整窗口向左加宽 360px，新增空间全给这列，聊天区宽度不变。
-        Rectangle {
-            id: libPanel
-            Layout.fillHeight: true
-            Layout.preferredWidth: (controller && controller.libraryOpen) ? 360 : 0
-            Behavior on Layout.preferredWidth { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-            visible: Layout.preferredWidth > 1
-            clip: true
-            color: Theme.bg
-            LibraryContent { anchors.fill: parent; anchors.rightMargin: 1 }
-            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
-        }
-
     ColumnLayout {
-        Layout.fillWidth: true
-        Layout.fillHeight: true
+        anchors.fill: parent
         spacing: 0
 
         Header      { Layout.fillWidth: true }
@@ -78,6 +59,48 @@ Rectangle {
 
         Composer { Layout.fillWidth: true }
     }
+
+    // Meshy 资产库浮层抽屉：向内叠在聊天之上；未被面板覆盖处用半透明磨砂遮罩盖住，点遮罩关闭。
+    Item {
+        id: libOverlay
+        anchors.fill: parent
+        z: 90
+        property bool open: controller ? controller.libraryOpen : false
+        visible: open || scrim.opacity > 0.001
+
+        // 磨砂遮罩：半透明盖住未被面板覆盖的区域，点击关闭
+        Rectangle {
+            id: scrim
+            anchors.fill: parent
+            color: Qt.rgba(0.05, 0.05, 0.06, 0.55)
+            opacity: libOverlay.open ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: if (controller) controller.setLibraryOpen(false)
+            }
+        }
+
+        // 抽屉面板：从左侧滑入，叠在聊天上方（不挤占窗口）
+        Rectangle {
+            id: libDrawer
+            width: Math.min(360, libOverlay.width * 0.88)
+            height: parent.height
+            color: Theme.bg
+            x: libOverlay.open ? 0 : -width - 2
+            Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+            Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
+            // 右缘投影，强化"叠在上方"的层次
+            Rectangle {
+                anchors.left: parent.right; width: 14; height: parent.height
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.22) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
+            LibraryContent { anchors.fill: parent; anchors.rightMargin: 1 }
+        }
     }
 
     // transient toast
@@ -106,9 +129,6 @@ Rectangle {
             function onToast(msg) { toastText.text = msg; toast.opacity = 1; toastTimer.restart() }
         }
     }
-
-    // Meshy cloud asset library now lives in its own floating window
-    // (host.create_library_view + app.py), so it is no longer embedded here.
 
     FontPopup { id: fontPopup }
     TokenPopup { id: tokenPopup }

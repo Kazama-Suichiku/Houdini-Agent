@@ -170,45 +170,9 @@ def show_tool(mock=False):
     win.raise_()
     win.activateWindow()
 
-    # Meshy 资产库：依附主窗口、向左外扩的滑动抽屉。打开时把窗口整体加宽
-    # _LIB_DW（向左展开，新增空间全给抽屉列，聊天区宽度不变），关闭时缩回。
-    _LIB_DW = 360
-    try:
-        from PySide6.QtCore import QPropertyAnimation, QRect, QEasingCurve
-    except ImportError:
-        from PySide2.QtCore import QPropertyAnimation, QRect, QEasingCurve
-
-    def _on_library_toggle():
-        w = getattr(app, "_hagent_qml_window", None)
-        if w is None:
-            return
-        opening = bool(controller.libraryOpen)
-        grown = bool(getattr(w, "_lib_grown", False))
-        if opening == grown:
-            return
-        geo = w.geometry()
-        if opening:
-            new_x = max(0, geo.x() - _LIB_DW)
-            w._lib_dx = geo.x() - new_x   # 实际左移量（贴屏边时可能 < _LIB_DW）
-            end = QRect(new_x, geo.y(), geo.width() + _LIB_DW, geo.height())
-            w._lib_grown = True
-        else:
-            dx = int(getattr(w, "_lib_dx", _LIB_DW))
-            end = QRect(geo.x() + dx, geo.y(),
-                        max(320, geo.width() - _LIB_DW), geo.height())
-            w._lib_grown = False
-        anim = QPropertyAnimation(w, b"geometry")
-        anim.setDuration(200)
-        anim.setStartValue(geo)
-        anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-        anim.start()
-        w._lib_anim = anim   # keep a ref so it isn't GC'd mid-animation
-
-    try:
-        controller.libraryOpenChanged.connect(_on_library_toggle)
-    except Exception as e:
-        print("[app] library drawer wiring failed:", e)
+    # Meshy 资产库：改为窗口内的浮层抽屉（向内叠在聊天之上，未被面板覆盖处用半透明
+    # 磨砂遮罩盖住，点遮罩关闭），完全由 QML（Main.qml 的 libOverlay）处理，
+    # 不再改动主窗口几何 / 不向外加宽。
 
     QTimer.singleShot(4000, view._controller.silentUpdateCheck)
 

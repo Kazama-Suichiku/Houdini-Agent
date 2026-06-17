@@ -66,6 +66,18 @@ Rectangle {
                 }
             }
             Pill {
+                label: lib.loc("+ 生成")
+                onClicked: {
+                    if (!controller) return
+                    controller.composePrefill(lib.loc("用 Meshy 生成一个 "))
+                    controller.setLibraryOpen(false)
+                }
+            }
+            Pill {
+                label: lib.loc("工作台")
+                onClicked: if (controller) controller.openMeshy("workspace")
+            }
+            Pill {
                 label: lib.loc("刷新")
                 onClicked: if (controller) controller.refreshLibrary()
             }
@@ -123,6 +135,13 @@ Rectangle {
                     }
                 }
                 Pill {
+                    visible: lib.account.connected
+                    label: lib.loc("充值")
+                    // 余额较低时高亮提醒
+                    accent: lib.account.balance >= 0 && lib.account.balance < 20
+                    onClicked: if (controller) controller.openMeshy("pricing")
+                }
+                Pill {
                     label: lib.account.connected ? lib.loc("切换账号") : lib.loc("登录 / 配置 Key")
                     accent: !lib.account.connected
                     onClicked: if (controller) controller.openMeshyLogin()
@@ -156,15 +175,40 @@ Rectangle {
             visible: !lib.loading && lib.items.length === 0
             Column {
                 anchors.centerIn: parent
-                spacing: 8
+                width: parent.width - 32
+                spacing: 10
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "◇"; color: Theme.textMute; font.pixelSize: Theme.fXl
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: lib.loc("暂无资产")
+                    text: lib.account.connected ? lib.loc("暂无资产")
+                                                : lib.loc("登录 Meshy 同步你的资产")
                     color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                    horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                    width: parent.width
+                }
+                // 自适应引导 CTA：已连接→引导在 Agent 里生成；未连接→登录同步
+                Pill {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    label: lib.account.connected ? lib.loc("+ 用 Meshy 生成") : lib.loc("登录 / 配置 Key")
+                    accent: true
+                    onClicked: {
+                        if (!controller) return
+                        if (lib.account.connected) {
+                            controller.composePrefill(lib.loc("用 Meshy 生成一个 "))
+                            controller.setLibraryOpen(false)
+                        } else {
+                            controller.openMeshyLogin()
+                        }
+                    }
+                }
+                Pill {
+                    visible: lib.account.connected
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    label: lib.loc("去 Meshy 工作台"); dashed: true
+                    onClicked: if (controller) controller.openMeshy("workspace")
                 }
             }
         }
@@ -359,6 +403,35 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     label: lib.loc("加载更多"); dashed: true
                     onClicked: if (controller) controller.loadMoreLibrary()
+                }
+            }
+        }
+
+        // ---- 底部：Meshy 网页快捷链接（常驻，空/满都显示）----
+        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            Text {
+                Layout.fillWidth: true
+                text: lib.loc("在 Meshy 网页管理全部资产 →")
+                color: wsMa.containsMouse ? Theme.accent : Theme.textMute
+                font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                elide: Text.ElideRight
+                MouseArea {
+                    id: wsMa; anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (controller) controller.openMeshy("workspace")
+                }
+            }
+            Text {
+                text: lib.loc("Meshy 定价")
+                color: proMa.containsMouse ? Theme.textBright : Theme.accent
+                font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                MouseArea {
+                    id: proMa; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (controller) controller.openMeshy("pricing")
                 }
             }
         }
