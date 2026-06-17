@@ -149,7 +149,7 @@ class AIClientContextMixin:
                 if isinstance(part, dict):
                     if part.get('type') == 'text':
                         text_parts.append(part.get('text', ''))
-                    elif part.get('type') == 'image_url':
+                    elif part.get('type') in ('image_url', 'image'):
                         has_image = True
                         stripped += 1
                 elif isinstance(part, str):
@@ -364,7 +364,8 @@ class AIClientContextMixin:
             return content
         else:
             error = result.get('error', '未知错误')
-            return error[:500] if len(error) > 500 else error
+            limit = 2500 if tool_name in ('execute_python', 'execute_shell', 'run_skill') else 1200
+            return error[:limit] if len(error) > limit else error
 
     # ----------------------------------------------------------
     # ★ 分级工具结果压缩（用于上下文压缩阶段，比 _summarize_tool_content 更智能）
@@ -558,7 +559,7 @@ class AIClientContextMixin:
                 for part in content:
                     if isinstance(part, dict) and part.get('type') == 'text':
                         total += len(part.get('text', '')) // 3
-                    elif isinstance(part, dict) and part.get('type') == 'image_url':
+                    elif isinstance(part, dict) and part.get('type') in ('image_url', 'image'):
                         total += 765
                     elif isinstance(part, str):
                         total += len(part) // 3
@@ -588,7 +589,8 @@ class AIClientContextMixin:
     def _smart_compress_in_loop(self, working_messages: list,
                                 tool_calls_history: list,
                                 context_limit: int,
-                                supports_vision: bool = True) -> list:
+                                supports_vision: bool = True,
+                                tools: Optional[list] = None) -> list:
         """主动式上下文压缩，在 agent loop 内每轮迭代前调用。
 
         分层压缩策略：
@@ -612,7 +614,7 @@ class AIClientContextMixin:
         if stale_count > 0:
             print(f"[AI Client] 🔄 标记了 {stale_count} 个过时工具结果")
 
-        current = self._estimate_messages_tokens(working_messages)
+        current = self._estimate_messages_tokens(working_messages, tools)
         if current <= target:
             return working_messages
 
@@ -620,7 +622,7 @@ class AIClientContextMixin:
         n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
         if n_stripped > 0:
             print(f"[AI Client] 🖼 剥离了 {n_stripped} 张旧图片")
-            current = self._estimate_messages_tokens(working_messages)
+            current = self._estimate_messages_tokens(working_messages, tools)
             if current <= target:
                 return working_messages
 
@@ -664,7 +666,8 @@ class AIClientContextMixin:
                         m['content'] = self._tiered_compress_tool(t_name, c, 200)
 
         current = self._estimate_messages_tokens(
-            ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd]
+            ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
+            tools
         )
         if current <= target:
             body = [m for rnd in rounds for m in rnd]
@@ -677,7 +680,7 @@ class AIClientContextMixin:
                     ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
                     tool_calls_history, int(target / 0.75),  # 传入原始 context_limit
                 )
-                llm_tokens = self._estimate_messages_tokens(llm_result)
+                llm_tokens = self._estimate_messages_tokens(llm_result, tools)
                 if llm_tokens < current:
                     return llm_result
             except Exception as e:
@@ -687,7 +690,8 @@ class AIClientContextMixin:
         while len(rounds) > 2 and current > target:
             rounds.pop(0)
             current = self._estimate_messages_tokens(
-                ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd]
+                ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
+                tools
             )
 
         body = [m for rnd in rounds for m in rnd]
@@ -716,7 +720,7 @@ class AIClientContextMixin:
             result.insert(insert_idx, {'role': 'system', 'content': hint})
 
         print(f"[AI Client] 🗜️ 主动压缩: {n_rounds} 轮 → {len(rounds)} 轮, "
-              f"~{self._estimate_messages_tokens(result)} tokens (目标 {target})")
+              f"~{self._estimate_messages_tokens(result, tools)} tokens (目标 {target})")
 
         return result
 

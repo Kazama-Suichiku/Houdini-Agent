@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Houdini Agent · UI Refactor — Design Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Hanken+Grotesk:wght@300;400;500;600;700&family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   BASE / SHELL
+   ============================================================ */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:#0a0a0c;color:#e6e6ea;
+  font-family:"Outfit","Noto Sans SC",sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow:hidden;
+}
+:root{ --shell-fg:#9a9aa6; --shell-line:rgba(255,255,255,.08); }
+
+/* top bar of the preview shell */
+.shell-top{
+  position:fixed;top:0;left:0;right:0;height:54px;z-index:60;
+  display:flex;align-items:center;gap:16px;padding:0 22px;
+  background:linear-gradient(180deg,rgba(10,10,12,.92),rgba(10,10,12,.55));
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--shell-line);
+}
+.shell-top .mk{font-family:"Sora",sans-serif;font-weight:600;letter-spacing:-.02em;font-size:14px;color:#fff}
+.shell-top .mk b{color:#ff7a3c}
+.shell-top .sub{font-size:12px;color:var(--shell-fg);letter-spacing:.02em}
+.shell-top .grow{flex:1}
+.shell-top .counter{font-family:"JetBrains Mono",monospace;font-size:12px;color:#cfcfd6;letter-spacing:.05em}
+.shell-top .counter em{color:#ff7a3c;font-style:normal}
+
+/* stage holds the pages */
+.stage{position:fixed;inset:54px 0 86px 0;overflow:hidden}
+.page{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  gap:54px;padding:38px 48px;opacity:0;pointer-events:none;
+  transition:opacity .5s ease;
+}
+.page.active{opacity:1;pointer-events:auto;z-index:2}
+
+/* caption column */
+.cap{width:300px;flex-shrink:0;align-self:center;animation:capIn .7s cubic-bezier(.2,.7,.2,1) both}
+@keyframes capIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.cap .pgno{font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.32em;color:var(--shell-fg);margin-bottom:22px}
+.cap .pgno b{color:#fff}
+.cap h2{font-family:"Fraunces",serif;font-weight:400;font-size:40px;line-height:1.05;letter-spacing:-.02em;color:#fff;margin-bottom:6px}
+.cap .zh{font-family:"Noto Serif SC",serif;font-size:15px;color:#b9b9c2;margin-bottom:20px;letter-spacing:.04em}
+.cap .phil{font-size:14px;line-height:1.7;color:#8d8d98;margin-bottom:22px;max-width:280px}
+.cap .tags{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:22px}
+.cap .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#a6a6b0;border:1px solid var(--shell-line);border-radius:100px;padding:4px 11px}
+.cap .sw{display:flex;gap:8px}
+.cap .sw i{width:26px;height:26px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+
+/* phone/panel frame */
+.frame{
+  flex-shrink:0;width:420px;height:760px;max-height:84vh;border-radius:30px;
+  position:relative;overflow:hidden;
+  box-shadow:0 50px 110px -30px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.06);
+  animation:frameIn .8s cubic-bezier(.2,.7,.2,1) both;
+}
+@keyframes frameIn{from{opacity:0;transform:translateY(26px) scale(.985)}to{opacity:1;transform:none}}
+
+/* pager */
+.pager{
+  position:fixed;left:0;right:0;bottom:0;height:86px;z-index:60;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  background:linear-gradient(0deg,rgba(10,10,12,.95),rgba(10,10,12,.4));
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-top:1px solid var(--shell-line);
+}
+.pager .nav{
+  width:38px;height:38px;border-radius:11px;border:1px solid var(--shell-line);
+  background:rgba(255,255,255,.03);color:#cfcfd6;cursor:pointer;font-size:15px;
+  display:grid;place-items:center;transition:.2s;
+}
+.pager .nav:hover{background:rgba(255,255,255,.09);color:#fff}
+.dots{display:flex;gap:5px;margin:0 14px}
+.dot{
+  min-width:34px;height:34px;padding:0 6px;border-radius:10px;border:1px solid transparent;
+  background:transparent;color:var(--shell-fg);cursor:pointer;
+  font-family:"JetBrains Mono",monospace;font-size:12px;transition:.22s;
+}
+.dot:hover{color:#fff;background:rgba(255,255,255,.06)}
+.dot.on{color:#0a0a0c;background:#fff;font-weight:600}
+.pager .nm{font-family:"Sora",sans-serif;font-size:12px;color:var(--shell-fg);margin-left:14px;min-width:130px}
+.pager .nm b{color:#fff}
+
+/* ============================================================
+   PANEL  (theme-agnostic structure, styled via CSS variables)
+   ============================================================ */
+.panel{
+  width:100%;height:100%;display:flex;flex-direction:column;
+  background:var(--bg);color:var(--text);
+  font-family:var(--font-body);font-size:13.5px;position:relative;
+}
+.panel *::-webkit-scrollbar{width:7px;height:7px}
+.panel *::-webkit-scrollbar-thumb{background:var(--scroll,rgba(140,140,160,.3));border-radius:10px}
+.panel *::-webkit-scrollbar-track{background:transparent}
+
+/* header */
+.hd{
+  display:flex;align-items:center;gap:9px;padding:13px 15px;
+  border-bottom:1px solid var(--border);background:var(--hd-bg,transparent);
+  flex-wrap:wrap;
+}
+.hd-brand{display:flex;align-items:center;gap:8px;margin-right:auto}
+.hd-brand .logo{
+  width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+  background:var(--accent-soft);color:var(--accent);font-size:14px;
+}
+.hd-brand .title{font-family:var(--font-display);font-weight:600;font-size:14.5px;letter-spacing:-.01em;color:var(--text-bright)}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px;
+  border-radius:var(--chip-r,8px);border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font-size:12px;font-family:var(--font-body);
+  cursor:pointer;transition:.2s;letter-spacing:.01em;
+}
+.chip:hover{border-color:var(--accent);color:var(--text-bright)}
+.chip i{font-style:normal;font-size:9px;opacity:.6}
+.chip.model{color:var(--accent);border-color:var(--accent-line,var(--border))}
+.toggle{
+  height:28px;padding:0 12px;border-radius:var(--chip-r,8px);font-size:12px;cursor:pointer;
+  border:1px solid var(--border);background:transparent;color:var(--text-dim);transition:.2s;
+}
+.toggle.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line,transparent)}
+.icon-btn{
+  width:28px;height:28px;border-radius:var(--chip-r,8px);border:1px solid transparent;
+  background:transparent;color:var(--text-dim);cursor:pointer;font-size:15px;transition:.2s;
+}
+.icon-btn:hover{background:var(--surface);color:var(--text)}
+
+/* context bar */
+.ctxbar{
+  display:flex;align-items:center;gap:8px;padding:7px 16px;font-size:11.5px;
+  color:var(--text-mute);border-bottom:1px solid var(--border);background:var(--ctx-bg,transparent);
+}
+.ctxbar .ctx-path{color:var(--accent);font-family:var(--font-mono);font-size:11px}
+.ctxbar .ctx-refresh{margin-left:auto;background:none;border:none;color:var(--text-mute);cursor:pointer;font-size:13px}
+
+/* thread */
+.thread{flex:1;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:18px;background:var(--thread-bg,transparent)}
+
+/* messages */
+.msg.user{display:flex;justify-content:flex-end}
+.msg.user .bubble{
+  max-width:86%;padding:11px 14px;border-radius:var(--user-r,14px) var(--user-r,14px) 4px var(--user-r,14px);
+  background:var(--user-bg);color:var(--user-fg);border:1px solid var(--user-border,transparent);
+  line-height:1.55;font-size:13.5px;box-shadow:var(--user-shadow,none);
+}
+.msg.ai{display:flex;gap:12px}
+.msg.ai .rail{width:2px;border-radius:2px;background:var(--rail);flex-shrink:0;align-self:stretch;opacity:var(--rail-op,1)}
+.ai-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+
+/* thinking */
+.think{border:1px solid var(--think-border,var(--border));border-radius:var(--block-r,12px);background:var(--think-bg);overflow:hidden}
+.think-hd{display:flex;align-items:center;gap:8px;padding:9px 13px;font-size:12px;color:var(--think-fg);cursor:pointer}
+.think-hd .spark{color:var(--accent)}
+.think-hd .chev{margin-left:auto;opacity:.5;font-size:10px}
+.think-body{padding:0 13px 12px 13px;font-size:12.5px;line-height:1.7;color:var(--text-mute);border-top:1px solid var(--border)}
+.think-body::first-line{color:var(--text-mute)}
+.think-body{padding-top:11px}
+
+/* tool calls */
+.tools{display:flex;flex-direction:column;gap:var(--tool-gap,4px)}
+.tool{
+  display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;
+  border-radius:var(--tool-r,9px);background:var(--tool-bg);border:1px solid var(--tool-border,transparent);
+}
+.tool .tg{width:15px;text-align:center;color:var(--ok)}
+.tool.run .tg{color:var(--accent)}
+.tool .tn{font-family:var(--font-mono);font-size:11.5px;color:var(--text-bright)}
+.tool .td{color:var(--text-mute);font-size:11.5px}
+.tool .tt{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--text-mute);opacity:.8}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* node operation */
+.nodeop{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 12px;
+  border-radius:var(--block-r,12px);background:var(--op-bg);border:1px solid var(--op-border,var(--border));font-size:12px;
+}
+.op-badge{font-family:var(--font-mono);font-weight:600;font-size:11px;padding:2px 7px;border-radius:6px}
+.op-badge.add{background:var(--ok-soft);color:var(--ok)}
+.op-text{color:var(--text)}
+.op-paths{color:var(--text-mute);font-family:var(--font-mono);font-size:10.5px;flex-basis:100%;opacity:.85}
+.op-actions{margin-left:auto;display:flex;gap:6px}
+.mini{font-size:11px;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer}
+.mini.keep{color:var(--ok);border-color:var(--ok-line,var(--border))}
+.mini.undo{color:var(--text-mute)}
+
+/* code block */
+.code{border:1px solid var(--code-border,var(--border));border-radius:var(--block-r,12px);overflow:hidden;background:var(--code-bg)}
+.code-hd{display:flex;align-items:center;padding:7px 12px;background:var(--code-hd-bg,transparent);border-bottom:1px solid var(--border)}
+.code-hd .lang{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.code-actions{margin-left:auto;display:flex;gap:6px}
+.code-actions button{font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer}
+.code-actions .green{color:var(--ok);border-color:var(--ok-line,var(--border))}
+.code pre{padding:12px 13px;overflow-x:auto;font-family:var(--font-mono);font-size:11.5px;line-height:1.75}
+.code code{font-family:var(--font-mono)}
+.com{color:var(--t-com)}.kw{color:var(--t-kw)}.fn{color:var(--t-fn)}
+.attr{color:var(--t-attr)}.num{color:var(--t-num)}.str{color:var(--t-str)}
+
+/* prose */
+.prose{font-size:13.5px;line-height:1.72;color:var(--text)}
+.prose b{color:var(--text-bright);font-weight:600}
+.prose code{font-family:var(--font-mono);font-size:12px;background:var(--surface);padding:1px 6px;border-radius:5px;color:var(--accent)}
+
+/* plan card */
+.plan{border:1px solid var(--plan-border,var(--border));border-radius:var(--block-r,14px);background:var(--plan-bg);overflow:hidden}
+.plan-hd{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--border)}
+.plan-ico{color:var(--accent)}
+.plan-title{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text-bright)}
+.plan-badge{margin-left:auto;font-size:10.5px;font-family:var(--font-mono);color:var(--text-mute);border:1px solid var(--border);padding:2px 8px;border-radius:100px}
+.plan-steps{padding:10px 14px;display:flex;flex-direction:column;gap:2px}
+.pstep{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px;color:var(--text-dim)}
+.pstep .ps-n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--text-mute)}
+.pstep.done{color:var(--text)}
+.pstep.done .ps-n{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.pstep.active{color:var(--text-bright)}
+.pstep.active .ps-n{background:var(--accent-soft);color:var(--accent);border-color:transparent;box-shadow:0 0 0 3px var(--accent-soft)}
+.dag{display:flex;align-items:center;gap:0;padding:6px 14px 14px;flex-wrap:wrap;row-gap:8px}
+.dnode{font-family:var(--font-mono);font-size:10.5px;padding:5px 9px;border-radius:7px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim)}
+.dnode.hot{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.dnode.ghost{opacity:.45;border-style:dashed}
+.dedge{width:16px;height:1px;background:var(--border);position:relative}
+.dedge::after{content:"";position:absolute;right:0;top:-2px;border-left:4px solid var(--border);border-top:2.5px solid transparent;border-bottom:2.5px solid transparent}
+
+/* composer */
+.composer{border-top:1px solid var(--border);padding:12px 14px;background:var(--composer-bg,transparent);display:flex;flex-direction:column;gap:10px}
+.modes{display:inline-flex;gap:2px;padding:3px;background:var(--seg-bg);border-radius:var(--seg-r,10px);width:fit-content;border:1px solid var(--seg-border,transparent)}
+.mode{padding:5px 15px;border-radius:calc(var(--seg-r,10px) - 3px);font-size:12px;border:none;background:transparent;color:var(--text-dim);cursor:pointer;transition:.2s;font-family:var(--font-body)}
+.mode.active{background:var(--seg-active);color:var(--seg-active-fg);box-shadow:var(--seg-shadow,none)}
+.input{display:flex;align-items:center;gap:9px;padding:8px 9px 8px 12px;border-radius:var(--input-r,14px);background:var(--input-bg);border:1px solid var(--input-border,var(--border))}
+.input .attach{width:26px;height:26px;border-radius:8px;border:none;background:var(--surface);color:var(--text-dim);cursor:pointer;font-size:14px}
+.input .field{flex:1;color:var(--text-mute);font-size:13px}
+.input .send{width:32px;height:32px;border-radius:10px;border:none;background:var(--accent);color:var(--send-fg,#fff);cursor:pointer;font-size:15px;display:grid;place-items:center;box-shadow:var(--send-shadow,none)}
+.meta{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--text-mute);font-family:var(--font-mono)}
+.meta .dotsep{opacity:.4}
+.meta .cost{color:var(--ok)}
+
+/* ============================================================
+   THEME 01 — AURORA GLASS  (deep space, glass, aurora accent)
+   ============================================================ */
+[data-theme="aurora"]{
+  --font-display:"Sora";--font-body:"Sora","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:radial-gradient(120% 80% at 80% -10%,#1a1430 0%,#0c0c18 55%,#08080f 100%);
+  --text:#cdd0dd;--text-bright:#fff;--text-dim:#9a9db0;--text-mute:#717488;
+  --border:rgba(255,255,255,.08);--surface:rgba(255,255,255,.045);
+  --accent:#9d7bff;--accent-soft:rgba(157,123,255,.16);--accent-line:rgba(157,123,255,.4);
+  --ok:#5ad1a6;--ok-soft:rgba(90,209,166,.15);--err:#ff6b7d;
+  --rail:linear-gradient(180deg,#9d7bff,#5ad1a6);
+  --user-bg:rgba(255,255,255,.07);--user-fg:#e9eaf2;--user-border:rgba(255,255,255,.1);
+  --think-bg:rgba(157,123,255,.06);--think-fg:#b7a6e8;
+  --tool-bg:rgba(255,255,255,.04);
+  --op-bg:rgba(90,209,166,.06);
+  --code-bg:#0a0a14;--code-hd-bg:rgba(255,255,255,.03);
+  --plan-bg:rgba(255,255,255,.03);
+  --seg-bg:rgba(255,255,255,.05);--seg-active:rgba(157,123,255,.9);--seg-active-fg:#fff;
+  --input-bg:rgba(255,255,255,.04);--input-r:16px;
+  --t-com:#5a6a7a;--t-kw:#9d7bff;--t-fn:#5ad1a6;--t-attr:#ffb86b;--t-num:#7ec8ff;--t-str:#ff9eb5;
+}
+[data-theme="aurora"] .panel::before{content:"";position:absolute;top:-30%;left:-20%;width:80%;height:60%;background:radial-gradient(circle,rgba(157,123,255,.25),transparent 70%);filter:blur(50px);pointer-events:none}
+[data-theme="aurora"] .hd{backdrop-filter:blur(20px)}
+
+/* ============================================================
+   THEME 02 — PURE LIGHT  (Apple light, hairline, calm)
+   ============================================================ */
+[data-theme="light"]{
+  --font-display:"Manrope";--font-body:"Manrope","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:#fbfbfd;--text:#1d1d1f;--text-bright:#000;--text-dim:#6e6e73;--text-mute:#86868b;
+  --border:rgba(0,0,0,.09);--surface:rgba(0,0,0,.04);
+  --accent:#0071e3;--accent-soft:rgba(0,113,227,.1);--accent-line:rgba(0,113,227,.25);
+  --ok:#1d9d5b;--ok-soft:rgba(29,157,91,.12);--err:#e0314b;
+  --rail:#0071e3;--rail-op:.5;
+  --user-bg:#0071e3;--user-fg:#fff;--user-border:transparent;
+  --think-bg:#f5f5f7;--think-fg:#6e6e73;
+  --tool-bg:#f5f5f7;
+  --op-bg:#f1faf4;
+  --code-bg:#1d1d1f;--code-hd-bg:#fafafc;--code-border:rgba(0,0,0,.08);
+  --text-on-code:#e6e6ea;
+  --plan-bg:#fff;--plan-border:rgba(0,0,0,.08);
+  --seg-bg:#ededf0;--seg-active:#fff;--seg-active-fg:#1d1d1f;--seg-shadow:0 1px 3px rgba(0,0,0,.12);
+  --input-bg:#fff;--input-border:rgba(0,0,0,.12);--input-r:18px;
+  --scroll:rgba(0,0,0,.18);
+  --t-com:#a0a0a8;--t-kw:#9b6bff;--t-fn:#0071e3;--t-attr:#d97706;--t-num:#0a9396;--t-str:#c2410c;
+}
+[data-theme="light"] .code pre{color:#e6e6ea}
+[data-theme="light"] .code-hd .lang{color:#86868b}
+[data-theme="light"] .frame{box-shadow:0 50px 110px -30px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.06)}
+
+/* ============================================================
+   THEME 03 — MONO EDITORIAL  (magazine, serif, near b/w)
+   ============================================================ */
+[data-theme="editorial"]{
+  --font-display:"Fraunces";--font-body:"Newsreader","Noto Serif SC";--font-mono:"Space Mono";
+  --bg:#0d0d0d;--text:#d8d6d0;--text-bright:#fafafa;--text-dim:#9a978f;--text-mute:#6b6862;
+  --border:rgba(255,255,255,.12);--surface:rgba(255,255,255,.04);
+  --accent:#e8e2d4;--accent-soft:rgba(232,226,212,.1);--accent-line:rgba(232,226,212,.3);--pop:#161616;
+  --ok:#b8c5a0;--ok-soft:rgba(184,197,160,.12);--err:#d99;--warn:#d4a373;--warn-soft:rgba(212,163,115,.1);
+  --rail:#e8e2d4;--rail-op:.6;
+  --user-bg:transparent;--user-fg:#fafafa;--user-border:rgba(255,255,255,.2);--user-r:2px;
+  --think-bg:transparent;--think-fg:#9a978f;--think-border:rgba(255,255,255,.12);
+  --tool-bg:transparent;--tool-border:rgba(255,255,255,.1);--tool-r:0;
+  --op-bg:transparent;--op-border:rgba(255,255,255,.12);
+  --code-bg:#080808;--code-border:rgba(255,255,255,.12);--block-r:0;--chip-r:2px;--input-r:2px;--seg-r:2px;
+  --plan-bg:transparent;
+  --seg-bg:transparent;--seg-border:rgba(255,255,255,.18);--seg-active:#fafafa;--seg-active-fg:#0d0d0d;
+  --input-bg:transparent;--input-border:rgba(255,255,255,.18);
+  --send-fg:#0d0d0d;
+  --t-com:#5e5b54;--t-kw:#e8e2d4;--t-fn:#c9b896;--t-attr:#d4a373;--t-num:#a3b18a;--t-str:#bc9b7a;
+}
+[data-theme="editorial"] .hd-brand .title{font-family:"Fraunces";font-weight:500;font-size:17px}
+[data-theme="editorial"] .hd-brand .logo{background:#fafafa;color:#0d0d0d;border-radius:0}
+[data-theme="editorial"] .cap h2,[data-theme="editorial"] .plan-title{font-style:italic}
+[data-theme="editorial"] .msg.ai .rail{display:none}
+[data-theme="editorial"] .ai-body{border-left:1px solid var(--border);padding-left:14px}
+
+/* ============================================================
+   THEME 04 — WARM SLATE  (taupe/sand on charcoal, cozy lux)
+   ============================================================ */
+[data-theme="slate"]{
+  --font-display:"Bricolage Grotesque";--font-body:"Hanken Grotesk","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:linear-gradient(180deg,#1c1a17 0%,#171512 100%);
+  --text:#d6cfc4;--text-bright:#f4efe6;--text-dim:#9e958680;--text-dim:#9e9586;--text-mute:#736b5e;
+  --border:rgba(214,207,196,.12);--surface:rgba(214,207,196,.05);
+  --accent:#d6a878;--accent-soft:rgba(214,168,120,.15);--accent-line:rgba(214,168,120,.35);--pop:#221f1b;
+  --ok:#a8c08a;--ok-soft:rgba(168,192,138,.14);--err:#d98a7a;
+  --rail:linear-gradient(180deg,#d6a878,#a8c08a);
+  --user-bg:rgba(214,168,120,.14);--user-fg:#f4efe6;--user-border:rgba(214,168,120,.2);
+  --think-bg:rgba(214,207,196,.04);--think-fg:#b3a896;
+  --tool-bg:rgba(214,207,196,.04);
+  --op-bg:rgba(168,192,138,.06);
+  --code-bg:#13110e;--code-hd-bg:rgba(214,207,196,.03);
+  --plan-bg:rgba(214,207,196,.03);
+  --seg-bg:rgba(214,207,196,.06);--seg-active:#d6a878;--seg-active-fg:#1c1a17;
+  --input-bg:rgba(214,207,196,.04);--input-r:14px;--send-fg:#1c1a17;
+  --t-com:#6b6356;--t-kw:#d6a878;--t-fn:#a8c08a;--t-attr:#e0b88a;--t-num:#9bb5b0;--t-str:#cfa088;
+}
+
+/* ============================================================
+   THEME 05 — FROSTED VISION  (visionOS, floating, vibrancy)
+   ============================================================ */
+[data-theme="vision"]{
+  --font-display:"Manrope";--font-body:"Manrope","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:radial-gradient(130% 100% at 50% 0%,#3a2c5e 0%,#1e2347 45%,#10162e 100%);
+  --text:#e4e6f0;--text-bright:#fff;--text-dim:#b3b6cc;--text-mute:#8589a8;
+  --border:rgba(255,255,255,.16);--surface:rgba(255,255,255,.1);
+  --accent:#7eb8ff;--accent-soft:rgba(126,184,255,.22);--accent-line:rgba(126,184,255,.45);--pop:#252a4d;
+  --ok:#74e0b0;--ok-soft:rgba(116,224,176,.2);--err:#ff8a9a;
+  --rail:linear-gradient(180deg,#7eb8ff,#c89dff);
+  --user-bg:rgba(255,255,255,.16);--user-fg:#fff;--user-border:rgba(255,255,255,.22);--user-r:18px;
+  --think-bg:rgba(255,255,255,.08);--think-fg:#c5c8e0;--block-r:18px;
+  --tool-bg:rgba(255,255,255,.08);--tool-r:13px;
+  --op-bg:rgba(116,224,176,.12);
+  --code-bg:rgba(10,12,28,.6);--code-hd-bg:rgba(255,255,255,.06);
+  --plan-bg:rgba(255,255,255,.07);
+  --seg-bg:rgba(255,255,255,.12);--seg-active:rgba(255,255,255,.9);--seg-active-fg:#1e2347;--seg-r:14px;
+  --input-bg:rgba(255,255,255,.12);--input-r:20px;--chip-r:13px;
+  --t-com:#6a7090;--t-kw:#c89dff;--t-fn:#74e0b0;--t-attr:#ffc98a;--t-num:#7eb8ff;--t-str:#ff9eb8;
+}
+[data-theme="vision"] .think,[data-theme="vision"] .tool,[data-theme="vision"] .code,[data-theme="vision"] .plan,[data-theme="vision"] .nodeop,[data-theme="vision"] .input,[data-theme="vision"] .chip{backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4)}
+[data-theme="vision"] .msg.ai .rail{display:none}
+[data-theme="vision"] .think,[data-theme="vision"] .tool,[data-theme="vision"] .plan,[data-theme="vision"] .nodeop{box-shadow:0 8px 30px -12px rgba(0,0,0,.5)}
+
+/* ============================================================
+   THEME 06 — CARBON INDUSTRIAL  (technical grid, mono, orange)
+   ============================================================ */
+[data-theme="carbon"]{
+  --font-display:"Archivo";--font-body:"Archivo","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:#0e0f10;--text:#c4c6c9;--text-bright:#f0f1f2;--text-dim:#85888c;--text-mute:#5d6064;
+  --border:rgba(255,255,255,.1);--surface:rgba(255,255,255,.035);
+  --accent:#ff6a2c;--accent-soft:rgba(255,106,44,.14);--accent-line:rgba(255,106,44,.4);--pop:#17191a;
+  --ok:#4fd18b;--ok-soft:rgba(79,209,139,.14);--err:#ff5252;
+  --rail:#ff6a2c;
+  --user-bg:#191b1c;--user-fg:#f0f1f2;--user-border:rgba(255,255,255,.08);--user-r:3px;
+  --think-bg:#141516;--think-fg:#85888c;--block-r:4px;--chip-r:4px;--tool-r:3px;--input-r:5px;--seg-r:4px;
+  --tool-bg:#141516;--tool-border:rgba(255,255,255,.06);
+  --op-bg:#141516;
+  --code-bg:#08090a;--code-hd-bg:#141516;
+  --plan-bg:#121314;
+  --seg-bg:#141516;--seg-active:#ff6a2c;--seg-active-fg:#0e0f10;
+  --input-bg:#141516;--send-fg:#0e0f10;
+  --t-com:#55585c;--t-kw:#ff6a2c;--t-fn:#4fd18b;--t-attr:#ffb454;--t-num:#5fb0e8;--t-str:#e8a06b;
+}
+[data-theme="carbon"] .panel{background-image:linear-gradient(#0e0f10,#0e0f10),repeating-linear-gradient(0deg,transparent,transparent 31px,rgba(255,255,255,.02) 32px),repeating-linear-gradient(90deg,transparent,transparent 31px,rgba(255,255,255,.02) 32px);background-blend-mode:normal}
+[data-theme="carbon"] .hd-brand .title,[data-theme="carbon"] .code-hd .lang,[data-theme="carbon"] .plan-title{text-transform:uppercase;letter-spacing:.08em}
+[data-theme="carbon"] .hd-brand .logo{border-radius:3px}
+
+/* ============================================================
+   THEME 07 — NORDIC MINIMAL  (light, muted blue-grey, airy)
+   ============================================================ */
+[data-theme="nordic"]{
+  --font-display:"Hanken Grotesk";--font-body:"Hanken Grotesk","Noto Sans SC";--font-mono:"IBM Plex Mono";
+  --bg:#f4f6f8;--text:#3a4654;--text-bright:#1a2330;--text-dim:#6b7886;--text-mute:#94a1ae;
+  --border:rgba(40,60,80,.1);--surface:rgba(40,60,80,.04);
+  --accent:#5b7a99;--accent-soft:rgba(91,122,153,.12);--accent-line:rgba(91,122,153,.3);--pop:#ffffff;
+  --ok:#5a9678;--ok-soft:rgba(90,150,120,.14);--err:#b5645a;--warn:#b58a4a;--warn-soft:rgba(181,138,74,.1);
+  --rail:#5b7a99;--rail-op:.45;
+  --user-bg:#e3e9ef;--user-fg:#1a2330;--user-border:transparent;--user-r:16px;
+  --think-bg:#eef1f4;--think-fg:#6b7886;--block-r:14px;
+  --tool-bg:#eef1f4;--tool-r:12px;
+  --op-bg:#eaf2ed;
+  --code-bg:#2b323a;--code-hd-bg:#eef1f4;--code-border:rgba(40,60,80,.1);
+  --plan-bg:#fff;--plan-border:rgba(40,60,80,.08);
+  --seg-bg:#e3e9ef;--seg-active:#fff;--seg-active-fg:#1a2330;--seg-shadow:0 1px 2px rgba(0,0,0,.1);
+  --input-bg:#fff;--input-border:rgba(40,60,80,.14);--input-r:16px;
+  --scroll:rgba(40,60,80,.2);
+  --t-com:#8896a4;--t-kw:#7a6b99;--t-fn:#5b7a99;--t-attr:#a07850;--t-num:#4a8578;--t-str:#a86b5a;
+}
+[data-theme="nordic"] .code pre{color:#dfe4e9}
+[data-theme="nordic"] .frame{box-shadow:0 50px 110px -30px rgba(40,60,80,.35),0 0 0 1px rgba(40,60,80,.06)}
+
+/* ============================================================
+   THEME 08 — NEO TERMINAL  (refined phosphor, mono, brackets)
+   ============================================================ */
+[data-theme="terminal"]{
+  --font-display:"IBM Plex Mono";--font-body:"IBM Plex Mono","Noto Sans SC";--font-mono:"IBM Plex Mono";
+  --bg:#080b09;--text:#a8c0b0;--text-bright:#d6f0e0;--text-dim:#6e8478;--text-mute:#4e6258;
+  --border:rgba(120,220,160,.14);--surface:rgba(120,220,160,.05);
+  --accent:#46e08a;--accent-soft:rgba(70,224,138,.12);--accent-line:rgba(70,224,138,.35);
+  --ok:#46e08a;--ok-soft:rgba(70,224,138,.12);--err:#ff7a6b;
+  --rail:#46e08a;
+  --user-bg:rgba(70,224,138,.08);--user-fg:#d6f0e0;--user-border:rgba(70,224,138,.18);--user-r:4px;
+  --think-bg:rgba(120,220,160,.04);--think-fg:#6e8478;--block-r:5px;--chip-r:4px;--tool-r:4px;--input-r:6px;--seg-r:4px;
+  --tool-bg:rgba(120,220,160,.04);--tool-border:rgba(120,220,160,.1);
+  --op-bg:rgba(70,224,138,.05);
+  --code-bg:#040605;--code-hd-bg:rgba(120,220,160,.04);
+  --plan-bg:rgba(120,220,160,.03);
+  --seg-bg:rgba(120,220,160,.06);--seg-active:#46e08a;--seg-active-fg:#040605;
+  --input-bg:rgba(120,220,160,.04);--send-fg:#040605;
+  --t-com:#4e6258;--t-kw:#46e08a;--t-fn:#8ad0ff;--t-attr:#ffc46b;--t-num:#c9a0ff;--t-str:#ffae8a;
+}
+[data-theme="terminal"] .hd-brand .title::before{content:"$ ";color:var(--accent)}
+[data-theme="terminal"] .msg.user .bubble::before{content:"> ";color:var(--accent);opacity:.7}
+[data-theme="terminal"] .tn::before{content:"› ";opacity:.5}
+
+/* ============================================================
+   THEME 09 — SOFT PASTEL  (light, rounded, soft depth)
+   ============================================================ */
+[data-theme="pastel"]{
+  --font-display:"Quicksand";--font-body:"Quicksand","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:linear-gradient(180deg,#faf7fb 0%,#f3f0fa 100%);
+  --text:#52495e;--text-bright:#2e2640;--text-dim:#8a8198;--text-mute:#aaa2b8;
+  --border:rgba(120,100,160,.12);--surface:rgba(140,120,200,.06);
+  --accent:#9d8df1;--accent-soft:rgba(157,141,241,.14);--accent-line:rgba(157,141,241,.3);
+  --ok:#6fc9a8;--ok-soft:rgba(111,201,168,.16);--err:#ec8a9a;
+  --rail:linear-gradient(180deg,#9d8df1,#6fc9a8);--rail-op:.6;
+  --user-bg:linear-gradient(135deg,#a99af5,#c8a0e8);--user-fg:#fff;--user-border:transparent;--user-r:18px;
+  --think-bg:rgba(157,141,241,.07);--think-fg:#8a8198;--block-r:18px;
+  --tool-bg:#fff;--tool-r:15px;
+  --op-bg:rgba(111,201,168,.1);
+  --code-bg:#322b42;--code-hd-bg:rgba(157,141,241,.06);--code-border:rgba(120,100,160,.1);
+  --plan-bg:#fff;--plan-border:rgba(120,100,160,.1);
+  --seg-bg:rgba(140,120,200,.1);--seg-active:#fff;--seg-active-fg:#5b4d80;--seg-shadow:0 2px 8px rgba(120,100,200,.18);--seg-r:16px;
+  --input-bg:#fff;--input-border:rgba(120,100,160,.14);--input-r:20px;--chip-r:14px;
+  --scroll:rgba(120,100,160,.2);--send-shadow:0 4px 14px rgba(157,141,241,.45);
+  --t-com:#a89cc0;--t-kw:#9d8df1;--t-fn:#6fc9a8;--t-attr:#e0a060;--t-num:#5fb0d8;--t-str:#e88aa8;
+}
+[data-theme="pastel"] .code pre{color:#e6e1f0}
+[data-theme="pastel"] .tool,[data-theme="pastel"] .plan,[data-theme="pastel"] .nodeop{box-shadow:0 6px 18px -10px rgba(120,100,200,.35)}
+[data-theme="pastel"] .frame{box-shadow:0 50px 110px -30px rgba(120,100,200,.4),0 0 0 1px rgba(120,100,160,.08)}
+
+/* ============================================================
+   THEME 10 — OLED PRO  (true black, single vivid accent)
+   ============================================================ */
+[data-theme="oled"]{
+  --font-display:"Familjen Grotesk","Hanken Grotesk";--font-body:"Hanken Grotesk","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:#000;--text:#c8c8cc;--text-bright:#fff;--text-dim:#7d7d82;--text-mute:#525257;
+  --border:rgba(255,255,255,.1);--surface:rgba(255,255,255,.045);
+  --accent:#00e0c6;--accent-soft:rgba(0,224,198,.13);--accent-line:rgba(0,224,198,.4);
+  --ok:#00e0c6;--ok-soft:rgba(0,224,198,.12);--err:#ff4d6d;
+  --rail:#00e0c6;
+  --user-bg:#141416;--user-fg:#fff;--user-border:rgba(255,255,255,.08);--user-r:14px;
+  --think-bg:#0a0a0b;--think-fg:#7d7d82;--think-border:rgba(255,255,255,.08);
+  --tool-bg:#0a0a0b;--tool-border:rgba(255,255,255,.06);
+  --op-bg:#08100f;
+  --code-bg:#060606;--code-hd-bg:#0a0a0b;
+  --plan-bg:#0a0a0b;
+  --seg-bg:#141416;--seg-active:#00e0c6;--seg-active-fg:#000;
+  --input-bg:#0c0c0d;--send-fg:#000;
+  --t-com:#4a4a50;--t-kw:#00e0c6;--t-fn:#7e9bff;--t-attr:#ffb454;--t-num:#c98aff;--t-str:#ff8a9e;
+}
+[data-theme="oled"] .send{box-shadow:0 0 18px rgba(0,224,198,.5)}
+
+/* ============================================================
+   THEME 11 — GLASS COBALT  (cobalt-tinted glass, deep blue)
+   ============================================================ */
+[data-theme="cobalt"]{
+  --font-display:"Sora";--font-body:"Sora","Noto Sans SC";--font-mono:"JetBrains Mono";
+  --bg:radial-gradient(120% 90% at 20% 0%,#13294d 0%,#0b1730 50%,#070d1c 100%);
+  --text:#cdd6e8;--text-bright:#fff;--text-dim:#8e9bb8;--text-mute:#62708f;
+  --border:rgba(140,180,255,.12);--surface:rgba(140,180,255,.06);
+  --accent:#4d8dff;--accent-soft:rgba(77,141,255,.18);--accent-line:rgba(77,141,255,.42);--pop:#0e1c38;
+  --ok:#3fd6c0;--ok-soft:rgba(63,214,192,.16);--err:#ff6b8a;--warn:#ffb454;--warn-soft:rgba(255,180,84,.1);
+  --rail:linear-gradient(180deg,#4d8dff,#3fd6c0);
+  --user-bg:rgba(77,141,255,.16);--user-fg:#eef3ff;--user-border:rgba(77,141,255,.25);--user-r:14px;
+  --think-bg:rgba(140,180,255,.05);--think-fg:#a6b3d0;--block-r:13px;
+  --tool-bg:rgba(140,180,255,.05);--tool-r:11px;
+  --op-bg:rgba(63,214,192,.07);
+  --code-bg:rgba(6,11,24,.7);--code-hd-bg:rgba(140,180,255,.04);
+  --plan-bg:rgba(140,180,255,.04);
+  --seg-bg:rgba(140,180,255,.08);--seg-active:#4d8dff;--seg-active-fg:#fff;
+  --input-bg:rgba(140,180,255,.05);--input-r:15px;--chip-r:11px;
+  --t-com:#56688a;--t-kw:#4d8dff;--t-fn:#3fd6c0;--t-attr:#ffc46b;--t-num:#9d8dff;--t-str:#ff9eb8;
+}
+[data-theme="cobalt"] .think,[data-theme="cobalt"] .code,[data-theme="cobalt"] .plan,[data-theme="cobalt"] .input{backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+[data-theme="cobalt"] .panel::before{content:"";position:absolute;bottom:-20%;right:-20%;width:70%;height:50%;background:radial-gradient(circle,rgba(77,141,255,.22),transparent 70%);filter:blur(50px);pointer-events:none}
+
+/* ============================================================
+   THEME 12 — PAPER & INK  (cream paper, ink, editorial serif)
+   ============================================================ */
+[data-theme="paper"]{
+  --font-display:"Fraunces";--font-body:"Newsreader","Noto Serif SC";--font-mono:"Space Mono";
+  --bg:#f3ede0;--text:#33302a;--text-bright:#1a1814;--text-dim:#6b6558;--text-mute:#928b7a;
+  --border:rgba(50,45,35,.16);--surface:rgba(50,45,35,.05);
+  --accent:#b4452f;--accent-soft:rgba(180,69,47,.1);--accent-line:rgba(180,69,47,.3);
+  --ok:#5e7146;--ok-soft:rgba(94,113,70,.14);--err:#a83a2a;
+  --rail:#b4452f;--rail-op:.6;
+  --user-bg:#1a1814;--user-fg:#f3ede0;--user-border:transparent;--user-r:3px;
+  --think-bg:rgba(50,45,35,.04);--think-fg:#6b6558;--think-border:rgba(50,45,35,.16);--block-r:3px;--chip-r:3px;--input-r:3px;--seg-r:3px;--tool-r:2px;
+  --tool-bg:rgba(50,45,35,.035);--tool-border:rgba(50,45,35,.1);
+  --op-bg:rgba(94,113,70,.07);
+  --code-bg:#211e18;--code-hd-bg:rgba(50,45,35,.04);--code-border:rgba(50,45,35,.16);
+  --plan-bg:rgba(50,45,35,.03);
+  --seg-bg:transparent;--seg-border:rgba(50,45,35,.22);--seg-active:#1a1814;--seg-active-fg:#f3ede0;
+  --input-bg:rgba(255,255,255,.4);--input-border:rgba(50,45,35,.22);--send-fg:#f3ede0;
+  --scroll:rgba(50,45,35,.25);
+  --t-com:#8f8773;--t-kw:#b4452f;--t-fn:#5e7146;--t-attr:#a06a2c;--t-num:#3a6b6b;--t-str:#9c5a3a;
+}
+[data-theme="paper"] .code pre{color:#e0d8c8}
+[data-theme="paper"] .hd-brand .title,[data-theme="paper"] .plan-title{font-family:"Fraunces";font-weight:500;font-size:16px}
+[data-theme="paper"] .hd-brand .logo{background:#1a1814;color:#f3ede0;border-radius:2px}
+[data-theme="paper"] .frame{box-shadow:0 50px 110px -30px rgba(60,50,30,.4),0 0 0 1px rgba(50,45,35,.1)}
+[data-theme="paper"] .msg.ai .rail{display:none}
+[data-theme="paper"] .ai-body{border-left:2px solid var(--accent);padding-left:14px}
+
+/* ============================================================
+   INTERACTIVE STATES  (rich panels: themes 03/04/05/06/07/11)
+   ============================================================ */
+.field[contenteditable]{outline:none;max-height:90px;overflow-y:auto}
+.field[contenteditable]:empty::before{content:attr(data-ph);color:var(--text-mute)}
+.think .think-hd,.exec-hd,.pstep,.tool{user-select:none}
+.think .chev,.exec-hd .chev{transition:transform .25s}
+.think.collapsed .chev,.exec.collapsed .chev{transform:rotate(-90deg)}
+.think.collapsed .think-body{display:none}
+.tool{cursor:pointer}
+.tool:hover{filter:brightness(1.06)}
+.tool-detail{display:none;white-space:pre-line;font-family:var(--font-mono);font-size:10.8px;line-height:1.65;
+  color:var(--text-mute);padding:9px 11px;margin-top:3px;border-radius:var(--tool-r,9px);
+  background:var(--surface);border:1px solid var(--border)}
+.tool.open + .tool-detail{display:block;animation:slideIn .2s ease}
+@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.exec-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-dim);cursor:pointer;padding:1px 2px}
+.exec-hd .spark{color:var(--accent)}
+.exec.collapsed .tools,.exec.collapsed .tool-detail{display:none}
+.tools{margin-top:6px}
+
+/* dropdown menus */
+.dd{position:relative;display:inline-flex}
+.dd .menu{position:absolute;top:calc(100% + 7px);left:0}
+.dd.right .menu{left:auto;right:0}
+.menu{z-index:40;min-width:158px;padding:6px;border-radius:13px;background:var(--pop,#1a1a1a);
+  border:1px solid var(--border);box-shadow:0 22px 60px -18px rgba(0,0,0,.75);display:none;flex-direction:column;gap:1px}
+.menu.show{display:flex;animation:menuIn .15s ease}
+@keyframes menuIn{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+.menu button{text-align:left;background:none;border:none;color:var(--text);font-family:var(--font-body);
+  font-size:12.5px;padding:8px 10px;border-radius:9px;cursor:pointer;display:flex;align-items:center;gap:9px;white-space:nowrap}
+.menu button:hover{background:var(--surface);color:var(--text-bright)}
+.menu button.sel{color:var(--accent)}
+.menu button .ck{margin-left:auto;color:var(--accent);font-size:12px;visibility:hidden}
+.menu button.sel .ck{visibility:visible}
+.menu button.sel{color:var(--accent)}
+.menu .sep{height:1px;background:var(--border);margin:5px 3px}
+.menu .mh{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mute);padding:5px 10px 3px}
+
+/* node-op resolved tags */
+.op-actions .res-tag{font-size:11.5px;font-family:var(--font-mono)}
+.op-actions .res-tag.kept{color:var(--ok)}
+.op-actions .res-tag.reverted{color:var(--text-mute)}
+
+/* plan interactions */
+.plan-actions{display:flex;gap:8px;padding:2px 14px 14px}
+.plan-btn{flex:1;padding:8px 0;border-radius:10px;font-size:12.5px;cursor:pointer;
+  border:1px solid var(--border);background:transparent;color:var(--text);font-family:var(--font-body);transition:.18s}
+.plan-btn:hover{border-color:var(--accent)}
+.plan-btn.confirm{background:var(--accent);color:var(--send-fg,#fff);border-color:transparent}
+.plan-btn.confirm:hover{filter:brightness(1.1);border-color:transparent}
+.pstep{cursor:pointer}
+.pstep-detail{display:none;font-size:11.2px;color:var(--text-mute);padding:0 0 7px 32px;line-height:1.6;font-family:var(--font-mono)}
+.pstep.open + .pstep-detail{display:block;animation:slideIn .2s ease}
+
+/* misc live */
+.ctx-refresh{cursor:pointer}
+.ctx-refresh.spin{animation:sp .6s linear}
+.flash-ok{color:var(--ok)!important;border-color:var(--ok-line,var(--ok))!important}
+.caret{display:inline-block;width:6px;height:1em;background:var(--accent);margin-left:1px;
+  vertical-align:-2px;animation:bl 1s steps(1) infinite;border-radius:1px}
+@keyframes bl{50%{opacity:0}}
+.gen-row{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--text-dim);padding:3px 0}
+.gen-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:gp 1s ease-in-out infinite}
+@keyframes gp{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+.fade-in{animation:fadeIn .35s ease both}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.toggle,.mode,.chip,.icon-btn,.send,.mini,.code-actions button{transition:.18s}
+.send:active{transform:scale(.92)}
+
+/* caption LIVE badge */
+.cap .live{display:inline-flex;align-items:center;gap:6px;margin-left:12px;font-size:10px;letter-spacing:.12em;
+  color:#4ade80;border:1px solid rgba(74,222,128,.45);border-radius:100px;padding:3px 10px;vertical-align:middle;font-family:"JetBrains Mono",monospace}
+.cap .live::before{content:"";width:6px;height:6px;border-radius:50%;background:#4ade80;animation:gp 1.4s ease-in-out infinite}
+.cap .hint{margin-top:18px;font-size:11.5px;color:var(--shell-fg);line-height:1.6;border-top:1px solid var(--shell-line);padding-top:14px}
+.cap .hint b{color:#cfcfd6;font-weight:500}
+.cap .notes{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.cap .notes li{position:relative;padding-left:16px;font-size:12px;line-height:1.55;color:#9a9aa6}
+.cap .notes li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:1px;background:#5a5a64}
+
+/* session tabs bar */
+.tabs{display:flex;align-items:center;gap:4px;padding:7px 12px;border-bottom:1px solid var(--border);
+  background:var(--ctx-bg,transparent);overflow-x:auto}
+.tabs::-webkit-scrollbar{height:0}
+.tab{font-size:11.5px;padding:5px 11px;border-radius:var(--chip-r,8px);border:1px solid transparent;
+  background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;transition:.18s;font-family:var(--font-body)}
+.tab:hover{color:var(--text);background:var(--surface)}
+.tab.active{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-line,transparent)}
+.tab-new{width:24px;height:24px;border-radius:var(--chip-r,8px);border:1px dashed var(--border);
+  background:transparent;color:var(--text-mute);cursor:pointer;font-size:13px;flex-shrink:0;transition:.18s}
+.tab-new:hover{color:var(--accent);border-color:var(--accent)}
+
+/* tool warning state */
+.tool.warn .tg{color:var(--warn,#d8a040)}
+.tool.warn .tn{color:var(--text-bright)}
+.tool.warn{background:var(--warn-soft,rgba(216,160,64,.08))}
+
+/* ---- per-theme refinements (03/05/06 kept directions) ---- */
+[data-theme="editorial"] .think-hd,[data-theme="editorial"] .exec-hd,
+[data-theme="editorial"] .code-hd .lang,[data-theme="editorial"] .tab{
+  text-transform:uppercase;letter-spacing:.1em;font-size:10.5px}
+[data-theme="editorial"] .plan{border-top:2px solid var(--accent);border-radius:0}
+[data-theme="editorial"] .prose{font-size:14.5px;line-height:1.8}
+
+[data-theme="nordic"] .thread{gap:22px;padding:22px 18px}
+[data-theme="nordic"] .prose,[data-theme="nordic"] .think-body{font-weight:400}
+[data-theme="nordic"] .plan,[data-theme="nordic"] .tool,[data-theme="nordic"] .nodeop{box-shadow:0 4px 16px -11px rgba(40,60,80,.35)}
+[data-theme="nordic"] .hd-brand .title{font-weight:600;letter-spacing:-.01em}
+
+[data-theme="cobalt"] .hd{background:linear-gradient(180deg,rgba(77,141,255,.09),transparent)}
+[data-theme="cobalt"] .send{box-shadow:0 0 16px rgba(77,141,255,.5)}
+[data-theme="cobalt"] .tab.active{box-shadow:0 0 0 1px var(--accent-line) inset}
+[data-theme="cobalt"] .nodeop,[data-theme="cobalt"] .exec,[data-theme="cobalt"] .tool{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+
+</style>
+</head>
+<body>
+
+<div class="shell-top">
+  <span class="mk">Houdini Agent · <b>UI Refactor</b></span>
+  <span class="sub">QML / Qt Quick 重构 — 设计方向预览</span>
+  <span class="grow"></span>
+  <span class="counter">DIR <em id="cTop">01</em> / 03</span>
+</div>
+
+<div class="stage" id="stage"></div>
+
+<div class="pager">
+  <button class="nav" id="prev">‹</button>
+  <div class="dots" id="dots"></div>
+  <button class="nav" id="next">›</button>
+  <span class="nm" id="navName"></span>
+</div>
+
+<script>
+/* ---- realistic Houdini Agent panel content (shared markup) ---- */
+const PANEL = `
+<div class="panel">
+  <div class="hd">
+    <div class="hd-brand"><span class="logo">◇</span><span class="title">Houdini Agent</span></div>
+    <button class="chip provider">Anthropic <i>▾</i></button>
+    <button class="chip model">Opus 4.8 <i>▾</i></button>
+    <button class="toggle on">Web</button>
+    <button class="toggle on">Think</button>
+    <button class="icon-btn">⋯</button>
+  </div>
+  <div class="ctxbar">
+    <span class="ctx-path">/obj/geo1</span><span>·</span><span>2 nodes selected</span>
+    <button class="ctx-refresh">↻</button>
+  </div>
+  <div class="thread">
+    <div class="msg user"><div class="bubble">给 grid 加 noise 让表面起伏，再 scatter 5000 个点，并把点的法线对齐到曲面。</div></div>
+
+    <div class="msg ai">
+      <div class="rail"></div>
+      <div class="ai-body">
+        <div class="think">
+          <div class="think-hd"><span class="spark">✦</span> Thought for 4.2s<span class="chev">▾</span></div>
+          <div class="think-body">在 grid 上叠加 noise 有两条路：mountain SOP 最快，或用 attribwrangle 写 <b>@P.y</b> 拿到完全控制。后者更利于后续调参。scatter 默认沿曲面均匀采样，5000 点足够。法线对齐用 polyframe（N from velocity/up）或直接继承曲面 N。</div>
+        </div>
+        <div class="tools">
+          <div class="tool ok"><span class="tg">✓</span><span class="tn">create_node</span><span class="td">grid1</span><span class="tt">0.3s</span></div>
+          <div class="tool ok"><span class="tg">✓</span><span class="tn">create_wrangle_node</span><span class="td">mountain_vex</span><span class="tt">0.5s</span></div>
+          <div class="tool ok"><span class="tg">✓</span><span class="tn">create_node</span><span class="td">scatter1</span><span class="tt">0.2s</span></div>
+          <div class="tool run"><span class="tg spin">◐</span><span class="tn">set_parameter</span><span class="td">npts = 5000</span><span class="tt">…</span></div>
+        </div>
+        <div class="nodeop">
+          <span class="op-badge add">+3</span><span class="op-text">nodes created</span>
+          <span class="op-actions"><button class="mini keep">Keep</button><button class="mini undo">Undo</button></span>
+          <span class="op-paths">/obj/geo1/grid1 · mountain_vex · scatter1</span>
+        </div>
+        <div class="code">
+          <div class="code-hd"><span class="lang">VEX</span>
+            <span class="code-actions"><button>Copy</button><button class="green">＋ Wrangle</button></span></div>
+          <pre><code><span class="com">// 抬升曲面，制造山脉起伏</span>
+<span class="kw">float</span> amp  = <span class="num">2.5</span>;
+<span class="kw">float</span> freq = <span class="num">0.35</span>;
+<span class="kw">vector</span> p = <span class="attr">@P</span>;
+<span class="kw">float</span> n = <span class="fn">noise</span>(p * freq);
+<span class="attr">@P</span>.y += n * amp;
+<span class="attr">@Cd</span>  = <span class="fn">set</span>(n, n*<span class="num">0.6</span>, <span class="num">1.0</span>-n);</code></pre>
+        </div>
+        <p class="prose">已搭好 <b>grid → mountain_vex → scatter</b> 链路。noise 通过 VEX 抬升 <code>@P.y</code>，scatter 输出 5000 点并继承曲面法线。需要我把点再 <code>copy</code> 上实例几何吗？</p>
+      </div>
+    </div>
+
+    <div class="plan">
+      <div class="plan-hd"><span class="plan-ico">◈</span><span class="plan-title">Terrain Scatter Setup</span><span class="plan-badge">5 steps</span></div>
+      <div class="plan-steps">
+        <div class="pstep done"><span class="ps-n">1</span> Create grid (200 × 200)</div>
+        <div class="pstep done"><span class="ps-n">2</span> Displace with noise VEX</div>
+        <div class="pstep active"><span class="ps-n">3</span> Scatter 5000 points</div>
+        <div class="pstep"><span class="ps-n">4</span> Align normals (polyframe)</div>
+        <div class="pstep"><span class="ps-n">5</span> Copy instances to points</div>
+      </div>
+      <div class="dag">
+        <div class="dnode">grid</div><span class="dedge"></span>
+        <div class="dnode">noise</div><span class="dedge"></span>
+        <div class="dnode hot">scatter</div><span class="dedge"></span>
+        <div class="dnode ghost">polyframe</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="modes">
+      <button class="mode active">Agent</button>
+      <button class="mode">Ask</button>
+      <button class="mode">Plan</button>
+    </div>
+    <div class="input">
+      <button class="attach">＋</button>
+      <div class="field">描述你想在场景里做的事…</div>
+      <button class="send">↑</button>
+    </div>
+    <div class="meta"><span>Opus 4.8</span><span class="dotsep">·</span><span>12.4k / 200k ctx</span><span class="dotsep">·</span><span class="cost">$0.03</span></div>
+  </div>
+</div>`;
+
+/* ---- interactive panel (themes 03/04/05/06/07/11) ---- */
+const RICH_PANEL = `
+<div class="panel">
+  <div class="hd">
+    <div class="hd-brand"><span class="logo">◇</span><span class="title">Houdini Agent</span></div>
+    <span class="dd" data-dd="provider">
+      <button class="chip provider">Anthropic <i>▾</i></button>
+      <div class="menu">
+        <div class="mh">Provider</div>
+        <button data-val="Anthropic" class="sel">Anthropic<span class="ck">✓</span></button>
+        <button data-val="OpenAI">OpenAI<span class="ck">✓</span></button>
+        <button data-val="Google">Google<span class="ck">✓</span></button>
+        <button data-val="Custom">Custom…<span class="ck">✓</span></button>
+      </div>
+    </span>
+    <span class="dd" data-dd="model">
+      <button class="chip model">Opus 4.8 <i>▾</i></button>
+      <div class="menu">
+        <div class="mh">Model</div>
+        <button data-val="Opus 4.8" class="sel">Opus 4.8<span class="ck">✓</span></button>
+        <button data-val="Sonnet 4.6">Sonnet 4.6<span class="ck">✓</span></button>
+        <button data-val="Haiku 4.5">Haiku 4.5<span class="ck">✓</span></button>
+      </div>
+    </span>
+    <button class="toggle on" data-tg>Web</button>
+    <button class="toggle on" data-tg>Think</button>
+    <span class="dd right" data-dd="more">
+      <button class="icon-btn">⋯</button>
+      <div class="menu">
+        <button data-act="clear">清空对话</button>
+        <button data-act="memory">长期记忆<span class="ck">✓</span></button>
+        <button data-act="cook" class="sel">实时 Cook<span class="ck">✓</span></button>
+        <div class="sep"></div>
+        <button data-act="flash">导出训练数据</button>
+        <button data-act="flash">规则编辑器</button>
+      </div>
+    </span>
+  </div>
+  <div class="tabs">
+    <button class="tab active">地形散布</button>
+    <button class="tab">VEX 调试</button>
+    <button class="tab">材质网络</button>
+    <button class="tab-new">+</button>
+  </div>
+  <div class="ctxbar">
+    <span class="ctx-path">/obj/geo1</span><span>·</span><span class="ctx-sel">2 nodes selected</span>
+    <button class="ctx-refresh" title="刷新场景上下文">↻</button>
+  </div>
+  <div class="thread">
+    <div class="msg user"><div class="bubble">给 grid 加 noise 让表面起伏，再 scatter 5000 个点，并把点的法线对齐到曲面。</div></div>
+
+    <div class="msg ai">
+      <div class="rail"></div>
+      <div class="ai-body">
+        <div class="think">
+          <div class="think-hd"><span class="spark">✦</span> Thought for 4.2s<span class="chev">▾</span></div>
+          <div class="think-body">在 grid 上叠加 noise 有两条路：mountain SOP 最快，或用 attribwrangle 写 @P.y 拿到完全控制。后者更利于后续调参。scatter 默认沿曲面均匀采样，5000 点足够。法线对齐用 polyframe 或直接继承曲面 N。</div>
+        </div>
+        <div class="exec collapsed">
+          <div class="exec-hd"><span class="spark">◆</span> Completed · 4 tools · 1.0s<span class="chev">▾</span></div>
+          <div class="tools">
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">create_node</span><span class="td">grid1</span><span class="tt">0.3s</span></div>
+            <div class="tool-detail">parent /obj/geo1 · type grid · rows 200 · cols 200 → /obj/geo1/grid1 ✓</div>
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">create_wrangle_node</span><span class="td">mountain_vex</span><span class="tt">0.5s</span></div>
+            <div class="tool-detail">run_over Points · VEX 6 lines · input grid1 → /obj/geo1/mountain_vex ✓</div>
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">create_node</span><span class="td">scatter1</span><span class="tt">0.2s</span></div>
+            <div class="tool-detail">type scatter · input mountain_vex → /obj/geo1/scatter1 ✓</div>
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">set_parameter</span><span class="td">npts = 5000</span><span class="tt">0.1s</span></div>
+            <div class="tool-detail">node scatter1 · npts 1000 → 5000 · seed 0</div>
+          </div>
+        </div>
+        <div class="nodeop">
+          <span class="op-badge add">+3</span><span class="op-text">nodes created</span>
+          <span class="op-actions"><button class="mini keep">Keep</button><button class="mini undo">Undo</button></span>
+          <span class="op-paths">/obj/geo1/grid1 · mountain_vex · scatter1</span>
+        </div>
+        <div class="code">
+          <div class="code-hd"><span class="lang">VEX</span>
+            <span class="code-actions"><button>Copy</button><button class="green">＋ Wrangle</button></span></div>
+          <pre><code><span class="com">// 抬升曲面，制造山脉起伏</span>
+<span class="kw">float</span> amp  = <span class="num">2.5</span>;
+<span class="kw">float</span> freq = <span class="num">0.35</span>;
+<span class="kw">vector</span> p = <span class="attr">@P</span>;
+<span class="kw">float</span> n = <span class="fn">noise</span>(p * freq);
+<span class="attr">@P</span>.y += n * amp;
+<span class="attr">@Cd</span>  = <span class="fn">set</span>(n, n*<span class="num">0.6</span>, <span class="num">1.0</span>-n);</code></pre>
+        </div>
+        <p class="prose">已搭好 <b>grid → mountain_vex → scatter</b> 链路。noise 通过 VEX 抬升 <code>@P.y</code>，scatter 输出 5000 点并继承曲面法线。需要我把点再 <code>copy</code> 上实例几何吗？</p>
+      </div>
+    </div>
+
+    <div class="plan">
+      <div class="plan-hd"><span class="plan-ico">◈</span><span class="plan-title">Terrain Scatter Setup</span><span class="plan-badge">5 steps</span></div>
+      <div class="plan-steps">
+        <div class="pstep done"><span class="ps-n">1</span> Create grid (200 × 200)</div>
+        <div class="pstep-detail">grid1 · size 10 × 10 · rows/cols 200 · orient ZX</div>
+        <div class="pstep done"><span class="ps-n">2</span> Displace with noise VEX</div>
+        <div class="pstep-detail">mountain_vex · run_over Points · amp 2.5 · freq 0.35</div>
+        <div class="pstep active"><span class="ps-n">3</span> Scatter 5000 points</div>
+        <div class="pstep-detail">scatter1 · npts 5000 · relax 25 iters · seed 0</div>
+        <div class="pstep"><span class="ps-n">4</span> Align normals (polyframe)</div>
+        <div class="pstep-detail">polyframe1 · N from Tangent+Up · style first_edge</div>
+        <div class="pstep"><span class="ps-n">5</span> Copy instances to points</div>
+        <div class="pstep-detail">copytopoints1 · pack 实例几何 · 继承 N / pscale</div>
+      </div>
+      <div class="dag">
+        <div class="dnode">grid</div><span class="dedge"></span>
+        <div class="dnode">noise</div><span class="dedge"></span>
+        <div class="dnode hot">scatter</div><span class="dedge"></span>
+        <div class="dnode ghost">polyframe</div>
+      </div>
+      <div class="plan-actions">
+        <button class="plan-btn reject">驳回</button>
+        <button class="plan-btn confirm">确认执行</button>
+      </div>
+    </div>
+
+    <div class="msg user"><div class="bubble">很好，把这些点 copy 上一个 box 实例，pscale 用 noise 随机一点。</div></div>
+    <div class="msg ai">
+      <div class="rail"></div>
+      <div class="ai-body">
+        <div class="think collapsed">
+          <div class="think-hd"><span class="spark">✦</span> Thought for 1.8s<span class="chev">▾</span></div>
+          <div class="think-body">用 copytopoints 把 box 实例到 scatter 点；pscale 在 wrangle 里用 rand(@ptnum) 写入，copytopoints 会自动读取 pscale 缩放每个实例。</div>
+        </div>
+        <div class="exec collapsed">
+          <div class="exec-hd"><span class="spark">◆</span> Completed · 3 tools · 0.8s<span class="chev">▾</span></div>
+          <div class="tools">
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">create_node</span><span class="td">box1</span><span class="tt">0.2s</span></div>
+            <div class="tool-detail">type box · size 0.1 → /obj/geo1/box1 ✓</div>
+            <div class="tool ok"><span class="tg">✓</span><span class="tn">create_wrangle_node</span><span class="td">pscale_vex</span><span class="tt">0.3s</span></div>
+            <div class="tool-detail">run_over Points · @pscale = fit01(rand(@ptnum), 0.4, 1.2)</div>
+            <div class="tool warn"><span class="tg">!</span><span class="tn">cook_node</span><span class="td">copytopoints1 · 5000 copies</span><span class="tt">1.4s</span></div>
+            <div class="tool-detail">warning · cook 较慢（5000 实例未打包）· 建议改用 packed primitive 提升视口性能</div>
+          </div>
+        </div>
+        <div class="code">
+          <div class="code-hd"><span class="lang">VEX</span><span class="code-actions"><button>Copy</button><button class="green">＋ Wrangle</button></span></div>
+          <pre><code><span class="com">// 每个实例随机大小</span>
+<span class="attr">@pscale</span> = <span class="fn">fit01</span>(<span class="fn">rand</span>(<span class="attr">@ptnum</span>), <span class="num">0.4</span>, <span class="num">1.2</span>);</code></pre>
+        </div>
+        <p class="prose">已用 <b>copytopoints</b> 把 box 实例到 5000 个点，<code>@pscale</code> 由 <code>rand</code> 随机驱动。注意：实例数较多，建议改用 <b>packed primitive</b> 减轻视口压力。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="modes">
+      <button class="mode active" data-mode="Agent">Agent</button>
+      <button class="mode" data-mode="Ask">Ask</button>
+      <button class="mode" data-mode="Plan">Plan</button>
+    </div>
+    <div class="input">
+      <button class="attach" title="附加图片">＋</button>
+      <div class="field" contenteditable="true" data-ph="描述你想在场景里做的事…  (Enter 发送)"></div>
+      <button class="send" title="发送">↑</button>
+    </div>
+    <div class="meta"><span class="m-model">Opus 4.8</span><span class="dotsep">·</span><span>12.4k / 200k ctx</span><span class="dotsep">·</span><span class="cost">$0.03</span></div>
+  </div>
+</div>`;
+
+const THEMES = [
+  {id:"editorial",rich:true,en:"Mono Editorial",   zh:"黑白杂志",   phil:"杂志编排美学：衬线标题、方角、近黑白配色、左侧栏线。信息层级靠排版而非色彩——把每段对话当成排版作品。", tags:["Dark","Serif","Editorial"], sw:["#0d0d0d","#e8e2d4","#b8c5a0","#fafafa"], notes:["字体：Fraunces 衬线标题（斜体强调）+ Newsreader 正文","色彩：近黑底 / 米白文字 / 极少量米色点缀","结构：方角、发丝分隔线、左侧栏线、微型大写标签","动效：克制——仅淡入与展开，不抢戏"]},
+  {id:"nordic",   rich:true,en:"Nordic Minimal",   zh:"北欧极简",   phil:"浅雾蓝灰、大量留白、柔和圆角。冷静、呼吸感、零噪音——长时间盯着也不累。", tags:["Light","Muted","Airy"], sw:["#f4f6f8","#5b7a99","#5a9678","#1a2330"], notes:["字体：Hanken Grotesk，轻量字重为主","色彩：雾蓝灰浅底 / 深蓝灰文字 / 低饱和强调","结构：大留白、柔和圆角、卡片极淡描边","动效：缓慢柔和，强调平静感"]},
+  {id:"cobalt",   rich:true,en:"Glass Cobalt",     zh:"钴蓝玻璃",   phil:"钴蓝染色玻璃、深海蓝渐变、克制的青色点缀。沉稳、专业、有重量——最接近现有主题的进化路线。", tags:["Dark","Glass","Cobalt"], sw:["#0b1730","#4d8dff","#3fd6c0","#ffffff"], notes:["字体：Sora，几何无衬线，现代利落","色彩：深海蓝渐变 / 钴蓝主强调 / 青色次强调","结构：钴蓝染色玻璃面板、柔光晕、层次景深","动效：玻璃模糊 + 柔光，质感优先"]},
+];
+
+/* ---- wire interactions for a rich panel (scoped to its frame) ---- */
+function wireRich(frame){
+  const $=(s)=>frame.querySelector(s), $$=(s)=>[...frame.querySelectorAll(s)];
+  const thread=$('.thread');
+  const scrollBot=()=>{thread.scrollTop=thread.scrollHeight;};
+  frame._timers=[];
+  const after=(ms,fn)=>{const id=setTimeout(fn,ms);frame._timers.push(id);return id;};
+  const clearTimers=()=>{frame._timers.forEach(clearTimeout);frame._timers=[];};
+  const clip=(s,n)=>s.length>n?s.slice(0,n)+'…':s;
+
+  // Web / Think toggles
+  $$('.toggle[data-tg]').forEach(b=>b.onclick=()=>b.classList.toggle('on'));
+
+  // session tabs
+  function activateTab(tab){$$('.tab').forEach(x=>x.classList.remove('active'));tab.classList.add('active');}
+  $$('.tab').forEach(tb=>tb.onclick=()=>activateTab(tb));
+  let newTabN=0;
+  const tabNew=$('.tab-new');
+  if(tabNew)tabNew.onclick=()=>{
+    const nb=document.createElement('button');nb.className='tab';nb.textContent='新对话 '+(++newTabN);
+    nb.onclick=()=>activateTab(nb);
+    tabNew.parentElement.insertBefore(nb,tabNew);activateTab(nb);
+    clearTimers();
+    thread.innerHTML='<div style="text-align:center;color:var(--text-mute);font-size:12px;padding:48px 0" class="fade-in">新会话 · 在下方输入消息开始</div>';
+  };
+
+  // collapsible think + exec (delegated so dynamic ones work too)
+  frame.addEventListener('click',e=>{
+    const th=e.target.closest('.think-hd'); if(th)th.parentElement.classList.toggle('collapsed');
+    const ex=e.target.closest('.exec-hd'); if(ex)ex.parentElement.classList.toggle('collapsed');
+    const tl=e.target.closest('.tool');    if(tl)tl.classList.toggle('open');
+    const ps=e.target.closest('.pstep');   if(ps)ps.classList.toggle('open');
+  });
+
+  // dropdown menus
+  $$('.dd').forEach(dd=>{
+    const trigger=dd.querySelector('.chip,.icon-btn'), menu=dd.querySelector('.menu');
+    trigger.addEventListener('click',ev=>{
+      ev.stopPropagation();
+      const open=menu.classList.contains('show');
+      $$('.menu').forEach(m=>m.classList.remove('show'));
+      if(!open)menu.classList.add('show');
+    });
+  });
+  // provider / model selection
+  function bindSelect(dd,onPick){
+    const btn=$('.dd[data-dd="'+dd+'"] .chip'), items=$$('.dd[data-dd="'+dd+'"] .menu button');
+    items.forEach(b=>b.onclick=()=>{
+      items.forEach(x=>x.classList.remove('sel')); b.classList.add('sel');
+      btn.firstChild.nodeValue=b.dataset.val+' ';
+      onPick&&onPick(b.dataset.val);
+    });
+  }
+  bindSelect('provider');
+  bindSelect('model',(v)=>{const m=$('.m-model'); if(m)m.textContent=v;});
+  // overflow actions
+  $$('.dd[data-dd="more"] .menu button').forEach(b=>{
+    b.onclick=()=>{
+      const act=b.dataset.act;
+      if(act==='clear'){clearTimers();thread.innerHTML='<div style="text-align:center;color:var(--text-mute);font-size:12px;padding:48px 0" class="fade-in">对话已清空 · 在下方输入消息开始新对话</div>';}
+      else if(act==='memory'||act==='cook'){b.classList.toggle('sel');}
+      else if(act==='flash'){b.classList.add('flash-ok');after(900,()=>b.classList.remove('flash-ok'));}
+    };
+  });
+
+  // node-op Keep / Undo
+  $$('.nodeop .mini').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const act=b.closest('.op-actions'), kept=b.classList.contains('keep');
+    act.innerHTML='<span class="res-tag '+(kept?'kept':'reverted')+'">'+(kept?'✓ Kept':'↩ Reverted')+'</span>';
+  });
+
+  // code copy / add-wrangle
+  $$('.code-actions button').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const o=b.textContent, green=b.classList.contains('green');
+    b.textContent=green?'✓ Added':'✓ Copied'; b.classList.add('flash-ok');
+    after(1200,()=>{b.textContent=o;b.classList.remove('flash-ok');});
+  });
+
+  // ctx refresh
+  const rf=$('.ctx-refresh');
+  if(rf)rf.onclick=()=>{rf.classList.add('spin');after(600,()=>rf.classList.remove('spin'));
+    $('.ctx-sel').textContent=(1+Math.floor(Math.random()*4))+' nodes selected';};
+
+  // mode switch (changes placeholder)
+  $$('.mode').forEach(m=>m.onclick=()=>{
+    $$('.mode').forEach(x=>x.classList.remove('active')); m.classList.add('active');
+    const f=$('.field'), mo=m.dataset.mode;
+    f.dataset.ph = mo==='Ask'?'问一个关于场景的问题…  (只读模式)'
+                 : mo==='Plan'?'描述目标，先生成可确认的执行计划…'
+                 : '描述你想在场景里做的事…  (Enter 发送)';
+  });
+
+  // plan confirm / reject
+  const pa=$('.plan-actions');
+  if(pa){
+    pa.querySelector('.confirm').onclick=()=>{
+      pa.innerHTML='<span class="res-tag kept" style="padding:8px 0;font-size:12.5px">✓ 计划已确认 · 开始执行</span>';
+      const steps=$$('.pstep'); let idx=steps.findIndex(s=>s.classList.contains('active'));
+      (function adv(){
+        if(idx<0||idx>=steps.length)return;
+        steps[idx].classList.remove('active'); steps[idx].classList.add('done');
+        idx++;
+        if(idx<steps.length){steps[idx].classList.add('active'); after(700,adv);}
+      })();
+    };
+    pa.querySelector('.reject').onclick=()=>{
+      pa.innerHTML='<span class="res-tag reverted" style="padding:8px 0;font-size:12.5px">✕ 计划已驳回</span>';
+    };
+  }
+
+  // typewriter
+  function typewrite(el,text,speed,done){
+    el.textContent=''; const caret=document.createElement('span'); caret.className='caret'; el.appendChild(caret);
+    let i=0;(function step(){
+      if(i<text.length){caret.insertAdjacentText('beforebegin',text.charAt(i));i++;scrollBot();after(speed,step);}
+      else{caret.remove();done&&done();}
+    })();
+  }
+
+  // send → simulated streaming reply
+  const field=$('.field'), sendBtn=$('.send');
+  function appendUser(txt){
+    const d=document.createElement('div'); d.className='msg user fade-in';
+    d.innerHTML='<div class="bubble"></div>'; d.querySelector('.bubble').textContent=txt;
+    thread.appendChild(d); scrollBot();
+  }
+  function simulateReply(txt){
+    const msg=document.createElement('div'); msg.className='msg ai fade-in';
+    msg.innerHTML='<div class="rail"></div><div class="ai-body"><div class="gen-row"><span class="gen-dot"></span>Thinking…</div></div>';
+    thread.appendChild(msg); scrollBot();
+    const body=msg.querySelector('.ai-body');
+    after(650,()=>{
+      body.innerHTML='';
+      const think=document.createElement('div'); think.className='think fade-in';
+      think.innerHTML='<div class="think-hd"><span class="spark">✦</span> Thought for 2.1s<span class="chev">▾</span></div><div class="think-body"></div>';
+      body.appendChild(think); scrollBot();
+      typewrite(think.querySelector('.think-body'),'分析请求："'+clip(txt,24)+'"。先用只读工具确认当前网络，再决定新建还是修改节点；所有改动包进 undo 分组保证可回退。',16,()=>{
+        const exec=document.createElement('div'); exec.className='exec fade-in';
+        exec.innerHTML='<div class="exec-hd"><span class="spark">◆</span> <span class="ex-label">Executing…</span><span class="chev">▾</span></div><div class="tools"></div>';
+        body.appendChild(exec); scrollBot();
+        const tools=exec.querySelector('.tools');
+        const seq=[['get_network_structure','/obj/geo1','0.2s'],['create_node','noise2','0.3s'],['set_parameter','amp = 1.8','0.2s']];
+        let k=0;(function addTool(){
+          if(k>=seq.length){exec.querySelector('.ex-label').textContent='Completed · '+seq.length+' tools · 0.7s'; after(300,streamProse); return;}
+          const a=seq[k++]; const row=document.createElement('div'); row.className='tool ok fade-in';
+          row.innerHTML='<span class="tg">✓</span><span class="tn"></span><span class="td"></span><span class="tt">'+a[2]+'</span>';
+          row.querySelector('.tn').textContent=a[0]; row.querySelector('.td').textContent=a[1];
+          tools.appendChild(row); scrollBot(); after(340,addTool);
+        })();
+        function streamProse(){
+          const p=document.createElement('p'); p.className='prose fade-in'; body.appendChild(p);
+          typewrite(p,'已按你的描述更新网络：新增 noise 节点并设好参数。需要我继续细化或可视化结果吗？',18,scrollBot);
+        }
+      });
+    });
+  }
+  function send(){const txt=(field.textContent||'').trim(); if(!txt)return; field.textContent=''; appendUser(txt); simulateReply(txt);}
+  sendBtn.onclick=send;
+  field.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+}
+
+const stage = document.getElementById('stage');
+THEMES.forEach((t,i)=>{
+  const page=document.createElement('div');
+  page.className='page';page.dataset.idx=i;
+  page.innerHTML=`
+    <div class="cap">
+      <div class="pgno"><b>${String(i+1).padStart(2,'0')}</b> / ${String(THEMES.length).padStart(2,'0')}</div>
+      <h2>${t.en}${t.rich?'<span class="live">LIVE</span>':''}</h2>
+      <div class="zh">${t.zh}</div>
+      <div class="phil">${t.phil}</div>
+      <div class="tags">${t.tags.map(x=>`<span class="tag">${x}</span>`).join('')}</div>
+      <div class="sw">${t.sw.map(c=>`<i style="background:${c}"></i>`).join('')}</div>
+      ${t.notes?'<ul class="notes">'+t.notes.map(n=>'<li>'+n+'</li>').join('')+'</ul>':''}
+      ${t.rich?'<div class="hint"><b>可交互：</b>点开思考块 / 工具行 / 计划步骤；切 Provider·Model·模式；Keep·Undo；确认计划；<b>在输入框打字并按 Enter</b> 看模拟流式回复。</div>':''}
+    </div>
+    <div class="frame" data-theme="${t.id}">${t.rich?RICH_PANEL:PANEL}</div>`;
+  stage.appendChild(page);
+  if(t.rich)wireRich(page.querySelector('.frame'));
+});
+// close any open dropdown when clicking elsewhere
+document.addEventListener('click',()=>document.querySelectorAll('.menu.show').forEach(m=>m.classList.remove('show')));
+
+const dotsWrap=document.getElementById('dots');
+THEMES.forEach((t,i)=>{
+  const d=document.createElement('button');
+  d.className='dot';d.textContent=String(i+1).padStart(2,'0');d.dataset.idx=i;
+  d.onclick=()=>go(i);dotsWrap.appendChild(d);
+});
+
+let cur=0;const pages=[...document.querySelectorAll('.page')];const dots=[...document.querySelectorAll('.dot')];
+const navName=document.getElementById('navName');const cTop=document.getElementById('cTop');
+function go(i){
+  cur=(i+THEMES.length)%THEMES.length;
+  pages.forEach((p,k)=>p.classList.toggle('active',k===cur));
+  dots.forEach((d,k)=>d.classList.toggle('on',k===cur));
+  navName.innerHTML=`<b>${THEMES[cur].en}</b> · ${THEMES[cur].zh}`;
+  cTop.textContent=String(cur+1).padStart(2,'0');
+  // restart caption/frame animation
+  const ac=pages[cur].querySelector('.cap'),af=pages[cur].querySelector('.frame');
+  [ac,af].forEach(el=>{el.style.animation='none';void el.offsetWidth;el.style.animation='';});
+}
+document.getElementById('prev').onclick=()=>go(cur-1);
+document.getElementById('next').onclick=()=>go(cur+1);
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft')go(cur-1);
+  if(e.key==='ArrowRight')go(cur+1);
+  if(/^[1-9]$/.test(e.key))go(parseInt(e.key)-1);
+});
+go(0);
+</script>
+</body>
+</html>

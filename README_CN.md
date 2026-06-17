@@ -2,9 +2,11 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-基于 AI 的 SideFX Houdini 智能助手，支持自主多轮工具调用、联网搜索、VEX/Python 代码执行、Plan 模式规划复杂任务、大脑启发式长期记忆系统、插件 Hook 系统支持社区扩展、用户自定义上下文规则，配备现代深色 UI 与双语支持。
+独立运行的 SideFX Houdini AI 智能助手，支持自主多轮工具调用、**Meshy AI 3D 生成**（文/图生 3D、概念图画廊、图生图/二次编辑、重打材质、重拓扑）、**云资产库**、联网搜索、VEX/Python 代码执行、Plan 模式规划复杂任务、大脑启发式长期记忆系统、插件 Hook 系统支持社区扩展、用户自定义上下文规则，配备现代 **QML/Qt Quick** 桌面 UI 与双语支持。
 
-基于 **OpenAI Function Calling** 协议，Agent 可以读取节点网络、创建/修改/连接节点、编写 VEX Wrangle、执行系统命令、联网搜索、查询本地文档、创建结构化执行计划、从历史交互中持续学习、通过插件扩展能力 —— 全部在自主循环中迭代完成。统一的 **ToolRegistry** 集中管理核心工具、技能脚本和插件工具，支持基于模式的访问控制。
+从 **v2.0** 起，Houdini Agent 以**独立桌面程序**形式运行，通过轻量 **Bridge** 连接正在运行的 Houdini（不再嵌入 Houdini 进程内），前端完全用 **QML/Qt Quick** 重写（Mono Editorial 设计风格）。
+
+基于 **OpenAI Function Calling** 协议，Agent 可以读取节点网络、创建/修改/连接节点、编写 VEX Wrangle、用 Meshy 生成并导入 3D 资产、执行系统命令、联网搜索、查询本地文档、创建结构化执行计划、从历史交互中持续学习、通过插件扩展能力 —— 全部在自主循环中迭代完成。统一的 **ToolRegistry** 集中管理核心工具、技能脚本和插件工具，支持基于模式的访问控制。
 
 ## 核心特性
 
@@ -12,7 +14,7 @@
 
 AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → 调用工具 → 检查结果 → 继续调用 → 直到任务完成。提供三种模式：
 
-- **Agent 模式** — 完整权限，AI 可以使用全部 40+ 工具，创建、修改、连接、删除节点，设置参数，执行脚本，保存场景。
+- **Agent 模式** — 完整权限，AI 可以使用全部 50+ 工具，创建、修改、连接、删除节点，设置参数，执行脚本，生成并导入 3D 资产，保存场景。
 - **Ask 模式** — 只读模式，AI 只能查询场景结构、检查参数、搜索文档和提供分析。所有修改类工具被 `ToolRegistry` 模式守卫拦截。
 - **Plan 模式** — AI 进入规划阶段：只读调研当前场景，通过 `ask_question` 澄清需求，然后生成带 DAG 流程图的结构化执行计划。用户审核确认后方可执行。内置 **自动续接机制**，检测 AI 过早终止并强制继续执行直到所有步骤完成。
 
@@ -37,7 +39,6 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | **DeepSeek** | `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-chat`*、`deepseek-reasoner`* | V4：显式 thinking 参数 + reasoning_effort；*旧模型 2026/07/24 废弃 |
 | **智谱 GLM** | `glm-4.7` | 国内访问稳定，原生推理与工具调用 |
 | **OpenAI** | `gpt-5.2`、`gpt-5.3-codex` | 能力强大，完整 Function Calling 与 Vision 支持 |
-| **Ollama**（本地） | `qwen2.5:14b`、任意本地模型 | 隐私优先，自动检测可用模型 |
 | **拼好饭**（中转） | `claude-opus-4-6-gemini`、`claude-opus-4-6-max`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`gemini-3-flash`、`gemini-3.1-pro`、`glm-5-turbo`、`glm-5.1`、`MiniMax-M2.7`、`MiniMax-M2.7-highspeed` | 通过中转接口使用 Claude、Gemini、GLM、MiniMax |
 | **OpenRouter** | `claude-sonnet-4.6`、`claude-opus-4.6`、`gpt-5.2`、`gemini-2.5-pro`、`deepseek-r1`、`grok-4.1-fast`、`llama-4-maverick`、`qwen3-235b` 等 16 个 | 通过单一 API Key 使用所有主流提供商的模型 |
 | **自定义** | 用户可配置 | 任何 OpenAI 兼容端点（LM Studio、vLLM 等）；可配置 URL、API Key、模型名、上下文限制、Vision 和 FC 支持 |
@@ -51,29 +52,30 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **模型感知** — 自动检测当前模型是否支持视觉；不支持的模型会给出明确提示
 - 已支持：OpenAI GPT-5.2/5.3、Claude（所有变体）、Gemini
 
-### 深色 UI
+### QML/Qt Quick 界面（Mono Editorial）
 
-- 现代暖色调深色主题，Glassmorphism 玻璃态效果
-- 思考过程、工具调用、执行结果均可折叠/展开
-- 内置 **Python Shell** 和 **系统 Shell** 组件，支持语法高亮
+整个前端用 **QML/Qt Quick** 重写（`houdini_agent/ui_qml/`），由一个精简的 Python `Controller` 把 Agent 状态以信号流式推送给模块化的 QML 组件库。设计风格为 **Mono Editorial** —— 近黑画布配米色点缀，内置编辑设计字体（Fraunces / Newsreader / Space Mono）。
+
+- 现代 Mono Editorial 深色主题，左侧可折叠**资产库抽屉** + 右侧对话栏布局
+- 思考过程、工具调用、节点操作、执行结果均可折叠/展开
+- **Meshy 生成卡片** — 文/图生 3D、重打材质、重拓扑的实时进度；带「转入后台」按钮
+- **概念图画廊卡片** — 概念图转 3D / 文生图 / 图生图的交互式多选画廊，支持改提示词、重新生成、二次编辑、把选中的升级成 3D
+- **云资产库** — 侧滑抽屉列出你在 Meshy 的历史生成结果（带缩略图），一键导入 Houdini，支持翻页和账号/额度显示
+- 内置 **Python Shell** 和 **系统 Shell** 区块，支持语法高亮
 - **可点击节点路径** — 回复中的 `/obj/geo1/box1` 等路径自动变为链接，点击即可跳转到对应节点
-- **节点上下文栏**：实时显示当前选中的 Houdini 节点
+- **节点上下文栏**：实时显示当前选中的 Houdini 节点（Plan 规划阶段为只读）
 - **Todo 列表**：显示在对话区域上方，带实时状态图标
 - **Token 分析** — 实时显示 Token 用量、推理 Token、Cache 命中率和按模型计费的费用估算（点击查看详细分析面板）
-- **AuroraBar 流光条** — AI 生成时左侧银白流动渐变光带
 - **流式 VEX 代码预览** — 类似 Cursor Apply 的实时代码书写动画
 - 多会话标签页 — 同时运行多个独立对话
-- AI 回复一键复制
-- `Ctrl+Enter` 发送消息
-- **字号缩放** — `Ctrl+=`/`Ctrl+-` 放大缩小，"Aa" 按钮滑块控制
-- **双语 UI** — 通过溢出菜单切换中文/英文界面，所有 UI 元素和系统提示词动态重译
-- **更新通知横幅** — 检测到新版本时在输入区上方显示轻量横幅，支持「立即更新」和关闭
-- **插件管理器** — 三标签对话框（插件/工具/技能），支持启用/禁用、重载、设置管理
-- **规则编辑器** — 创建和管理持久用户上下文规则的对话框
-- **记忆管理器** — 浏览、编辑、删除和导出长期语义记忆的管理对话框
-- **PySide2 输入法支持** — 完整的中文/日文/韩文输入法支持（Windows 和 macOS）
+- AI 回复一键复制；`Ctrl+Enter` 发送消息
+- **字号缩放** — 滑块弹窗实时缩放界面，偏好持久化
+- **双语 UI** — 切换中文/英文界面，所有 UI 元素和系统提示词动态重译
+- **更新通知** — 检测到新版本时显示横幅，支持「立即更新」和关闭
+- **管理面板** — 应用内插件管理器、规则编辑器、长期记忆浏览
+- **输入法支持** — 完整的中文/日文/韩文输入法支持（Windows 和 macOS）
 
-## 可用工具（40+）
+## 可用工具（50+）
 
 ### 节点操作
 
@@ -111,6 +113,32 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | 工具 | 说明 |
 |------|------|
 | `capture_viewport` | 截取 3D 视口截图 — 返回 base64 JPEG 给视觉模型，或保存到文件；可配置分辨率（最高 1920×1080） |
+
+### 3D 生成（Meshy）
+
+自包含集成（`houdini_agent/meshy/`），封装 [Meshy](https://meshy.ai) 生成式 3D API。网络调用跑在 App 后台线程（绝不进 Houdini）；得到的 GLB + PBR 贴图在主线程导入 Houdini 并自动接成 Principled Shader。生成类工具消耗 Meshy credits，受**执行前确认**门控。密钥用 `MESHY_API_KEY`（环境变量或 `houdini_ai.ini`），或应用内菜单 →**Meshy API Key…**。
+
+| 工具 | 描述 |
+|------|------|
+| `meshy_text_to_3d` | 文字 → 带贴图 3D 模型（自动 preview→refine），下载 GLB + PBR 贴图到缓存；`count` 可并行出多个变体 |
+| `meshy_image_to_3d` | 图片（URL / data URI / 本地路径 / 对话附图）→ 带贴图 3D 模型 |
+| `meshy_text_to_image` | 文字 → 并行生成 N 张 2D 概念图/参考图（`prompt`+`count` 出同词变体，或 `prompts` 数组出不同方向）；弹画廊（多选、改提示词重生、只保留图片或把选中的升级成 3D） |
+| `meshy_image_to_image` | **图生图 / 2D 二次编辑** — 参考图 + 提示词 → 新图片（换风格、换背景、出变体）；用户附了图时自动取最近一张作参考；同样弹交互画廊（重生、二次编辑、升级成 3D） |
+| `meshy_concept_to_3d` | 概念图驱动、人在环：并行生成 N 张概念图 → 画廊卡片（多选 + 可改提示词 + 重新生成）→ 对选中的图分别做 image-to-3d（原生任务串接） |
+| `meshy_retexture` | 给已有模型重打 PBR 材质（文字/图片提示）— 配合 `export_node_to_glb` 可给场景里已有几何重打材质 |
+| `meshy_remesh` | 重拓扑 / 改面数（quad/triangle，目标面数） |
+| `meshy_balance` | 查询 Meshy 剩余 credits（免费） |
+| `meshy_task_status` | 查询【转入后台】运行中的生成任务进度（免费）；不带参数列全部，`op` 指定某个任务 |
+| `import_3d_asset` | 把 GLB/FBX/OBJ 导入 `/obj`（File SOP），并用 PBR 贴图搭建并指派 Principled Shader |
+| `export_node_to_glb` | 把场景节点几何导出成 GLB（喂给 `meshy_retexture`） |
+
+价值在接缝处：Meshy 生成**种子资产**，Houdini 程序化**放大**它（scatter、copy-to-points、碎裂、地形）。生成过程有实时 `MeshyCard` 进度卡片；结果落地为可导入资产，由 agent 串进场景。
+
+**交互式画廊** —— `meshy_text_to_image`、`meshy_image_to_image`、`meshy_concept_to_3d` 会弹出 `ConceptGalleryCard`，分 `生成 → 挑选 → 转 3D → 完成` 几个阶段：多选你满意的图、改提示词重新生成、对选中的图做二次图生图编辑，或把选中的升级成 3D —— 全程人在环。
+
+**后台任务** —— 任何耗时的 Meshy 生成都可以**转入后台**运行。Agent 循环不被阻塞继续往下走；完成后结果作为一条新消息自动送回，画廊类任务会自动弹出可交互的 `ConceptGalleryCard`（若 Agent 仍在运行则排队到空闲时弹出），仍可挑选/编辑/升级。也可用 `meshy_task_status` 主动查询进度。
+
+**云资产库** —— 侧滑抽屉（`LibraryContent.qml`）按页聚合你在 Meshy 的历史生成（文/图生 3D、重打材质、重拓扑）并带缩略图；一键即可把任意资产导入 Houdini（下载 GLB + 贴图 → `import_3d_asset`）。抽屉顶部显示账号连接状态与剩余额度。
 
 ### 代码执行
 
@@ -198,95 +226,91 @@ Skill 是预优化的 Python 脚本，在 Houdini 环境中运行，用于可靠
 
 ```
 Houdini-Agent/
-├── launcher.py                      # 启动器（自动检测 Houdini）
-├── README.md                        # 英文文档
-├── README_CN.md                     # 中文文档
-├── VERSION                          # 语义版本文件（如 1.5.5）
+├── launcher.py                      # 启动器 — 检测 Houdini，路由到 QML 程序（Houdini 内嵌或独立）
+├── README.md / README_CN.md         # 中英文文档
+├── VERSION                          # 语义版本文件（如 2.0.0）
+├── HoudiniAgent.spec                # PyInstaller 构建配置（独立程序）
+├── build_installer.ps1              # Inno Setup 安装包构建
 ├── lib/                             # 内置依赖库（requests、urllib3、certifi、tiktoken 等）
+├── assets/                          # 应用图标（houdini-agent.ico）与品牌资源
 ├── config/                          # 运行时配置（自动创建，已 gitignore）
-│   ├── houdini_ai.ini              # API Key 及设置
+│   ├── houdini_ai.ini              # API Key 及设置（含 MESHY_API_KEY、埋点开关、install id）
 │   ├── plugins.json                # 插件启用/禁用状态、工具禁用列表、插件设置
 │   └── user_rules.json             # 用户自定义上下文规则（UI 规则）
 ├── cache/                           # 对话缓存、文档索引、HIP 预览
-│   └── plans/                      # Plan 模式数据文件（plan_{session_id}.json）
+│   ├── plans/                      # Plan 模式数据文件（plan_{session_id}.json）
+│   └── meshy/                      # 下载的 GLB/PBR 资产 + 埋点本地暂存
 ├── rules/                           # 基于文件的用户规则（*.md、*.txt 自动加载）
-├── plugins/                         # 社区插件目录
-│   ├── __init__.py                 # 插件包标记
-│   ├── _example_plugin.py          # 示例插件模板（以 _ 开头，不自动加载）
-│   └── PLUGIN_DEV_GUIDE.md         # 插件开发文档
-├── Doc/                             # 离线文档
-│   ├── houdini_knowledge_base.txt  # Houdini 编程知识库
-│   ├── vex_attributes_reference.txt
-│   ├── vex_snippets_reference.txt
-│   ├── labs_knowledge_base.txt     # SideFX Labs 节点知识库
-│   ├── heightfields_knowledge_base.txt  # HeightField / 地形知识库
-│   ├── copernicus_knowledge_base.txt    # Copernicus (COP) 知识库
-│   ├── ml_knowledge_base.txt       # 机器学习知识库
-│   ├── mpm_knowledge_base.txt      # MPM 求解器知识库
-│   ├── copernicus/                  # Copernicus 原始文档
-│   ├── heightfields/                # HeightField 原始文档
-│   ├── ml/                          # ML 原始文档
-│   ├── mpm/                         # MPM 原始文档
-│   ├── nodes.zip                   # 节点文档索引（wiki 标记格式）
-│   ├── vex.zip                     # VEX 函数文档索引
-│   └── hom.zip                     # HOM 类/方法文档索引
-├── shared/                          # 共享工具
-│   └── common_utils.py             # 路径与配置工具
+├── plugins/                         # 社区插件目录（含 PLUGIN_DEV_GUIDE.md）
+├── Doc/                             # 离线文档（各知识库 + nodes/vex/hom zip 索引）
+├── shared/                          # 共享工具（路径与配置）
 ├── trainData/                       # 导出的训练数据（JSONL）
+├── deploy/                          # 部署与后端
+│   ├── remote_deploy.py            # 主页/站点部署（paramiko）
+│   ├── upload_installer.py         # 上传构建好的安装包到下载主机
+│   └── telemetry_server/           # 用量埋点后端（纯标准库 http.server + sqlite3）
+│       ├── server.py               #   POST /api/telemetry、GET /api/telemetry/stats
+│       ├── ha-telemetry.service    #   systemd 服务单元
+│       └── deploy_telemetry.py     #   部署脚本
+├── website/                         # 营销主页（houdini-agent.com）
 └── houdini_agent/                   # 主模块
-    ├── main.py                     # 模块入口与窗口管理
+    ├── ui_qml/                     # QML/Qt Quick 前端（Mono Editorial）— 主界面
+    │   ├── controller.py          # Controller（QObject）— QML⇄后端桥，驱动 Agent 循环，
+    │   │                          #   流式推送信号、Meshy 画廊、后台任务、云资产库
+    │   ├── agent_session.py       # Houdini 内会话后端（封装 AIClient + HoudiniMCP）
+    │   ├── bridge_session.py      # 独立模式会话后端（经 BridgeClient 与 Houdini 通信）
+    │   ├── app.py                 # Houdini 内启动器（Houdini 父窗 QML、热重载）
+    │   ├── external_app.py        # 独立双击启动器（含应用/窗口图标）
+    │   ├── host.py                # QQuickWidget 工厂；注册内置编辑设计字体
+    │   ├── preview.py             # 开发预览（mock 数据，不需 Houdini）
+    │   ├── qml/
+    │   │   ├── Main.qml           # 根窗口 — 资产库抽屉 + 对话栏
+    │   │   └── HAgent/            # 组件库
+    │   │       ├── Theme.qml      #   Mono Editorial 调色板 / 字体 / 缩放
+    │   │       ├── ChatView.qml, MessageUser.qml, MessageAI.qml, Composer.qml, Header.qml,
+    │   │       │   SessionTabs.qml, ContextBar.qml, StatusBar.qml
+    │   │       ├── ProseBlock.qml, CodeBlock.qml, CodePreviewBlock.qml, ThinkingBlock.qml,
+    │   │       │   TodoBlock.qml, ShellBlock.qml, ExecBlock.qml, NodeOpRow.qml, ImageBlock.qml
+    │   │       ├── MeshyCard.qml, ConceptGalleryCard.qml      # Meshy 进度 + 交互画廊
+    │   │       ├── LibraryContent.qml, ManagementPanel.qml    # 云资产库 + 插件/规则/记忆面板
+    │   │       └── PlanCard.qml, PlanDag.qml, PlanStreamBlock.qml, AskQuestionCard.qml, ConfirmCard.qml …
+    │   └── fonts/                 # Fraunces / Newsreader / Space Mono
+    ├── meshy/                      # Meshy 3D 生成集成（自包含、自注册）
+    │   ├── client.py              # MeshyClient — REST（创建/轮询/下载/余额/list_tasks）
+    │   ├── config.py              # MESHY_API_KEY 解析 + 缓存目录
+    │   ├── schemas.py             # 工具 schema + 工具名集合（NETWORK/INTERACTIVE/HOUDINI/CONFIRM）
+    │   ├── network_ops.py         # 后台线程编排（生成/重打材质/重拓扑/资产库）
+    │   ├── houdini_io.py          # 主线程导入 + Principled Shader + GLB 导出
+    │   └── telemetry.py           # 匿名用量埋点（本地暂存 + 后台上传，可关）
+    ├── bridge/                     # 独立程序⇄Houdini 进程间通信
+    │   ├── client.py              # BridgeClient — localhost 套接字客户端
+    │   └── server.py              # bridge 服务端（跑在 Houdini 内，主线程分发工具）
+    ├── ui/                         # 旧版 PySide widgets 界面（回退，HAGENT_UI=legacy）
+    ├── core/                       # 旧版界面核心（main_window / agent_runner / session_manager 等 Mixin）
+    ├── main.py                     # 旧版模块入口（回退）
     ├── shelf_tool.py               # Houdini 工具架集成
     ├── qt_compat.py                # PySide2/PySide6 兼容层
-    ├── QUICK_SHELF_CODE.py         # 快速工具架代码片段
-    ├── core/
-    │   ├── main_window.py          # 主窗口（工作区保存/恢复）
-    │   ├── agent_runner.py         # AgentRunnerMixin — Agent 循环辅助、确认模式、工具调度
-    │   └── session_manager.py      # SessionManagerMixin — 多会话创建/切换/关闭
-    ├── ui/
-    │   ├── ai_tab.py              # AI Agent 标签页（Mixin 宿主、Agent 循环、上下文管理、流式 UI）
-    │   ├── cursor_widgets.py      # UI 组件（主题、对话块、Todo、Shell、Token 分析、Plan 查看器、插件管理器、规则编辑器）
-    │   ├── header.py              # HeaderMixin — 顶部设置栏（提供商、模型、功能开关、Custom 提供商对话框）
-    │   ├── input_area.py          # InputAreaMixin — 输入区域、模式切换、@提及、确认模式
-    │   ├── chat_view.py           # ChatViewMixin — 对话显示、滚动控制、Toast 消息
-    │   ├── i18n.py                # 国际化 — 中英双语支持
-    │   ├── theme_engine.py        # QSS 模板渲染与字号缩放引擎
-    │   ├── font_settings_dialog.py # 字号缩放滑块对话框
-    │   ├── memory_manager_dialog.py # 记忆系统 UI — 浏览、编辑、删除、导出记忆
-    │   └── style_template.qss    # 集中式 QSS 主题样式表
+    ├── launcher/                   # Houdini 探测与启动（houdini_discovery.py）
+    ├── houdini_package/            # 安装进 Houdini packages/ 的 bridge package 载荷
     ├── skills/                     # 预构建分析脚本（自动注册为 skill:xxx 工具）
-    │   ├── __init__.py            # Skill 注册表、加载器与 ToolRegistry 集成
-    │   ├── analyze_normals.py     # 法线质量检测
-    │   ├── analyze_point_attrib.py # 几何属性统计
-    │   ├── bounding_box_info.py   # 边界盒信息
-    │   ├── compare_attributes.py  # 节点属性对比
-    │   ├── connectivity_analysis.py # 连通性分析
-    │   ├── find_attrib_references.py # 属性引用搜索
-    │   ├── find_dead_nodes.py     # 死节点/孤立节点查找
-    │   ├── trace_dependencies.py  # 依赖树追溯
-    │   └── analyze_cook_performance.py # Cook 时间排名与瓶颈检测
     └── utils/
-        ├── ai_client.py           # AI API 客户端（流式传输、Function Calling、联网搜索）
+        ├── ai_client.py           # AI API 客户端（流式、Function Calling、联网搜索）
+        ├── ai_client_*.py         # 提供商 / 上下文 / 流式 / Agent 循环 Mixin
         ├── doc_rag.py             # 本地文档索引（节点/VEX/HOM O(1) 查找）
-        ├── token_optimizer.py     # Token 预算与压缩策略（tiktoken 精准计数）
+        ├── token_optimizer.py     # Token 预算与压缩（tiktoken 精准计数）
         ├── ultra_optimizer.py     # 系统提示词与工具定义优化器
-        ├── training_data_exporter.py # 对话导出为训练数据 JSONL
-        ├── updater.py             # 自动更新器（GitHub Releases、ETag 缓存、通知横幅）
+        ├── updater.py             # 自动更新器（GitHub Releases、ETag 缓存、通知）
         ├── plan_manager.py        # Plan 模式数据模型与持久化
-        ├── hooks.py               # 插件 Hook 系统（HookManager、PluginContext、PluginLoader、装饰器 API）
-        ├── tool_registry.py       # 统一工具注册中心 — 集中管理核心/技能/插件/用户工具
-        ├── rules_manager.py       # 用户规则管理器（UI 规则 + 文件规则，Prompt 注入）
+        ├── hooks.py               # 插件 Hook 系统（HookManager、PluginContext、PluginLoader）
+        ├── tool_registry.py       # 统一工具注册中心 — 核心/技能/插件/用户工具
+        ├── rules_manager.py       # 用户规则管理器（UI + 文件规则，Prompt 注入）
         ├── memory_store.py        # 三层记忆存储（事件/抽象/策略）SQLite
-        ├── embedding.py           # 本地文本 Embedding（sentence-transformers / 回退方案）
-        ├── reward_engine.py       # 奖励评分与记忆重要度更新
-        ├── reflection.py          # 规则反思 + LLM 深度反思模块
-        ├── growth_tracker.py      # 成长追踪与个性特征形成
+        ├── embedding.py / reward_engine.py / reflection.py / growth_tracker.py  # 长期记忆系统
         └── mcp/                   # Houdini MCP 层
             ├── client.py          # 工具执行器（节点操作、Shell、Skill 分发、ToolRegistry 降级分发）
-            ├── hou_core.py        # 底层 hou 模块封装
+            ├── tools/             # 工具 handler（node_ops / param_ops / exec_ops / doc_ops / inspect）
             ├── node_inputs.json   # 预缓存的输入端口信息（210+ 节点）
-            ├── server.py          # MCP 服务端（预留）
-            ├── settings.py        # MCP 设置
-            └── logger.py          # 日志
+            └── server.py / settings.py / logger.py
 ```
 
 ## 快速开始
@@ -294,27 +318,28 @@ Houdini-Agent/
 ### 环境要求
 
 - **Houdini 20.5+**（或 21+）
-- **Python 3.9+**（Houdini 自带）
-- **PySide2 或 PySide6**（Houdini 自带 — Houdini ≤20.5 为 PySide2，Houdini 21+ 为 PySide6）
-- **Windows / macOS**（均已测试），Linux 理论上可支持
+- **Windows / macOS / Linux**
+- **自带运行环境** — 独立程序内置 Python 与 PySide6，无需安装 Python，也无需 pip
 
-### 安装
+### 安装与启动
 
-无需 pip install — 所有依赖已内置在 `lib/` 目录中。
+Houdini Agent 现在是**独立桌面程序**，通过 **Bridge** 连接正在运行的 Houdini（不再在 Houdini 进程内运行）。
 
-1. Clone 或下载本仓库
-2. 放置到 Houdini 可访问的任意位置
+1. 从 [GitHub Releases](https://github.com/Kazama-Suichiku/Houdini-Agent/releases/latest) 下载预构建的「Houdini Agent」，解压后双击运行。
+2. 程序自动探测本机 Houdini（20.5+）并将**桥接 package** 安装到 Houdini 的 `packages/` 目录，然后提示「打开 Houdini」。
+3. Houdini 启动时会自动拉起 **bridge server**；外置程序通过 **bridge client** 自动连接。
+4. 在程序内点「**API Key…**」保存到本机，或设置环境变量（见下）。
 
-### 在 Houdini 中启动
+所有 `hou.*` 调用都经 Bridge 在 Houdini 主线程执行，保证线程安全。
 
-```python
-import sys
-sys.path.insert(0, r"C:\path\to\Houdini-Agent")
-import launcher
-launcher.show_tool()
-```
-
-也可以将此代码添加到 **Shelf Tool**（工具架按钮），实现一键启动。
+> **进阶 / 开发者** — 也可在 Houdini 内直接运行（自动跑内嵌界面）：
+> ```python
+> import sys
+> sys.path.insert(0, r"C:\path\to\Houdini-Agent")
+> import launcher
+> launcher.show_tool()
+> ```
+> 或用 `build_houdini_agent_exe.ps1` 自行构建独立程序（PyInstaller）。
 
 ### 配置 API Key
 
@@ -365,19 +390,36 @@ launcher.show_tool()
 └───────────────────────────────────────────────────────┘
 ```
 
-### Mixin 架构
+### QML 前端架构
 
-`AITab` 是核心组件，由五个聚焦的 Mixin 组合而成：
+界面是 **QML/Qt Quick**，由一层很薄的 Python 驱动。Agent 循环跑在后台线程；Houdini 调用统一编组回 Qt 主线程执行。
 
-| Mixin | 模块 | 职责 |
-|-------|------|------|
-| `HeaderMixin` | `ui/header.py` | 顶部设置栏 — 提供商/模型选择器、Agent/Web/Think 开关 |
-| `InputAreaMixin` | `ui/input_area.py` | 输入区域、发送/停止按钮、模式切换、@提及自动补全、确认模式 UI |
-| `ChatViewMixin` | `ui/chat_view.py` | 对话显示、消息插入、滚动控制、Toast 通知 |
-| `AgentRunnerMixin` | `core/agent_runner.py` | Agent 循环辅助、自动标题生成、确认模式拦截、工具分类常量 |
-| `SessionManagerMixin` | `core/session_manager.py` | 多会话创建/切换/关闭、会话标签栏、状态保存/恢复 |
+| 组件 | 模块 | 职责 |
+|------|------|------|
+| `Controller` | `ui_qml/controller.py` | 暴露给 QML 的核心 `QObject` — 持有 UI 状态、驱动 Agent 循环、把回调以 Qt 信号流式推送（`_sigThink`、`_sigContent`、`_sigToolCall`、`_sigToolResult`、`_sigNodeOp`、`_sigPlan`、`_sigMeshyProgress`、`_sigConcept`、`_sigLibrary`、`_sigShowBgGallery` 等），并编排 Meshy 画廊、后台任务和云资产库 |
+| `ChatModel` | `ui_qml/controller.py` | `QAbstractListModel`，承载对话行（user / ai / plan），供 `ChatView.qml` 消费 |
+| `AgentSession` | `ui_qml/agent_session.py` | UI 无关的后端，封装 `AIClient` + `HoudiniMCP`；一个 `run()` 用调用方回调驱动 `agent_loop_auto()`（Houdini 内嵌模式） |
+| `BridgeAgentSession` | `ui_qml/bridge_session.py` | 独立模式后端 — 接口相同，但把 `hou.*` 工具调用经 `BridgeClient` 路由到正在运行的 Houdini |
+| `host.py` / `app.py` / `external_app.py` | `ui_qml/` | 分别是 QQuickWidget 宿主（注册字体）、Houdini 内启动器、独立启动器 |
 
-每个 Mixin 通过 `self` 访问 `AITab` 状态，实现职责分离同时共享状态。
+QML 组件位于 `ui_qml/qml/HAgent/`；`Theme.qml` 集中管理 Mono Editorial 调色板、字体和缩放。
+
+### Bridge（独立程序 ⇄ Houdini）
+
+从 v2.0 起程序运行在 Houdini **进程之外**，通过一个小型 localhost 套接字桥与之通信：
+
+- **`bridge/server.py`** — 跑在 Houdini 内（由安装的 bridge package 自动拉起）。接收 JSON-lines 请求，把 `execute_tool` 调用分发到 Houdini **主线程**，并自动注册 Meshy 的 Houdini handler（`import_3d_asset`、`export_node_to_glb`）。
+- **`bridge/client.py`** — 独立程序使用的 `BridgeClient`：`execute_tool(name, args)`、场景上下文、撤销，全部走 bridge 端口。
+
+这样既保证所有 `hou.*` 访问都在主线程安全执行，又让 UI 跑在自己的进程里（程序可以自行启动、探测、甚至帮你拉起 Houdini）。
+
+### 用量埋点（匿名、可关闭）
+
+为统计有多少 Meshy 用量是通过 Houdini Agent 产生的，每个**成功**的计费类 Meshy 任务会记录一条匿名事件（`meshy/telemetry.py`）：
+
+- **记什么** — 随机安装 id（存在 `houdini_ai.ini` 的 UUID）、时间戳、程序版本、任务类型、任务 id、AI 模型、模式、**消耗的 credits**、以及提示词。不含账号或个人身份。
+- **怎么传** — 事件先写到 `cache/meshy/` 下的本地 JSONL 暂存，再由后台线程分批 POST（指数退避重试）到 `https://houdini-agent.com/api/telemetry`。离线事件跨重启保留、稍后补传；按事件 id 去重。
+- **关闭** — 设置 `HAGENT_TELEMETRY_OFF=1`，或在 `houdini_ai.ini` 里置 `telemetry_optout`。后端（`deploy/telemetry_server/`）是纯标准库 `http.server` + `sqlite3`，挂在 nginx 后，提供 `POST /api/telemetry` 和 `GET /api/telemetry/stats`。
 
 ### Plan 模式
 
@@ -445,7 +487,7 @@ Agent 通过插件架构支持外部社区扩展：
 - **UI 规则** — 通过规则编辑器对话框创建和管理，存储在 `config/user_rules.json`，可单独启用/禁用
 - **文件规则** — 将 `.md` 和 `.txt` 文件放在 `rules/` 目录下即自动加载（以 `_` 开头的文件视为草稿，不加载）
 - **Prompt 注入** — 所有启用的规则合并后用 `<user_rules>` 标签包裹注入系统提示词
-- 规则编辑器采用暖卡其色调主题，与主 UI 风格一致，带列表/编辑器分栏布局和空状态引导
+- 规则编辑器位于应用内管理面板（`ManagementPanel.qml`），带列表/编辑器分栏布局和空状态引导
 
 ### 上下文管理
 
@@ -482,7 +524,7 @@ Agent 通过插件架构支持外部社区扩展：
 ### 国际化（i18n）
 
 - **双语支持** — 完整的中英文界面，`tr()` 翻译函数
-- **动态切换** — 通过溢出菜单 → Language 切换语言；所有 UI 元素、工具提示和系统提示词即时更新
+- **动态切换** — 在设置菜单中切换语言；所有 UI 元素、工具提示和系统提示词即时更新
 - **持久化偏好** — 语言选择通过 `QSettings` 保存，启动时自动恢复
 - **系统提示词适配** — AI 回复语言通过系统提示词规则强制，随 UI 语言自动调整
 
@@ -549,8 +591,8 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ### Agent 不调用工具
 - 确认所选提供商支持 Function Calling
-- DeepSeek、GLM-4.7、OpenAI、拼好饭（Claude）均支持工具调用
-- Ollama 需要支持工具调用的模型（如 `qwen2.5`）
+- DeepSeek、GLM-4.7、OpenAI、拼好饭（Claude）、OpenRouter 均支持工具调用
+- 自定义端点需指向支持工具调用的模型
 
 ### 节点操作失败
 - 确认在 Houdini 内运行（非独立 Python）
@@ -570,6 +612,8 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **v2.0.0** — **独立程序 + QML 重写 + Meshy 全家桶**：Houdini Agent 变为**独立桌面程序**，通过全新的**套接字 Bridge**（`bridge/client.py` + `bridge/server.py`）连接正在运行的 Houdini —— 不再嵌入 Houdini 进程，所有 `hou.*` 调用仍保持主线程安全。前端**完全用 QML/Qt Quick 重写**（`houdini_agent/ui_qml/`），Mono Editorial 设计风格，由精简的 `Controller`（QObject）驱动 Agent 循环并把状态流式推送给模块化 QML 组件库，外加 `ChatModel`（`QAbstractListModel`）。**Meshy 工具扩到 11 个** —— 新增 `meshy_text_to_image`（并行概念图画廊，单一/多方向）、`meshy_image_to_image`（2D 图生图 / 二次编辑，自动取附带的图）、`meshy_task_status`（查询后台任务）；所有交互类工具都弹出 `ConceptGalleryCard`（多选、改提示词、重新生成、升级成 3D）。**后台任务** —— 任何耗时生成都可转入后台，结果作为新消息自动送回，Agent 空闲时画廊自动弹出。**云资产库** —— 侧滑抽屉聚合你在 Meshy 的历史生成（带缩略图、一键导入），并显示账号/额度。**匿名用量埋点**（可关闭）把每个任务消耗的 credits 上报到纯标准库后端（`deploy/telemetry_server/`）。新增品牌化应用/安装包图标；PyInstaller + Inno Setup 打包。
+- **v1.6.0** — **Meshy 3D 生成集成**：新增自包含 `houdini_agent/meshy/` 包，接入 Meshy 的文生/图生 3D、重打材质、重拓扑，外加 `import_3d_asset`（GLB 导入 + 用 PBR 贴图自动搭 Principled Shader）与 `export_node_to_glb`。网络调用跑在 App 后台线程；Houdini I/O 跑在主线程（in-process 或经 bridge）。生成类工具消耗 credits，受执行前确认门控。工具通过 `ToolRegistry` 的 handler 自注册——核心文件（`agent_session`/`bridge_session`/`controller`/`bridge.server`）只留最小引用钩子。新增 `MeshyCard` QML 卡片实时显示生成进度；应用内填 key 走 ⋯ → Meshy API Key…（`MESHY_API_KEY`）。
 - **v1.5.5** — **DeepSeek V4 API 适配 + JSON Output**：新增 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，支持显式 `thinking` 参数和 `reasoning_effort`。旧模型（`deepseek-chat` / `deepseek-reasoner`）保留兼容（2026/07/24 废弃）。默认模型迁移至 `deepseek-v4-flash`。`chat_stream()` / `chat()` 新增 `response_format` 参数；反思模块使用 `json_object` 模式确保可靠的 JSON 输出。V4 模型定价、上下文限制和功能配置已添加。
 - **v1.5.4** — **长期记忆系统全局开关**：新增记忆系统启用/禁用开关。多项修复。
 - **v1.5.3** — **记忆管理器对话框**：新增 `MemoryManagerDialog` UI，支持浏览、编辑、删除和导出语义记忆。支持 `/memories` 命令。

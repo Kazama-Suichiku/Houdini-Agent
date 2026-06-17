@@ -175,7 +175,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _update_stats(self):
         """更新 header 统计标签"""
         try:
-            from ..utils.hooks import list_plugins
+            from ...utils.hooks import list_plugins
             plugins = list_plugins()
             enabled = sum(1 for p in plugins if p.get("_enabled"))
             self._stats_label.setText(f"{enabled}/{len(plugins)} {tr('plugin.stats_active')}")
@@ -191,7 +191,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
                 item.widget().deleteLater()
 
         try:
-            from ..utils.hooks import list_plugins
+            from ...utils.hooks import list_plugins
             plugins = list_plugins()
         except Exception as e:
             lbl = QtWidgets.QLabel(f"⚠ {tr('plugin.load_error')}: {e}")
@@ -320,7 +320,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _on_toggle(self, plugin_name: str, enabled: bool):
         """启用/禁用插件"""
         try:
-            from ..utils.hooks import enable_plugin, disable_plugin
+            from ...utils.hooks import enable_plugin, disable_plugin
             if enabled:
                 enable_plugin(plugin_name)
             else:
@@ -332,7 +332,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _on_reload(self, plugin_name: str):
         """重载单个插件"""
         try:
-            from ..utils.hooks import reload_plugin
+            from ...utils.hooks import reload_plugin
             reload_plugin(plugin_name)
             self._refresh_list()
             self.pluginStateChanged.emit()
@@ -342,7 +342,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _reload_all(self):
         """重载全部插件"""
         try:
-            from ..utils.hooks import reload_all_plugins
+            from ...utils.hooks import reload_all_plugins
             reload_all_plugins()
             self._refresh_list()
             # 如果当前在 Tools/Skills tab, 也刷新
@@ -358,7 +358,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _open_plugins_dir(self):
         """打开 plugins 目录"""
         try:
-            from ..utils.hooks import get_plugins_dir
+            from ...utils.hooks import get_plugins_dir
             import os, subprocess
             import sys as _sys
             plugins_dir = get_plugins_dir()
@@ -406,7 +406,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
                 item.widget().deleteLater()
 
         try:
-            from ..utils.tool_registry import get_tool_registry
+            from ...utils.tool_registry import get_tool_registry
             reg = get_tool_registry()
             tools = reg.list_all()
         except Exception as e:
@@ -524,7 +524,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
     def _on_tool_toggle(self, tool_name: str, enabled: bool):
         """启用/禁用工具"""
         try:
-            from ..utils.tool_registry import get_tool_registry
+            from ...utils.tool_registry import get_tool_registry
             reg = get_tool_registry()
             reg.set_enabled(tool_name, enabled)
             reg.save_disabled_to_config()
@@ -541,7 +541,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
                 item.widget().deleteLater()
 
         try:
-            from ..skills import list_skills
+            from ...skills import list_skills
             skills = list_skills()
         except Exception as e:
             lbl = QtWidgets.QLabel(f"⚠ {tr('plugin.load_error')}: {e}")
@@ -579,7 +579,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
 
         # 加载用户 Skill 目录
         try:
-            from ..skills import _get_user_skill_dir
+            from ...skills import _get_user_skill_dir
             user_dir = _get_user_skill_dir()
             if user_dir:
                 self._skill_dir_edit.setText(str(user_dir))
@@ -637,7 +637,7 @@ class PluginManagerDialog(QtWidgets.QDialog):
         tool_name = f"skill:{name}"
         enabled = True
         try:
-            from ..utils.tool_registry import get_tool_registry
+            from ...utils.tool_registry import get_tool_registry
             enabled = get_tool_registry().is_enabled(tool_name)
         except Exception:
             pass
@@ -725,7 +725,7 @@ class PluginSettingsPage(QtWidgets.QDialog):
 
         # 读取当前设置值
         try:
-            from ..utils.hooks import get_plugin_setting
+            from ...utils.hooks import get_plugin_setting
         except ImportError:
             get_plugin_setting = lambda pn, k, d=None: d
 
@@ -795,7 +795,7 @@ class PluginSettingsPage(QtWidgets.QDialog):
     def _save(self):
         """保存设置"""
         try:
-            from ..utils.hooks import set_plugin_setting
+            from ...utils.hooks import set_plugin_setting
         except ImportError:
             self.reject()
             return
