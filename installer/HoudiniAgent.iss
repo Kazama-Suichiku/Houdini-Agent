@@ -19,6 +19,12 @@ AppId={{B7E4B9C2-3A6D-4F18-9C2E-1D5A7F0E9C44}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
+; 写入安装包 exe 的 Windows 版本信息（资源管理器「文件版本/产品版本」列）
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductName={#AppName}
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#AppName} Setup
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 ; 默认装到 Program Files\Houdini Agent；用户可在向导里改目录
