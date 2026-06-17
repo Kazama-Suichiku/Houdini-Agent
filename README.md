@@ -37,7 +37,6 @@ User request → AI plans → call tools → inspect results → call more tools
 | **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-chat`*, `deepseek-reasoner`* | V4: explicit thinking param + reasoning_effort; *old models deprecated 2026/07/24 |
 | **GLM (Zhipu AI)** | `glm-4.7` | Stable in China, native reasoning & tool calling |
 | **OpenAI** | `gpt-5.2`, `gpt-5.3-codex` | Powerful, full Function Calling & Vision support |
-| **Ollama** (local) | `qwen2.5:14b`, any local model | Privacy-first, auto-detects available models |
 | **Duojie** (relay) | `claude-opus-4-6-gemini`, `claude-opus-4-6-max`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `gemini-3-flash`, `gemini-3.1-pro`, `glm-5-turbo`, `glm-5.1`, `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | Claude, Gemini, GLM, MiniMax via relay endpoint |
 | **OpenRouter** | `claude-sonnet-4.6`, `claude-opus-4.6`, `gpt-5.2`, `gemini-2.5-pro`, `deepseek-r1`, `grok-4.1-fast`, `llama-4-maverick`, `qwen3-235b` + 8 more | 16 models from all major providers via single API key |
 | **Custom** | User-configurable | Any OpenAI-compatible endpoint (LM Studio, vLLM, etc.); configurable URL, API Key, model name, context limit, vision & FC support |
@@ -111,6 +110,24 @@ User request → AI plans → call tools → inspect results → call more tools
 | Tool | Description |
 |------|-------------|
 | `capture_viewport` | Screenshot the 3D viewport — returns base64 JPEG for vision models, or saves to file; configurable resolution (up to 1920×1080) |
+
+### 3D Generation (Meshy)
+
+Self-contained integration (`houdini_agent/meshy/`) wrapping the [Meshy](https://meshy.ai) generative-3D API. Generation calls run on the app's background thread (never inside Houdini); the resulting GLB + PBR maps are imported into Houdini and wired into a Principled Shader on the main thread. Generation tools consume Meshy credits and are gated by **confirm mode**. Key via `MESHY_API_KEY` (env or `houdini_ai.ini`), or the ⋯ menu → **Meshy API Key…**.
+
+| Tool | Description |
+|------|-------------|
+| `meshy_text_to_3d` | Text → textured 3D model (auto preview→refine), downloads GLB + PBR maps to cache |
+| `meshy_image_to_3d` | Image (URL / data URI / local path / attached concept image) → textured 3D model |
+| `meshy_text_to_image` | Text → N 2D concept/reference images in parallel (gallery: multi-select, editable prompt + regenerate, keep images or escalate selected to 3D) |
+| `meshy_concept_to_3d` | Concept-driven, human-in-the-loop: generates N concept images in parallel → gallery card (multi-select + editable prompt + regenerate) → image-to-3d for the chosen concepts (native `input_task_id` chaining) |
+| `meshy_retexture` | Re-texture an existing model with a PBR set from a text/image prompt — pairs with `export_node_to_glb` to retexture geometry already in the scene |
+| `meshy_remesh` | Remesh / re-topologize (quad/triangle, target polycount) |
+| `meshy_balance` | Query remaining Meshy credits (free) |
+| `import_3d_asset` | Import a GLB/FBX/OBJ into `/obj` (File SOP) and build + assign a Principled Shader from the PBR maps |
+| `export_node_to_glb` | Export a scene node's geometry to GLB (feeds `meshy_retexture`) |
+
+The value is in the seam: Meshy generates the **seed asset**, Houdini procedurally **amplifies** it (scatter, copy-to-points, fracture, terrain). A live progress card shows generation status; results land as an importable asset the agent chains into the scene.
 
 ### Code Execution
 
@@ -234,6 +251,12 @@ Houdini-Agent/
 │   └── common_utils.py             # Path & config helpers
 ├── trainData/                       # Exported training data (JSONL)
 └── houdini_agent/                   # Main module
+    ├── meshy/                      # Meshy 3D-generation integration (self-contained, self-registering)
+    │   ├── client.py              # MeshyClient — REST (create/poll/download/balance)
+    │   ├── config.py              # MESHY_API_KEY + cache dir
+    │   ├── schemas.py             # tool schemas + tool-name sets
+    │   ├── network_ops.py         # background-thread orchestration (gen/retexture/remesh)
+    │   └── houdini_io.py          # main-thread import + Principled Shader + GLB export
     ├── main.py                     # Module entry & window management
     ├── shelf_tool.py               # Houdini shelf tool integration
     ├── qt_compat.py                # PySide2/PySide6 compatibility layer
@@ -294,27 +317,28 @@ Houdini-Agent/
 ### Requirements
 
 - **Houdini 20.5+** (or 21+)
-- **Python 3.9+** (bundled with Houdini)
-- **PySide2 or PySide6** (bundled with Houdini — PySide2 for Houdini ≤20.5, PySide6 for Houdini 21+)
-- **Windows / macOS** (both tested), Linux support possible
+- **Windows / macOS / Linux**
+- **Self-contained runtime** — the standalone app bundles Python and PySide6; no Python install, no pip
 
-### Installation
+### Install & launch
 
-No pip install needed — all dependencies are bundled in the `lib/` directory.
+Houdini Agent is now a **standalone desktop app** that connects to a running Houdini over a **bridge** (it no longer runs inside the Houdini process).
 
-1. Clone or download this repository
-2. Place it anywhere accessible from Houdini
+1. Download the prebuilt Houdini Agent from [GitHub Releases](https://github.com/Kazama-Suichiku/Houdini-Agent/releases/latest), unzip and run it.
+2. The app auto-detects local Houdini (20.5+), installs the **bridge package** into Houdini's `packages/` directory, and offers "Open Houdini".
+3. Houdini auto-starts a **bridge server** on launch; the app connects via its **bridge client** automatically.
+4. Click **"API Key…"** in-app to save locally, or set an environment variable (below).
 
-### Launch in Houdini
+All `hou.*` calls run on Houdini's main thread over the bridge, keeping things thread-safe.
 
-```python
-import sys
-sys.path.insert(0, r"C:\path\to\Houdini-Agent")
-import launcher
-launcher.show_tool()
-```
-
-Or add this to a **Shelf Tool** for one-click access.
+> **Advanced / developers** — you can still run it inside Houdini directly (embedded UI):
+> ```python
+> import sys
+> sys.path.insert(0, r"C:\path\to\Houdini-Agent")
+> import launcher
+> launcher.show_tool()
+> ```
+> Or build the standalone app yourself with `build_houdini_agent_exe.ps1` (PyInstaller).
 
 ### Configure API Keys
 
@@ -546,8 +570,8 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ### Agent Not Calling Tools
 - Ensure the selected provider supports Function Calling
-- DeepSeek, GLM-4.7, OpenAI, and Duojie (Claude) all support tool calling
-- Ollama requires models with tool-calling support (e.g. `qwen2.5`)
+- DeepSeek, GLM-4.7, OpenAI, Duojie (Claude) and OpenRouter all support tool calling
+- A custom endpoint must point at a model with tool-calling support
 
 ### Node Operations Fail
 - Confirm you are running inside Houdini (not standalone Python)
@@ -567,6 +591,7 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
+- **v1.6.0** — **Meshy 3D generation integration**: New self-contained `houdini_agent/meshy/` package adding text/image→3D, retexture, and remesh via the Meshy API, plus `import_3d_asset` (GLB import + auto Principled Shader from PBR maps) and `export_node_to_glb`. Network calls run app-side on the background thread; Houdini I/O runs on the main thread (in-process or over the bridge). Generation tools consume credits and are gated by confirm mode. Tools self-register via `ToolRegistry` handlers — core files (`agent_session`/`bridge_session`/`controller`/`bridge.server`) carry only minimal reference hooks. New `MeshyCard` QML block streams live generation progress; in-app key entry via ⋯ → Meshy API Key… (`MESHY_API_KEY`).
 - **v1.5.5** — **DeepSeek V4 API adaptation + JSON Output**: New `deepseek-v4-flash` / `deepseek-v4-pro` models with explicit `thinking` parameter and `reasoning_effort` support. Old models (`deepseek-chat` / `deepseek-reasoner`) retained for compatibility (deprecated 2026/07/24). Default model migrated to `deepseek-v4-flash`. `chat_stream()` / `chat()` gain `response_format` parameter; reflection module uses `json_object` mode for reliable JSON output. V4 model pricing, context limits, and feature configs added.
 - **v1.5.4** — **Long-term memory global toggle**: Added enable/disable switch for the entire memory system. Multiple fixes.
 - **v1.5.3** — **Memory Manager dialog**: New `MemoryManagerDialog` UI for browsing, editing, deleting, and exporting semantic memories. `/memories` command support.

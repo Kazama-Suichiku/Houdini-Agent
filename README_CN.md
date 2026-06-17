@@ -37,7 +37,6 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | **DeepSeek** | `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-chat`*、`deepseek-reasoner`* | V4：显式 thinking 参数 + reasoning_effort；*旧模型 2026/07/24 废弃 |
 | **智谱 GLM** | `glm-4.7` | 国内访问稳定，原生推理与工具调用 |
 | **OpenAI** | `gpt-5.2`、`gpt-5.3-codex` | 能力强大，完整 Function Calling 与 Vision 支持 |
-| **Ollama**（本地） | `qwen2.5:14b`、任意本地模型 | 隐私优先，自动检测可用模型 |
 | **拼好饭**（中转） | `claude-opus-4-6-gemini`、`claude-opus-4-6-max`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`gemini-3-flash`、`gemini-3.1-pro`、`glm-5-turbo`、`glm-5.1`、`MiniMax-M2.7`、`MiniMax-M2.7-highspeed` | 通过中转接口使用 Claude、Gemini、GLM、MiniMax |
 | **OpenRouter** | `claude-sonnet-4.6`、`claude-opus-4.6`、`gpt-5.2`、`gemini-2.5-pro`、`deepseek-r1`、`grok-4.1-fast`、`llama-4-maverick`、`qwen3-235b` 等 16 个 | 通过单一 API Key 使用所有主流提供商的模型 |
 | **自定义** | 用户可配置 | 任何 OpenAI 兼容端点（LM Studio、vLLM 等）；可配置 URL、API Key、模型名、上下文限制、Vision 和 FC 支持 |
@@ -111,6 +110,24 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | 工具 | 说明 |
 |------|------|
 | `capture_viewport` | 截取 3D 视口截图 — 返回 base64 JPEG 给视觉模型，或保存到文件；可配置分辨率（最高 1920×1080） |
+
+### 3D 生成（Meshy）
+
+自包含集成（`houdini_agent/meshy/`），封装 [Meshy](https://meshy.ai) 生成式 3D API。生成调用跑在 App 后台线程（绝不进 Houdini）；得到的 GLB + PBR 贴图在主线程导入 Houdini 并自动接成 Principled Shader。生成类工具消耗 Meshy credits，受**执行前确认**门控。密钥用 `MESHY_API_KEY`（环境变量或 `houdini_ai.ini`），或 ⋯ 菜单 →**Meshy API Key…**。
+
+| 工具 | 描述 |
+|------|------|
+| `meshy_text_to_3d` | 文字 → 带贴图 3D 模型（自动 preview→refine），下载 GLB + PBR 贴图到缓存 |
+| `meshy_image_to_3d` | 图片（URL / data URI / 本地路径 / 对话附图）→ 带贴图 3D 模型 |
+| `meshy_text_to_image` | 文字 → 并行生成 N 张 2D 概念图/参考图（画廊：多选、可改提示词重新生成、可只保留图片或把选中的升级成 3D） |
+| `meshy_concept_to_3d` | 概念图驱动、人在环：并行生成 N 张概念图 → 画廊卡片（多选 + 可改提示词 + 重新生成）→ 对选中的图分别做 image-to-3d（`input_task_id` 原生串接） |
+| `meshy_retexture` | 给已有模型重打 PBR 材质（文字/图片提示）— 配合 `export_node_to_glb` 可给场景里已有几何重打材质 |
+| `meshy_remesh` | 重拓扑 / 改面数（quad/triangle，目标面数） |
+| `meshy_balance` | 查询 Meshy 剩余 credits（免费） |
+| `import_3d_asset` | 把 GLB/FBX/OBJ 导入 `/obj`（File SOP），并用 PBR 贴图搭建并指派 Principled Shader |
+| `export_node_to_glb` | 把场景节点几何导出成 GLB（喂给 `meshy_retexture`） |
+
+价值在接缝处：Meshy 生成**种子资产**，Houdini 程序化**放大**它（scatter、copy-to-points、碎裂、地形）。生成过程有实时进度卡片；结果落地为可导入资产，由 agent 串进场景。
 
 ### 代码执行
 
@@ -234,6 +251,12 @@ Houdini-Agent/
 │   └── common_utils.py             # 路径与配置工具
 ├── trainData/                       # 导出的训练数据（JSONL）
 └── houdini_agent/                   # 主模块
+    ├── meshy/                      # Meshy 3D 生成集成（自包含、自注册）
+    │   ├── client.py              # MeshyClient — REST（创建/轮询/下载/余额）
+    │   ├── config.py              # MESHY_API_KEY + 缓存目录
+    │   ├── schemas.py             # 工具 schema + 工具名集合
+    │   ├── network_ops.py         # 后台线程编排（生成/重打材质/重拓扑）
+    │   └── houdini_io.py          # 主线程导入 + Principled Shader + GLB 导出
     ├── main.py                     # 模块入口与窗口管理
     ├── shelf_tool.py               # Houdini 工具架集成
     ├── qt_compat.py                # PySide2/PySide6 兼容层
@@ -294,27 +317,28 @@ Houdini-Agent/
 ### 环境要求
 
 - **Houdini 20.5+**（或 21+）
-- **Python 3.9+**（Houdini 自带）
-- **PySide2 或 PySide6**（Houdini 自带 — Houdini ≤20.5 为 PySide2，Houdini 21+ 为 PySide6）
-- **Windows / macOS**（均已测试），Linux 理论上可支持
+- **Windows / macOS / Linux**
+- **自带运行环境** — 独立程序内置 Python 与 PySide6，无需安装 Python，也无需 pip
 
-### 安装
+### 安装与启动
 
-无需 pip install — 所有依赖已内置在 `lib/` 目录中。
+Houdini Agent 现在是**独立桌面程序**，通过 **Bridge** 连接正在运行的 Houdini（不再在 Houdini 进程内运行）。
 
-1. Clone 或下载本仓库
-2. 放置到 Houdini 可访问的任意位置
+1. 从 [GitHub Releases](https://github.com/Kazama-Suichiku/Houdini-Agent/releases/latest) 下载预构建的「Houdini Agent」，解压后双击运行。
+2. 程序自动探测本机 Houdini（20.5+）并将**桥接 package** 安装到 Houdini 的 `packages/` 目录，然后提示「打开 Houdini」。
+3. Houdini 启动时会自动拉起 **bridge server**；外置程序通过 **bridge client** 自动连接。
+4. 在程序内点「**API Key…**」保存到本机，或设置环境变量（见下）。
 
-### 在 Houdini 中启动
+所有 `hou.*` 调用都经 Bridge 在 Houdini 主线程执行，保证线程安全。
 
-```python
-import sys
-sys.path.insert(0, r"C:\path\to\Houdini-Agent")
-import launcher
-launcher.show_tool()
-```
-
-也可以将此代码添加到 **Shelf Tool**（工具架按钮），实现一键启动。
+> **进阶 / 开发者** — 也可在 Houdini 内直接运行（自动跑内嵌界面）：
+> ```python
+> import sys
+> sys.path.insert(0, r"C:\path\to\Houdini-Agent")
+> import launcher
+> launcher.show_tool()
+> ```
+> 或用 `build_houdini_agent_exe.ps1` 自行构建独立程序（PyInstaller）。
 
 ### 配置 API Key
 
@@ -549,8 +573,8 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ### Agent 不调用工具
 - 确认所选提供商支持 Function Calling
-- DeepSeek、GLM-4.7、OpenAI、拼好饭（Claude）均支持工具调用
-- Ollama 需要支持工具调用的模型（如 `qwen2.5`）
+- DeepSeek、GLM-4.7、OpenAI、拼好饭（Claude）、OpenRouter 均支持工具调用
+- 自定义端点需指向支持工具调用的模型
 
 ### 节点操作失败
 - 确认在 Houdini 内运行（非独立 Python）
@@ -570,6 +594,7 @@ Agent：[create_wrangle_node: vex_code="@Cd = set(rand(@ptnum), rand(@ptnum*13.3
 
 ## 版本历史
 
+- **v1.6.0** — **Meshy 3D 生成集成**：新增自包含 `houdini_agent/meshy/` 包，接入 Meshy 的文生/图生 3D、重打材质、重拓扑，外加 `import_3d_asset`（GLB 导入 + 用 PBR 贴图自动搭 Principled Shader）与 `export_node_to_glb`。网络调用跑在 App 后台线程；Houdini I/O 跑在主线程（in-process 或经 bridge）。生成类工具消耗 credits，受执行前确认门控。工具通过 `ToolRegistry` 的 handler 自注册——核心文件（`agent_session`/`bridge_session`/`controller`/`bridge.server`）只留最小引用钩子。新增 `MeshyCard` QML 卡片实时显示生成进度；应用内填 key 走 ⋯ → Meshy API Key…（`MESHY_API_KEY`）。
 - **v1.5.5** — **DeepSeek V4 API 适配 + JSON Output**：新增 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，支持显式 `thinking` 参数和 `reasoning_effort`。旧模型（`deepseek-chat` / `deepseek-reasoner`）保留兼容（2026/07/24 废弃）。默认模型迁移至 `deepseek-v4-flash`。`chat_stream()` / `chat()` 新增 `response_format` 参数；反思模块使用 `json_object` 模式确保可靠的 JSON 输出。V4 模型定价、上下文限制和功能配置已添加。
 - **v1.5.4** — **长期记忆系统全局开关**：新增记忆系统启用/禁用开关。多项修复。
 - **v1.5.3** — **记忆管理器对话框**：新增 `MemoryManagerDialog` UI，支持浏览、编辑、删除和导出语义记忆。支持 `/memories` 命令。

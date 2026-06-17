@@ -29,7 +29,6 @@ class HeaderMixin:
         # 提供商
         self.provider_combo = QtWidgets.QComboBox()
         self.provider_combo.setObjectName("providerCombo")
-        self.provider_combo.addItem("Ollama", 'ollama')
         self.provider_combo.addItem("DeepSeek", 'deepseek')
         self.provider_combo.addItem("GLM", 'glm')
         self.provider_combo.addItem("OpenAI", 'openai')
@@ -54,7 +53,6 @@ class HeaderMixin:
         self.model_combo = QtWidgets.QComboBox()
         self.model_combo.setObjectName("modelCombo")
         self._model_map = {
-            'ollama': ['qwen2.5:14b', 'qwen2.5:7b', 'llama3:8b', 'mistral:7b'],
             'deepseek': ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
             'glm': ['glm-4.7'],
             'openai': ['gpt-5.2', 'gpt-5.3-codex'],
@@ -102,7 +100,6 @@ class HeaderMixin:
         }
         self._load_custom_provider_config()
         self._model_context_limits = {
-            'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
             'deepseek-v4-flash': 1048576, 'deepseek-v4-pro': 1048576,
             'deepseek-chat': 1048576, 'deepseek-reasoner': 1048576,
             'glm-4.7': 200000,
@@ -139,11 +136,6 @@ class HeaderMixin:
         }
         # 模型特性配置
         self._model_features = {
-            # Ollama
-            'qwen2.5:14b':               {'supports_prompt_caching': True, 'supports_vision': False},
-            'qwen2.5:7b':                {'supports_prompt_caching': True, 'supports_vision': False},
-            'llama3:8b':                  {'supports_prompt_caching': True, 'supports_vision': False},
-            'mistral:7b':                 {'supports_prompt_caching': True, 'supports_vision': False},
             # DeepSeek
             'deepseek-v4-flash':          {'supports_prompt_caching': True, 'supports_vision': False},
             'deepseek-v4-pro':            {'supports_prompt_caching': True, 'supports_vision': False},
@@ -186,7 +178,7 @@ class HeaderMixin:
             'qwen/qwen3-235b-a22b':               {'supports_prompt_caching': True, 'supports_vision': False},
             'mistralai/mistral-large-2512':       {'supports_prompt_caching': True, 'supports_vision': True},
         }
-        self._refresh_models('ollama')
+        self._refresh_models('deepseek')
         self.model_combo.setMinimumWidth(100)
         self.model_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.model_combo.setEditable(False)  # 默认不可编辑，Custom 时切换为可编辑

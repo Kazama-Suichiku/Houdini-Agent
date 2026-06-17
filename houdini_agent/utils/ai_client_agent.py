@@ -31,6 +31,72 @@ class AIClientAgentMixin:
         'create_node', 'create_nodes_batch', 'connect_nodes',
         'set_node_parameter', 'create_wrangle_node',
     })
+    _FAILED_TOOL_REPEAT_LIMIT = 2
+
+    @staticmethod
+    def _tool_signature(tool_name: str, arguments: dict) -> str:
+        try:
+            arg_s = json.dumps(arguments or {}, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            arg_s = str(arguments or {})
+        return f"{tool_name}:{arg_s}"
+
+    @classmethod
+    def _repeat_failed_tool_result(cls, tool_name: str, arguments: dict, count: int) -> dict:
+        return {
+            "success": False,
+            "error": (
+                "[重复失败保护] 这个工具已经用完全相同参数失败 %d 次，系统已阻止再次执行。\n"
+                "请不要重复相同调用。你必须先根据上一次错误修改参数/代码，换用其他工具，"
+                "或者向用户说明当前阻塞原因。\n"
+                "工具: %s\n参数: %s"
+            ) % (count, tool_name, json.dumps(arguments or {}, ensure_ascii=False, default=str)[:1200])
+        }
+
+    @staticmethod
+    def _is_tool_success(result: Any) -> bool:
+        return isinstance(result, dict) and bool(result.get("success"))
+
+    @staticmethod
+    def _looks_like_raw_tool_marker(text: str) -> bool:
+        t = text or ""
+        return any(x in t for x in (
+            "<|tool_calls_section_begin|>", "<|tool_call_begin|>",
+            "functions.", "\"tool_calls\"", "'tool_calls'",
+        ))
+
+    def _fallback_summary_from_tools(self, tool_calls_history: list) -> str:
+        if not tool_calls_history:
+            return "执行已停止，但没有生成最终总结。"
+        ok = 0
+        fail = 0
+        recent = []
+        for h in tool_calls_history[-8:]:
+            name = h.get("tool_name", "tool")
+            r = h.get("result", {})
+            success = self._is_tool_success(r)
+            ok += 1 if success else 0
+            fail += 0 if success else 1
+            detail = ""
+            if isinstance(r, dict):
+                detail = str(r.get("result") or r.get("error") or "")[:160]
+            recent.append("- [%s] %s: %s" % ("ok" if success else "failed", name, detail))
+        return (
+            "工具执行已结束，但模型没有生成正常总结。\n\n"
+            "最近工具结果：\n%s\n\n"
+            "成功 %d 次，失败 %d 次。若仍需继续，请基于上面的失败原因修改方案，不要重复相同失败调用。"
+        ) % ("\n".join(recent), ok, fail)
+
+    def _sanitize_final_text(self, text: str, tool_calls_history: Optional[list] = None) -> str:
+        out = text or ""
+        for _pat in getattr(self, "_RE_CLEAN_PATTERNS", []):
+            out = _pat.sub("", out)
+        out = re.sub(r"<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>", "", out)
+        out = re.sub(r"<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>", "", out)
+        out = out.strip()
+        if not out or self._looks_like_raw_tool_marker(out):
+            return self._fallback_summary_from_tools(tool_calls_history or [])
+        return out
 
     # ============================================================
     # Agent Loop（流式版本）
@@ -121,6 +187,7 @@ class AIClientAgentMixin:
         # 如果 AI 在同一 turn 中用相同参数调用相同工具，直接返回缓存结果
         # key: "tool_name:sorted_args_json" → value: result dict
         _turn_dedup_cache: Dict[str, dict] = {}
+        failed_tool_signatures: Dict[str, int] = {}
 
         # ★ 消息清洗 dirty 标志（避免每轮都 O(n) 遍历消息列表）
         _needs_sanitize = True
@@ -173,7 +240,7 @@ class AIClientAgentMixin:
                     print(f"[AI Client] ⚠️ 上下文 ~{est_tokens} tokens（阈值 {int(context_limit * 0.85)}），启动主动压缩")
                     working_messages = self._smart_compress_in_loop(
                         working_messages, tool_calls_history,
-                        context_limit, supports_vision
+                        context_limit, supports_vision, effective_tools
                     )
                     _needs_sanitize = True
 
@@ -307,10 +374,20 @@ class AIClientAgentMixin:
                     ))
 
                     # 3. 压缩/格式问题
+                    is_image_schema_error = (
+                        ('image_url' in error_lower or 'image' in error_lower)
+                        and any(k in error_lower for k in (
+                            'unknown variant', 'expected `text`', 'invalid type',
+                            'does not support', 'unsupported'
+                        ))
+                    )
                     is_format_error = ('HTTP 4' in error_msg and not is_context_exceeded and iteration > 1)
                     is_compress_fail = '压缩失败' in error_msg
 
-                    is_recoverable = is_context_exceeded or is_server_transient or is_format_error or is_compress_fail
+                    is_recoverable = (
+                        is_context_exceeded or is_server_transient or
+                        is_image_schema_error or is_format_error or is_compress_fail
+                    )
 
                     if is_recoverable:
                         server_error_retries += 1
@@ -326,7 +403,14 @@ class AIClientAgentMixin:
 
                         cleanup_count = 0
 
-                        if is_context_exceeded:
+                        if is_image_schema_error:
+                            print("[AI Client] 模型/API 不接受图片内容，剥离图片后重试")
+                            if on_content:
+                                on_content("\n[当前模型/API 不支持图片输入，已移除图片后重试...]\n")
+                            supports_vision = False
+                            cleanup_count = self._strip_image_content(working_messages, keep_recent_user=0)
+
+                        elif is_context_exceeded:
                             # ---- 真正的上下文超限：渐进式裁剪 ----
                             print(f"[AI Client] 上下文超限，进行渐进式裁剪 (第{server_error_retries}次)")
                             if on_content:
@@ -582,19 +666,26 @@ class AIClientAgentMixin:
             dedup_flags = [False] * len(parsed_calls)  # 标记哪些是缓存命中
 
             # --- 先检查去重缓存 ---
+            blocked_flags = [False] * len(parsed_calls)
             for idx, (tid, tname, targs, _tc) in enumerate(parsed_calls):
-                dedup_key = f"{tname}:{json.dumps(targs, sort_keys=True)}"
+                dedup_key = self._tool_signature(tname, targs)
+                fail_count = failed_tool_signatures.get(dedup_key, 0)
+                if fail_count >= self._FAILED_TOOL_REPEAT_LIMIT:
+                    results_ordered[idx] = self._repeat_failed_tool_result(tname, targs, fail_count)
+                    blocked_flags[idx] = True
+                    print(f"[AI Client] 🛑 重复失败保护: {tname}({json.dumps(targs, ensure_ascii=False, default=str)[:100]})")
+                    continue
                 if tname in _DEDUP_TOOLS and dedup_key in _turn_dedup_cache:
                     # ★ 缓存命中：直接返回之前的结果
                     results_ordered[idx] = _turn_dedup_cache[dedup_key]
                     dedup_flags[idx] = True
-                    print(f"[AI Client] ♻️ 同轮去重命中: {tname}({json.dumps(targs, ensure_ascii=False)[:80]})")
+                    print(f"[AI Client] ♻️ 同轮去重命中: {tname}({json.dumps(targs, ensure_ascii=False, default=str)[:80]})")
 
             # 分离未缓存的调用
             uncached_async = [(i, pc) for i, pc in enumerate(parsed_calls)
-                             if pc[1] in _ASYNC_TOOL_NAMES and not dedup_flags[i]]
+                             if pc[1] in _ASYNC_TOOL_NAMES and not dedup_flags[i] and results_ordered[i] is None]
             uncached_houdini = [(i, pc) for i, pc in enumerate(parsed_calls)
-                               if pc[1] not in _ASYNC_TOOL_NAMES and not dedup_flags[i]]
+                               if pc[1] not in _ASYNC_TOOL_NAMES and not dedup_flags[i] and results_ordered[i] is None]
 
             # --- 并行执行未缓存的 async 工具（web + shell） ---
             if len(uncached_async) > 1:
@@ -723,7 +814,7 @@ class AIClientAgentMixin:
             # 将新执行的查询工具结果写入去重缓存
             for idx, (tid, tname, targs, _tc) in enumerate(parsed_calls):
                 if not dedup_flags[idx] and tname in _DEDUP_TOOLS and results_ordered[idx]:
-                    dedup_key = f"{tname}:{json.dumps(targs, sort_keys=True)}"
+                    dedup_key = self._tool_signature(tname, targs)
                     _turn_dedup_cache[dedup_key] = results_ordered[idx]
 
             # --- 统一处理结果（保持原始顺序） ---
@@ -733,7 +824,7 @@ class AIClientAgentMixin:
 
                 # 防止死循环：检测重复工具调用
                 total_tool_calls += 1
-                call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True)}"
+                call_signature = self._tool_signature(tool_name, arguments)
 
                 if total_tool_calls > max_tool_calls:
                     print(f"[AI Client] ⚠️ 达到最大工具调用次数限制 ({max_tool_calls})")
@@ -760,6 +851,21 @@ class AIClientAgentMixin:
                     on_tool_result(tool_name, arguments, result)
 
                 result_content = self._compress_tool_result(tool_name, result)
+
+                if not self._is_tool_success(result):
+                    failed_tool_signatures[call_signature] = failed_tool_signatures.get(call_signature, 0) + 1
+                    fail_count = failed_tool_signatures[call_signature]
+                    if blocked_flags[i]:
+                        result_content = result.get("error", result_content)
+                    else:
+                        result_content = (
+                            "%s\n\n[工具失败反馈]\n"
+                            "- 这是第 %d 次使用相同工具和相同参数失败。\n"
+                            "- 下一步必须修改参数/代码或换工具，不能原样重试。\n"
+                            "- 如果错误信息不足，请先用只读查询工具获取更多上下文。"
+                        ) % (result_content, fail_count)
+                else:
+                    failed_tool_signatures.pop(call_signature, None)
 
                 # ★ 去重命中时追加提示，引导 AI 不要再重复调用
                 if dedup_flags[i]:
@@ -846,13 +952,13 @@ class AIClientAgentMixin:
                 tool_choice=None
             ):
                 if chunk.get('type') == 'content':
-                    content = chunk.get('content', '')
-                    summary_content += content
-                    if on_content:
-                        on_content(content)
+                    summary_content += chunk.get('content', '')
                 elif chunk.get('type') == 'done':
                     break
 
+            summary_content = self._sanitize_final_text(summary_content, tool_calls_history)
+            if summary_content and on_content:
+                on_content(summary_content)
             full_content = summary_content if summary_content else full_content
 
         print(f"[AI Client] Reached max iterations ({iteration})")
@@ -862,10 +968,11 @@ class AIClientAgentMixin:
             total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
         else:
             total_usage['cache_hit_rate'] = 0
+        final_text = self._sanitize_final_text(full_content, tool_calls_history)
         return {
             'ok': True,
-            'content': full_content if full_content.strip() else "(工具调用完成，但未生成回复)",
-            'final_content': '',  # max iterations 时无明确的最终回复
+            'content': final_text if final_text.strip() else "(工具调用完成，但未生成回复)",
+            'final_content': final_text,
             'new_messages': working_messages[initial_msg_count:],
             'tool_calls_history': tool_calls_history,
             'call_records': call_records,
@@ -937,9 +1044,6 @@ class AIClientAgentMixin:
 
     def _supports_function_calling(self, provider: str, model: str) -> bool:
         """检查模型是否支持原生 Function Calling"""
-        # Ollama 模型默认不支持
-        if provider == 'ollama':
-            return False
         # Custom provider 根据用户配置决定
         if provider == 'custom':
             return self._CUSTOM_SUPPORTS_FC
@@ -1076,8 +1180,8 @@ class AIClientAgentMixin:
 
     def agent_loop_json_mode(self,
                               messages: List[Dict[str, Any]],
-                              model: str = 'qwen2.5:14b',
-                              provider: str = 'ollama',
+                              model: str = 'deepseek-v4-flash',
+                              provider: str = 'deepseek',
                               max_iterations: int = 999,
                               temperature: float = 0.17,
                               max_tokens: Optional[int] = None,
@@ -1148,6 +1252,7 @@ class AIClientAgentMixin:
         total_tool_calls = 0
         consecutive_same_calls = 0
         last_call_signature = None
+        failed_tool_signatures: Dict[str, int] = {}
         server_error_retries = 0    # 连续服务端错误重试计数
         max_server_retries = 3      # 最多重试 3 次服务端错误
 
@@ -1238,8 +1343,15 @@ class AIClientAgentMixin:
                     is_server_transient = any(k in err_msg for k in (
                         'HTTP 502', 'HTTP 503', 'HTTP 529', '压缩失败', 'no available'
                     ))
+                    is_image_schema_error = (
+                        ('image_url' in err_lower or 'image' in err_lower)
+                        and any(k in err_lower for k in (
+                            'unknown variant', 'expected `text`', 'invalid type',
+                            'does not support', 'unsupported'
+                        ))
+                    )
 
-                    if is_context_exceeded or is_server_transient:
+                    if is_context_exceeded or is_server_transient or is_image_schema_error:
                         server_error_retries += 1
                         if server_error_retries > max_server_retries:
                             if on_content:
@@ -1251,7 +1363,12 @@ class AIClientAgentMixin:
                                 'iterations': iteration, 'usage': total_usage
                             }
 
-                        if is_context_exceeded:
+                        if is_image_schema_error:
+                            if on_content:
+                                on_content("\n[当前模型/API 不支持图片输入，已移除图片后重试...]\n")
+                            supports_vision = False
+                            self._strip_image_content(working_messages, keep_recent_user=0)
+                        elif is_context_exceeded:
                             # 上下文超限：立即裁剪
                             if on_content:
                                 on_content(f"\n[上下文超限，智能裁剪后重试 ({server_error_retries}/{max_server_retries})...]\n")
@@ -1389,12 +1506,24 @@ class AIClientAgentMixin:
 
             # 结果槽位
             exec_results = [None] * len(tool_calls)
+            blocked_flags = [False] * len(tool_calls)
+            for i, tc in enumerate(tool_calls):
+                sig = self._tool_signature(tc.get('name', ''), tc.get('arguments', {}))
+                fail_count = failed_tool_signatures.get(sig, 0)
+                if fail_count >= self._FAILED_TOOL_REPEAT_LIMIT:
+                    exec_results[i] = self._repeat_failed_tool_result(
+                        tc.get('name', ''), tc.get('arguments', {}), fail_count
+                    )
+                    blocked_flags[i] = True
+                    print(f"[AI Client] 🛑 JSON模式重复失败保护: {tc.get('name', '')}")
 
             # 并行 async 工具（web + shell）
             if len(async_tc) > 1:
                 import concurrent.futures
                 def _exec_async_json(idx_tc):
                     idx, tc = idx_tc
+                    if exec_results[idx] is not None:
+                        return idx, exec_results[idx]
                     tname, targs = tc['name'], tc['arguments']
                     if tname == 'web_search':
                         return idx, self._execute_web_search(targs)
@@ -1407,13 +1536,14 @@ class AIClientAgentMixin:
                         exec_results[idx] = res
             elif len(async_tc) == 1:
                 idx, tc = async_tc[0]
-                tname, targs = tc['name'], tc['arguments']
-                if tname == 'web_search':
-                    exec_results[idx] = self._execute_web_search(targs)
-                elif tname == 'fetch_webpage':
-                    exec_results[idx] = self._execute_fetch_webpage(targs)
-                else:  # execute_shell
-                    exec_results[idx] = self._tool_executor(tname, **targs)
+                if exec_results[idx] is None:
+                    tname, targs = tc['name'], tc['arguments']
+                    if tname == 'web_search':
+                        exec_results[idx] = self._execute_web_search(targs)
+                    elif tname == 'fetch_webpage':
+                        exec_results[idx] = self._execute_fetch_webpage(targs)
+                    else:  # execute_shell
+                        exec_results[idx] = self._tool_executor(tname, **targs)
 
             # Houdini 工具（只读批量 / 写入串行）
             _BATCH_READONLY_JSON = frozenset({
@@ -1428,14 +1558,15 @@ class AIClientAgentMixin:
             mutating_calls_j = [(i, tc) for i, tc in houdini_tc if tc['name'] not in _BATCH_READONLY_JSON]
 
             if len(readonly_batch_j) > 1 and self._batch_tool_executor:
-                batch_input = [(tc['name'], tc['arguments']) for _, tc in readonly_batch_j]
+                pending_readonly = [(i, tc) for i, tc in readonly_batch_j if exec_results[i] is None]
+                batch_input = [(tc['name'], tc['arguments']) for _, tc in pending_readonly]
                 try:
                     batch_results = self._batch_tool_executor(batch_input)
-                    for (idx, _), result in zip(readonly_batch_j, batch_results):
+                    for (idx, _), result in zip(pending_readonly, batch_results):
                         exec_results[idx] = result
                 except Exception as e:
                     print(f"[AI Client] JSON模式批量执行失败，回退串行: {e}")
-                    for idx, tc in readonly_batch_j:
+                    for idx, tc in pending_readonly:
                         tname, targs = tc['name'], tc['arguments']
                         try:
                             exec_results[idx] = self._tool_executor(tname, **targs)
@@ -1443,6 +1574,8 @@ class AIClientAgentMixin:
                             exec_results[idx] = {"success": False, "error": str(ex)}
             else:
                 for idx, tc in readonly_batch_j:
+                    if exec_results[idx] is not None:
+                        continue
                     tname, targs = tc['name'], tc['arguments']
                     if not self._tool_executor:
                         exec_results[idx] = {"success": False, "error": f"工具执行器未设置: {tname}"}
@@ -1453,6 +1586,8 @@ class AIClientAgentMixin:
                             exec_results[idx] = {"success": False, "error": str(e)}
 
             for idx, tc in mutating_calls_j:
+                if exec_results[idx] is not None:
+                    continue
                 tname, targs = tc['name'], tc['arguments']
                 if not self._tool_executor:
                     exec_results[idx] = {"success": False, "error": f"工具执行器未设置: {tname}"}
@@ -1471,7 +1606,7 @@ class AIClientAgentMixin:
                 result = exec_results[i]
 
                 total_tool_calls += 1
-                call_signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True)}"
+                call_signature = self._tool_signature(tool_name, arguments)
 
                 if total_tool_calls > max_tool_calls:
                     print(f"[AI Client] ⚠️ JSON模式：达到最大工具调用次数限制 ({max_tool_calls})")
@@ -1493,10 +1628,13 @@ class AIClientAgentMixin:
                     'result': result
                 })
 
-                if not result.get('success'):
+                if not self._is_tool_success(result):
+                    failed_tool_signatures[call_signature] = failed_tool_signatures.get(call_signature, 0) + 1
                     error_detail = result.get('error', '未知错误')
                     print(f"[AI Client] ⚠️ 工具执行失败: {tool_name}")
                     print(f"[AI Client]   错误详情: {error_detail[:200]}")
+                else:
+                    failed_tool_signatures.pop(call_signature, None)
 
                 if on_tool_result:
                     on_tool_result(tool_name, arguments, result)
@@ -1505,7 +1643,14 @@ class AIClientAgentMixin:
                 if result.get('success'):
                     tool_results.append(f"{tool_name}:{compressed}")
                 else:
-                    tool_results.append(f"{tool_name}:错误:{compressed}")
+                    fail_count = failed_tool_signatures.get(call_signature, 1)
+                    if blocked_flags[i]:
+                        tool_results.append(f"{tool_name}:错误:{compressed}")
+                    else:
+                        tool_results.append(
+                            f"{tool_name}:错误:{compressed}\n"
+                            f"[工具失败反馈] 相同工具和参数已失败 {fail_count} 次；下一步必须修改参数/代码或换工具，不能原样重试。"
+                        )
 
             if should_break_limit:
                 return {
@@ -1553,8 +1698,8 @@ class AIClientAgentMixin:
             # ★ 检查是否有视口截图需要注入
             _viewport_imgs = []
             if supports_vision:
-                for tc in tool_calls:
-                    _r = exec_results.get(tool_calls.index(tc))
+                for _idx, tc in enumerate(tool_calls):
+                    _r = exec_results[_idx] if _idx < len(exec_results) else None
                     if isinstance(_r, dict) and _r.get('_viewport_image'):
                         _viewport_imgs.append((_r['_viewport_image'], _r.get('_image_media_type', 'image/jpeg')))
 
@@ -1607,13 +1752,13 @@ class AIClientAgentMixin:
                 tool_choice=None
             ):
                 if chunk.get('type') == 'content':
-                    content = chunk.get('content', '')
-                    summary_content += content
-                    if on_content:
-                        on_content(content)
+                    summary_content += chunk.get('content', '')
                 elif chunk.get('type') == 'done':
                     break
 
+            summary_content = self._sanitize_final_text(summary_content, tool_calls_history)
+            if summary_content and on_content:
+                on_content(summary_content)
             full_content = summary_content if summary_content else full_content
 
         # 计算 cache 命中率
@@ -1625,7 +1770,7 @@ class AIClientAgentMixin:
 
         _result = {
             'ok': True,
-            'content': full_content if full_content.strip() else "(工具调用完成，但未生成回复)",
+            'content': self._sanitize_final_text(full_content, tool_calls_history) if full_content.strip() else "(工具调用完成，但未生成回复)",
             'tool_calls_history': tool_calls_history,
             'call_records': call_records,
             'iterations': iteration,

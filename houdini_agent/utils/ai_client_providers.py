@@ -29,7 +29,6 @@ class AIClientProvidersMixin:
     OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
     DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
     GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    OLLAMA_API_URL = "http://localhost:11434/v1/chat/completions"  # Ollama OpenAI 兼容接口
     DUOJIE_API_URL = "https://api.duojie.games/v1/chat/completions"  # 拼好饭中转站（OpenAI 协议）
     DUOJIE_ANTHROPIC_API_URL = "https://api.duojie.games/v1/messages"  # 拼好饭中转站（Anthropic 协议）
     OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"  # OpenRouter（OpenAI 兼容）
@@ -60,10 +59,6 @@ class AIClientProvidersMixin:
     def _read_api_key(self, provider: str) -> Optional[str]:
         provider = (provider or 'openai').lower()
 
-        # Ollama 不需要 API key
-        if provider == 'ollama':
-            return 'ollama'
-
         env_map = {
             'openai': ['OPENAI_API_KEY', 'DCC_AI_OPENAI_API_KEY'],
             'deepseek': ['DEEPSEEK_API_KEY', 'DCC_AI_DEEPSEEK_API_KEY'],
@@ -89,9 +84,6 @@ class AIClientProvidersMixin:
 
     def has_api_key(self, provider: str = 'openai') -> bool:
         provider = (provider or 'openai').lower()
-        # Ollama 总是可用（本地服务）
-        if provider == 'ollama':
-            return True
         # Custom: 只要配置了 URL 就算可用（Key 可选）
         if provider == 'custom':
             return bool(self._CUSTOM_API_URL)
@@ -118,9 +110,6 @@ class AIClientProvidersMixin:
 
     def get_masked_key(self, provider: str = 'openai') -> str:
         provider = (provider or 'openai').lower()
-        # Ollama 显示本地状态
-        if provider == 'ollama':
-            return 'Local'
         # Custom: 显示 URL 缩略
         if provider == 'custom':
             if self._CUSTOM_API_URL:
@@ -184,8 +173,6 @@ class AIClientProvidersMixin:
             return self.DEEPSEEK_API_URL
         elif provider == 'glm':
             return self.GLM_API_URL
-        elif provider == 'ollama':
-            return self.OLLAMA_API_URL
         elif provider == 'duojie':
             if model and self._is_anthropic_protocol(provider, model):
                 return self.DUOJIE_ANTHROPIC_API_URL
@@ -200,7 +187,7 @@ class AIClientProvidersMixin:
     def _get_vendor_name(self, provider: str) -> str:
         names = {
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
-            'glm': 'GLM（智谱AI）', 'ollama': 'Ollama',
+            'glm': 'GLM（智谱AI）',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
             'custom': 'Custom',
         }
@@ -221,30 +208,6 @@ class AIClientProvidersMixin:
         self._CUSTOM_ANTHROPIC_PROTOCOL = bool(anthropic_protocol)
         if api_key:
             self._api_keys['custom'] = api_key.strip()
-
-    def set_ollama_url(self, base_url: str):
-        """设置 Ollama 服务地址"""
-        self._ollama_base_url = base_url.rstrip('/')
-        self.OLLAMA_API_URL = f"{self._ollama_base_url}/v1/chat/completions"
-
-    def get_ollama_models(self) -> List[str]:
-        """获取 Ollama 可用的模型列表"""
-        if not HAS_REQUESTS:
-            return ['qwen2.5:14b']
-
-        try:
-            response = self._http_session.get(
-                f"{self._ollama_base_url}/api/tags",
-                timeout=5
-            )
-            if response.status_code == 200:
-                data = response.json()
-                models = [m.get('name', '') for m in data.get('models', [])]
-                return models if models else ['qwen2.5:14b']
-        except Exception:
-            pass
-
-        return ['qwen2.5:14b']  # 默认模型
 
     def get_custom_models(self, api_url: str, api_key: str = '') -> List[str]:
         """获取 Custom Provider 可用的模型列表（通过 OpenAI 兼容的 /v1/models 端点）
@@ -282,20 +245,6 @@ class AIClientProvidersMixin:
         """测试连接"""
         provider = (provider or 'deepseek').lower()
 
-        # Ollama 特殊处理
-        if provider == 'ollama':
-            try:
-                if HAS_REQUESTS:
-                    response = self._http_session.get(
-                        f"{self._ollama_base_url}/api/tags",
-                        timeout=5
-                    )
-                    if response.status_code == 200:
-                        return {'ok': True, 'url': self._ollama_base_url, 'status': 200}
-                    return {'ok': False, 'error': f'Ollama 服务响应异常: {response.status_code}'}
-            except Exception as e:
-                return {'ok': False, 'error': f'无法连接 Ollama 服务: {str(e)}'}
-
         api_key = self._get_api_key(provider)
         # Custom provider 允许无 API Key（本地服务等）
         if not api_key and provider != 'custom':
@@ -322,7 +271,6 @@ class AIClientProvidersMixin:
             'openai': 'gpt-5.2',
             'deepseek': 'deepseek-v4-flash',
             'glm': 'glm-4.7',
-            'ollama': 'qwen2.5:14b',
             'openrouter': 'anthropic/claude-sonnet-4.6',
         }
         return defaults.get(provider, 'gpt-5.2')

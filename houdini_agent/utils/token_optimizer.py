@@ -120,8 +120,6 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'qwen-plus':            {'input': 0.80,  'input_cache': 0.20,  'output': 2.00},
     'qwen-max':             {'input': 2.00,  'input_cache': 0.50,  'output': 6.00},
     'qwen-turbo':           {'input': 0.30,  'input_cache': 0.05,  'output': 0.60},
-    # ---- Ollama 本地 (免费) ----
-    # 通配匹配见 _match_pricing
 }
 
 # 默认定价（无法匹配时使用，按 DeepSeek-chat 计价）
@@ -140,11 +138,6 @@ def _match_pricing(model: str) -> Dict[str, float]:
     for key in sorted(MODEL_PRICING.keys(), key=len, reverse=True):
         if m.startswith(key):
             return MODEL_PRICING[key]
-    # Ollama 本地模型：免费
-    # 通过 provider 判断更靠谱，但这里没有 provider 信息
-    # 作为回退，包含 ':' 的模型名通常是 ollama 格式（如 qwen2.5:14b）
-    if ':' in m:
-        return {'input': 0.0, 'input_cache': 0.0, 'output': 0.0}
     return _DEFAULT_PRICING
 
 

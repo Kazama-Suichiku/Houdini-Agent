@@ -585,8 +585,8 @@ class AIClientStreamingMixin:
         provider = (provider or 'openai').lower()
         api_key = self._get_api_key(provider)
 
-        # Ollama / Custom（无 Key）不需要 API Key 验证
-        if provider not in ('ollama', 'custom') and not api_key:
+        # Custom（无 Key）不需要 API Key 验证
+        if provider != 'custom' and not api_key:
             yield {"type": "error", "error": f"缺少 {self._get_vendor_name(provider)} API Key"}
             return
 
@@ -644,8 +644,8 @@ class AIClientStreamingMixin:
             'Accept': 'text/event-stream',
         }
 
-        # Ollama 和无 Key 的 Custom 不需要 Authorization 头
-        if provider != 'ollama' and api_key:
+        # 无 Key 的 Custom 不需要 Authorization 头
+        if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
         # OpenRouter 需要额外的请求头用于标识来源（参见 https://openrouter.ai/docs/quickstart）
@@ -999,7 +999,7 @@ class AIClientStreamingMixin:
 
         provider = (provider or 'openai').lower()
         api_key = self._get_api_key(provider)
-        if not api_key and provider not in ('ollama', 'custom'):
+        if not api_key and provider != 'custom':
             return {'ok': False, 'error': f'缺少 API Key'}
 
         payload = {

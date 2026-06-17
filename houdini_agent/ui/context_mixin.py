@@ -7,7 +7,7 @@ Context Mixin — 字体缩放、上下文统计、模型/提供商管理
   - _estimate_tokens / _calculate_context_tokens
   - _save_model_preference / _load_model_preference / _get_current_context_limit
   - _update_context_stats / _update_token_stats_display / _show_token_stats_dialog / _reset_token_stats
-  - _current_provider / _refresh_models / _on_ollama_models_ready / _update_key_status / _on_provider_changed
+  - _current_provider / _refresh_models / _update_key_status / _on_provider_changed
 """
 
 import threading
@@ -285,46 +285,13 @@ class ContextMixin:
 
     def _refresh_models(self, provider: str):
         self.model_combo.clear()
-
-        if provider == 'ollama':
-            # 后台拉取 Ollama 模型列表，避免主线程阻塞
-            self.model_combo.addItem("检测中...")
-            self.model_combo.setEnabled(False)
-            def _fetch():
-                try:
-                    models = self.client.get_ollama_models()
-                except Exception:
-                    models = []
-                QtCore.QTimer.singleShot(0, lambda: self._on_ollama_models_ready(models))
-            threading.Thread(target=_fetch, daemon=True).start()
-            return
-
         # 使用预设的模型列表
         self.model_combo.addItems(self._model_map.get(provider, []))
-
-    def _on_ollama_models_ready(self, models: list):
-        """Ollama 模型列表后台加载完成回调（主线程）"""
-        self.model_combo.setEnabled(True)
-        self.model_combo.clear()
-        if models:
-            self.model_combo.addItems(models)
-        else:
-            self.model_combo.addItems(self._model_map.get('ollama', []))
-        self._load_model_preference()
 
     def _update_key_status(self):
         provider = self._current_provider()
 
-        if provider == 'ollama':
-            # 测试 Ollama 连接
-            result = self.client.test_connection('ollama')
-            if result.get('ok'):
-                self.key_status.setText("Local")
-                self.key_status.setProperty("state", "ok")
-            else:
-                self.key_status.setText("Offline")
-                self.key_status.setProperty("state", "error")
-        elif self.client.has_api_key(provider):
+        if self.client.has_api_key(provider):
             masked = self.client.get_masked_key(provider)
             self.key_status.setText(masked)
             self.key_status.setProperty("state", "ok")

@@ -29,27 +29,64 @@ def detect_dcc():
     return None
 
 def launch_houdini_agent():
-    """启动 Houdini Agent"""
-    tool_path = os.path.join(os.path.dirname(__file__), "houdini_agent")
+    """启动 Houdini Agent
+
+    默认打开新的 QML / Qt Quick 界面（Mono Editorial 重构）。
+    设环境变量 HAGENT_UI=legacy 可回退到旧的 QtWidgets 界面。
+    """
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    tool_path = os.path.join(repo_root, "houdini_agent")
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
     if tool_path not in sys.path:
         sys.path.insert(0, tool_path)
-    
+
     # 清理旧包名残留（HOUDINI_HIP_MANAGER → houdini_agent 迁移）
     old_mods = [k for k in sys.modules if k.startswith('HOUDINI_HIP_MANAGER')]
     for k in old_mods:
         del sys.modules[k]
-    
+
+    ui = os.environ.get("HAGENT_UI", "qml").strip().lower()
+
     try:
-        if 'main' in sys.modules:
-            import importlib
-            import main
-            importlib.reload(main)
-        else:
-            import main
-        
-        return main.show_tool()
+        import importlib
+        try:
+            from houdini_agent.bridge.server import start_bridge
+            start_bridge()
+        except Exception:
+            pass
+        if ui == "legacy":
+            # 旧的 QtWidgets 界面
+            if 'main' in sys.modules:
+                import main
+                importlib.reload(main)
+            else:
+                import main
+            return main.show_tool()
+
+        # 新的 QML 界面（默认）
+        from houdini_agent.ui_qml import app as qml_app
+        importlib.reload(qml_app)
+        return qml_app.show_tool()
     except Exception as e:
         print(f"Failed to launch Houdini Agent: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def launch_external_agent():
+    """启动外置 UI。双击入口会走这里，并通过 Bridge 连接 Houdini。"""
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    tool_path = os.path.join(repo_root, "houdini_agent")
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    if tool_path not in sys.path:
+        sys.path.insert(0, tool_path)
+    try:
+        from houdini_agent.ui_qml import external_app
+        return external_app.main()
+    except Exception as e:
+        print(f"Failed to launch external Houdini Agent: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -62,9 +99,8 @@ def launch():
         print("Houdini detected, launching Houdini Agent...")
         return launch_houdini_agent()
     else:
-        print("Error: Houdini not detected.")
-        print("Please run this tool inside Houdini.")
-        return None
+        print("Houdini not detected, launching standalone Houdini Agent...")
+        return launch_external_agent()
 
 # 全局变量存储窗口实例
 _agent_window = None

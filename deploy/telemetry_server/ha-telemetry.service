@@ -1,0 +1,24 @@
+# Houdini Agent — Meshy 用量埋点后端 systemd 服务
+# 安装：sudo cp ha-telemetry.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#       sudo systemctl enable --now ha-telemetry
+[Unit]
+Description=Houdini Agent telemetry receiver
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ha-telemetry
+ExecStart=/usr/bin/python3 /opt/ha-telemetry/server.py
+Environment=HA_TELEMETRY_HOST=127.0.0.1
+Environment=HA_TELEMETRY_PORT=8000
+Environment=HA_TELEMETRY_DB=/var/lib/ha-telemetry/telemetry.db
+# 数据目录由 systemd 自动创建并授权给上面的 User（/var/lib/ha-telemetry）
+StateDirectory=ha-telemetry
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

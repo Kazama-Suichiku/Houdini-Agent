@@ -953,7 +953,6 @@ class AIClient(AIClientContextMixin, AIClientProvidersMixin, AIClientStreamingMi
             'openai': api_key or self._read_api_key('openai'),
             'deepseek': self._read_api_key('deepseek'),
             'glm': self._read_api_key('glm'),
-            'ollama': 'ollama',  # Ollama 不需要真正的 API key，但需要非空值
             'duojie': self._read_api_key('duojie'),
             'openrouter': self._read_api_key('openrouter'),
             'custom': self._read_api_key('custom'),
@@ -963,13 +962,10 @@ class AIClient(AIClientContextMixin, AIClientProvidersMixin, AIClientStreamingMi
         self._tool_executor: Optional[Callable[[str, dict], dict]] = None
         self._batch_tool_executor: Optional[Callable[[list], list]] = None
 
-        # Ollama 配置
-        self._ollama_base_url = "http://localhost:11434"
-
         # 网络配置
         self._max_retries = 3
         self._retry_delay = 1.0
-        self._chunk_timeout = 60  # Ollama 本地模型可能较慢，增加超时
+        self._chunk_timeout = 60  # 部分模型首字节较慢，留足超时
 
         # ★ 持久化 HTTP Session（连接池 + Keep-Alive，避免每轮重新 TLS 握手）
         self._http_session = requests.Session()

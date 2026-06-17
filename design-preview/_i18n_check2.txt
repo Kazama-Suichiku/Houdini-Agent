@@ -1,0 +1,2 @@
+QML loc missing: 0 / 63
+controller tr() missing: 0 / 20

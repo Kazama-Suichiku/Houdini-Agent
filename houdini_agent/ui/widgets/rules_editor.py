@@ -182,7 +182,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
     def _load_rules(self):
         """从 rules_manager 加载所有规则"""
         try:
-            from ..utils.rules_manager import get_all_rules
+            from ...utils.rules_manager import get_all_rules
             self._rules = get_all_rules(force_reload=True)
         except Exception as e:
             print(f"[RulesEditor] Failed to load rules: {e}")
@@ -318,7 +318,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
         if not self._dirty:
             return
         try:
-            from ..utils.rules_manager import save_all_ui_rules
+            from ...utils.rules_manager import save_all_ui_rules
             ui_rules = [r for r in self._rules if r.get("source", "ui") == "ui"]
             save_all_ui_rules(ui_rules)
             self._dirty = False
@@ -328,7 +328,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
     def _on_add(self):
         """新增一条 UI 规则"""
         try:
-            from ..utils.rules_manager import add_rule
+            from ...utils.rules_manager import add_rule
             rule = add_rule(title=tr('rules.untitled'), content="")
             rule["source"] = "ui"
             self._rules.append(rule)
@@ -366,7 +366,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
             return
 
         try:
-            from ..utils.rules_manager import delete_rule
+            from ...utils.rules_manager import delete_rule
             delete_rule(self._current_rule_id)
             self._rules = [r for r in self._rules if r.get("id") != self._current_rule_id]
             self._current_rule_id = None
@@ -395,7 +395,7 @@ class RulesEditorDialog(QtWidgets.QDialog):
     def _on_open_dir(self):
         """打开 rules/ 目录"""
         try:
-            from ..utils.rules_manager import get_rules_dir, ensure_rules_dir
+            from ...utils.rules_manager import get_rules_dir, ensure_rules_dir
             import os, subprocess
             import sys as _sys
             ensure_rules_dir()
