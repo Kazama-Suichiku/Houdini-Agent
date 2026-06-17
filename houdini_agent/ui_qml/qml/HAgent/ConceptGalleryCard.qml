@@ -35,6 +35,7 @@ Item {
     }
     property int prog: (block && block.progress !== undefined) ? block.progress : 0
     property string note: (block && block.note) ? block.note : ""
+    property string model: (block && block.model) ? block.model : "nano-banana"
     property var sel: []        // locally-selected indices (pick phase)
 
     function loc(s) { return controller ? (controller.lang, controller.tr(s)) : s }
@@ -233,6 +234,18 @@ Item {
                 Flow {
                     width: parent.width
                     spacing: 6
+                    // 生图模型选择（弹窗）：换模型即用相同提示词就地重出
+                    Pill {
+                        id: modelPill
+                        label: cg.loc("模型") + " · " + cg.model
+                        onClicked: {
+                            if (!controller) return
+                            var p = modelPill.mapToItem(cg, 0, modelPill.height + 2)
+                            modelMenu.x = p.x; modelMenu.y = p.y
+                            modelMenu.items = controller.imageModelItems(cg.model)
+                            modelMenu.open()
+                        }
+                    }
                     Pill {
                         label: cg.mode === "image" ? cg.loc("选中的做成 3D") : cg.loc("生成选中的 3D")
                         accent: cg.sel.length > 0
@@ -287,6 +300,16 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // 生图模型下拉（弹窗）
+    MenuPopup {
+        id: modelMenu
+        menuWidth: 190
+        onPicked: function(val) {
+            if (controller && val !== cg.model)
+                controller.resolveConcept(cg.token, JSON.stringify({action: "set_model", model: val}))
         }
     }
 }

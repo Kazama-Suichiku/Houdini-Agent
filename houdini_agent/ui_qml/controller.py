@@ -160,6 +160,8 @@ UI_EN = {
     "用 Meshy 生成一个 ": "Generate with Meshy: ", "去 Meshy 工作台": "Open Meshy Workspace",
     "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "升级 Pro": "Upgrade to Pro",
     "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
+    "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
+    "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
     "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
     "请先配置 Meshy API Key": "Set a Meshy API Key first",
     "未配置 Meshy API Key": "No Meshy API Key configured",
@@ -1766,6 +1768,19 @@ class Controller(QObject):
         sep = "&" if "?" in base else "?"
         self._open_browser(base + sep + _MESHY_UTM)
 
+    @Slot(str, result="QVariantList")
+    def imageModelItems(self, current=""):
+        """生图模型下拉项（画廊里"弹窗选模型"用）。current=当前模型，打勾。"""
+        cur = str(current or "")
+        models = [
+            ("nano-banana", self.tr("Nano Banana（默认 · 快）")),
+            ("nano-banana-2", "Nano Banana 2"),
+            ("nano-banana-pro", self.tr("Nano Banana Pro（高质量）")),
+            ("gpt-image-2", "GPT Image 2"),
+        ]
+        return [{"label": lbl, "val": val, "checked": (val == cur)}
+                for val, lbl in models]
+
     @Slot(str)
     def composePrefill(self, text):
         """把一段起始提示词塞进输入框并聚焦（资产库"+用 Meshy 生成"快捷用）。"""
@@ -2483,7 +2498,7 @@ class Controller(QObject):
                 ph = fields.get("phase")
                 if ph:
                     t["stage"] = _STAGE.get(ph, ph)
-            payload = {"token": token, "mode": mode, "op": token}
+            payload = {"token": token, "mode": mode, "op": token, "model": ai_model}
             payload.update(fields)
             try:
                 self._sigConcept.emit(json.dumps(payload, default=str))
@@ -2578,6 +2593,18 @@ class Controller(QObject):
                 except queue.Empty:
                     decision = {"action": "cancel"}
                 action = (decision or {}).get("action")
+
+                if action == "set_model":
+                    # 用户在画廊里换了生图模型：用相同提示词就地换模型重出（不绕回 Agent、不改提示词）
+                    nm = (decision.get("model") or "").strip()
+                    if nm:
+                        ai_model = nm
+                    cur_prompts = [c.get("prompt") for c in concepts if c.get("prompt")] or prompt_list
+                    pending = {"prompts": cur_prompts, "refs": base_refs}
+                    show(phase="gen", prompt=card_prompt, count=len(cur_prompts),
+                         images=[], selected=[], progress=0,
+                         note="切换模型 %s · 重新生成…" % ai_model)
+                    continue
 
                 if action == "regenerate":
                     # 不直接拿用户文字调 API：把反馈交回 Agent，让它理解意图、改写提示词后重做
