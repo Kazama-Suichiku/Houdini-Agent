@@ -42,13 +42,22 @@ Rectangle {
         Layout.fillHeight: true
         spacing: 0
 
-        // update notification banner
+        Header      { Layout.fillWidth: true }
+        SessionTabs { Layout.fillWidth: true }
+        ContextBar  { Layout.fillWidth: true }
+
+        ChatView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
+
+        // 更新提示横幅 —— 紧贴输入框上方（沿用 1.5 的“输入区域上方”位置）
         Rectangle {
             Layout.fillWidth: true
             visible: controller && controller.updateText.length > 0
             implicitHeight: visible ? 34 : 0
             color: Theme.accentSoft
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.accentLine }
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.accentLine }
             Row {
                 anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 12; spacing: 8
                 Text {
@@ -65,15 +74,6 @@ Rectangle {
                         onClicked: if (controller) controller.dismissUpdate() }
                 }
             }
-        }
-
-        Header      { Layout.fillWidth: true }
-        SessionTabs { Layout.fillWidth: true }
-        ContextBar  { Layout.fillWidth: true }
-
-        ChatView {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
         }
 
         Composer { Layout.fillWidth: true }
