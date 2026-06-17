@@ -31,7 +31,7 @@ Rectangle {
 
         Item { Layout.fillWidth: true }
 
-        // Meshy 入口（引流）：品牌 logo + 下拉菜单（官网 / 工作台 / 充值 / Key / 文档）
+        // Meshy 快捷入口：品牌 logo + 下拉菜单（官网 / 工作台 / 充值 / Key / 文档）
         Item {
             id: meshyBtn
             implicitHeight: Math.round(28 * Theme.scale)

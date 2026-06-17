@@ -128,8 +128,8 @@ MESHY_LABELS = {
     "meshy_rig": "自动绑定", "meshy_animate": "套动作",
 }
 
-# Meshy 网页入口（引流）。全部为公开、面向用户的 URL；开源不含任何内部地址/机密。
-# QML 只传 key（home/workspace/apikey/pricing/docs），URL 集中在此一处便于审计。
+# Meshy 网页快捷入口。均为公开、面向用户的页面 URL（不含任何内部地址/机密）。
+# QML 只传 key（home/workspace/apikey/pricing/docs），URL 集中在此一处便于维护。
 _MESHY_UTM = "utm_source=houdini-agent&utm_medium=plugin"
 _MESHY_URLS = {
     "home":      "https://www.meshy.ai",
@@ -151,14 +151,14 @@ UI_EN = {
     "导出对话": "Export chat", "缓存位置": "Cache location", "检查更新": "Check update",
     "Meshy 资产库": "Meshy Library", "刷新": "Refresh", "加载更多": "Load more",
     "导入": "Import", "在 Meshy 打开": "Open in Meshy", "已过期": "Expired",
-    # Meshy 网页入口（引流）
+    # Meshy 网页快捷入口
     "工作台": "Workspace", "充值": "Top up",
     "打开 Meshy 官网": "Open Meshy.ai", "我的工作台": "My Workspace",
     "充值 / 定价": "Top up / Pricing", "API Key 设置": "API Key settings",
     "API 文档": "API docs", "无法打开链接：": "Couldn't open link: ",
     "+ 生成": "+ Generate", "+ 用 Meshy 生成": "+ Generate with Meshy",
     "用 Meshy 生成一个 ": "Generate with Meshy: ", "去 Meshy 工作台": "Open Meshy Workspace",
-    "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "升级 Pro": "Upgrade to Pro",
+    "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "Meshy 定价": "Pricing",
     "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
     "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
     "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
@@ -1761,7 +1761,7 @@ class Controller(QObject):
 
     @Slot(str)
     def openMeshy(self, kind):
-        """打开某个 Meshy 公开网页（带 UTM 归因）。kind ∈ home/workspace/apikey/pricing/docs。"""
+        """在浏览器打开某个 Meshy 公开网页（链接附带 utm 来源标记）。kind ∈ home/workspace/apikey/pricing/docs。"""
         base = _MESHY_URLS.get(str(kind or ""))
         if not base:
             return

@@ -137,7 +137,7 @@ Rectangle {
                 Pill {
                     visible: lib.account.connected
                     label: lib.loc("充值")
-                    // 额度偏低时高亮，命中"没额度的那一刻"这个最值钱的转化点
+                    // 余额较低时高亮提醒
                     accent: lib.account.balance >= 0 && lib.account.balance < 20
                     onClicked: if (controller) controller.openMeshy("pricing")
                 }
@@ -407,7 +407,7 @@ Rectangle {
             }
         }
 
-        // ---- footer banner: 引流到 Meshy 网页（常驻底部，空/满都显示）----
+        // ---- 底部：Meshy 网页快捷链接（常驻，空/满都显示）----
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
         RowLayout {
             Layout.fillWidth: true
@@ -425,7 +425,7 @@ Rectangle {
                 }
             }
             Text {
-                text: lib.loc("升级 Pro")
+                text: lib.loc("Meshy 定价")
                 color: proMa.containsMouse ? Theme.textBright : Theme.accent
                 font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
                 MouseArea {
