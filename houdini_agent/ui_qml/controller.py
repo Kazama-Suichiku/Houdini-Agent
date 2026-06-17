@@ -1384,7 +1384,11 @@ class Controller(QObject):
             return False
 
     def _export_chat(self):
-        hist = self._session.history if self._session else []
+        # 优先用活动会话的实时历史；未连接 / 重启后会话未挂载时，回退到已恢复/已保存的会话历史，
+        # 这样"看得到历史却导不出"（_session 尚为空）的情况也能正常导出。
+        hist = list(self._session.history) if (self._session and getattr(self._session, "history", None)) else []
+        if not hist and self._sessions and 0 <= self._active < len(self._sessions):
+            hist = self._sessions[self._active].get("history", []) or []
         if not hist:
             self._info("导出对话", "当前会话没有可导出的内容。")
             return

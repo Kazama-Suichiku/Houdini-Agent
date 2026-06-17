@@ -27,8 +27,16 @@ from typing import Any, Dict, List, Optional
 # 路径常量
 # ============================================================
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent          # DCC-ASSET-MANAGER/
-_CONFIG_DIR = _PROJECT_ROOT / "config"
+# 路径与全局其它模块（Meshy 配置等）统一走 shared.common_utils，落到可写、持久的
+# 用户配置目录；否则打包后的 exe 会把 user_rules.json 写进只读的 bundle 目录，
+# 导致"新建/保存规则"静默失败、刷新后又消失（force_reload 从磁盘重读）。
+try:
+    from shared.common_utils import get_repo_root as _get_repo_root, get_config_dir as _get_config_dir
+    _PROJECT_ROOT = Path(_get_repo_root())
+    _CONFIG_DIR = Path(_get_config_dir())
+except Exception:
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent
+    _CONFIG_DIR = _PROJECT_ROOT / "config"
 _RULES_FILE = _CONFIG_DIR / "user_rules.json"
 _RULES_DIR = _PROJECT_ROOT / "rules"
 
