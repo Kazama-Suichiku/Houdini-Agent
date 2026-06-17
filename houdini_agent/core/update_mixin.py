@@ -113,11 +113,23 @@ class UpdateMixin:
 
     @QtCore.Slot(dict)
     def _on_silent_check_result(self, result: dict):
-        """[主线程] 静默检查结果 → 如果有更新，高亮按钮 + 显示通知横幅"""
-        # 断开静默回调，防止和手动点击冲突
+        """[主线程] 静默检查结果 → 如果有更新，高亮按钮 + 显示通知横幅。
+
+        关键修复（崩溃 signal 11 / access violation）：
+        不要在“跨线程排队信号正在投递的栈”里 (a) 把自己 disconnect，或 (b) 创建/插入
+        widget。在 Houdini 的 Qt 事件循环里，emit 正在迭代连接表时 disconnect 会破坏
+        sender 的连接状态，后续触碰 Qt 对象（如 setVisible）即段错误。
+        改为：打标记防重入，把真正的处理推迟到一次干净的事件循环迭代里执行。"""
+        if getattr(self, '_silent_check_handled', False):
+            return
+        self._silent_check_handled = True
+        QtCore.QTimer.singleShot(0, lambda: self._apply_silent_check_result(result))
+
+    def _apply_silent_check_result(self, result: dict):
+        """[主线程·延迟] 已脱离信号投递栈，可安全断开静默回调并操作 widget。"""
         try:
             self._updateCheckDone.disconnect(self._on_silent_check_result)
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass
 
         if result.get('has_update') and result.get('remote_version'):
