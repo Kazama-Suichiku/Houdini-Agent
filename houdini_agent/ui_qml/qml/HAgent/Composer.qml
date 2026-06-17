@@ -22,6 +22,13 @@ Rectangle {
         target: controller
         ignoreUnknownSignals: true
         function onImagesChanged() { composer.imgUris = controller.pendingImageUris() }
+        // 资产库"+用 Meshy 生成"：把起始提示词塞进输入框、切到 Agent 模式并聚焦
+        function onPrefillComposer(t) {
+            if (controller && controller.setMode("Agent")) composer.modeIndex = 0
+            inputArea.text = t
+            inputArea.cursorPosition = inputArea.text.length
+            inputArea.forceActiveFocus()
+        }
     }
 
     ColumnLayout {

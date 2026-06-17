@@ -156,6 +156,10 @@ UI_EN = {
     "打开 Meshy 官网": "Open Meshy.ai", "我的工作台": "My Workspace",
     "充值 / 定价": "Top up / Pricing", "API Key 设置": "API Key settings",
     "API 文档": "API docs", "无法打开链接：": "Couldn't open link: ",
+    "+ 生成": "+ Generate", "+ 用 Meshy 生成": "+ Generate with Meshy",
+    "用 Meshy 生成一个 ": "Generate with Meshy: ", "去 Meshy 工作台": "Open Meshy Workspace",
+    "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "升级 Pro": "Upgrade to Pro",
+    "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
     "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
     "请先配置 Meshy API Key": "Set a Meshy API Key first",
     "未配置 Meshy API Key": "No Meshy API Key configured",
@@ -348,6 +352,7 @@ class Controller(QObject):
     statusChanged = Signal()              # running phase label
     updateAvailableChanged = Signal()
     toast = Signal(str)                   # transient message
+    prefillComposer = Signal(str)         # text -> 预填输入框并聚焦（库里"+用 Meshy 生成"）
     openFontDialog = Signal()             # request the font-size slider popup
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
@@ -1760,6 +1765,14 @@ class Controller(QObject):
             return
         sep = "&" if "?" in base else "?"
         self._open_browser(base + sep + _MESHY_UTM)
+
+    @Slot(str)
+    def composePrefill(self, text):
+        """把一段起始提示词塞进输入框并聚焦（资产库"+用 Meshy 生成"快捷用）。"""
+        try:
+            self.prefillComposer.emit(str(text or ""))
+        except Exception:
+            pass
 
     @Slot(result="QVariantList")
     def meshyMenuItems(self):
