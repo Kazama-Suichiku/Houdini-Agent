@@ -635,7 +635,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
         <div class="hero-cta">
           <a class="btn solid" href="#download"><span class="zh">立即下载</span><span class="en">Download</span></a>
           <a class="btn" href="#generation"><span class="zh">看 3D 生成</span><span class="en">See 3D gen</span></a>
-          <a class="btn meshy" href="https://www.meshy.ai" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="" /><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
+          <a class="btn meshy js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="" /><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
           <span class="ver">v2.0</span>
         </div>
         <div class="hero-stats">
@@ -913,8 +913,8 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
         <span class="en">Deeply integrated <b class="meshy-grn">Meshy</b> AI 3D generation — text-to-3D, image-to-3D, concept galleries, image-to-image editing and a cloud asset library. All exposed as agent tools, orchestrated in conversation, with results landing straight in your node graph.</span>
       </p>
       <p style="margin-top:14px">
-        <span class="zh">还没有 Meshy？<a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">前往 Meshy 注册并获取 API Key &#8599;</a></span>
-        <span class="en">No Meshy account yet? <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">Sign up at Meshy and get an API key &#8599;</a></span>
+        <span class="zh">还没有 Meshy？<a class="js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">前往 Meshy 注册并获取 API Key &#8599;</a></span>
+        <span class="en">No Meshy account yet? <a class="js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener" style="color:var(--meshy);border-bottom:1px solid var(--meshy)">Sign up at Meshy and get an API key &#8599;</a></span>
       </p>
     </div>
 
@@ -1326,7 +1326,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
       <div class="step">
         <div class="sn">03</div>
         <h4><span class="zh">配置 API Key</span><span class="en">Set an API key</span></h4>
-        <p><span class="zh">在程序内点「API Key…」保存到本机，或设置环境变量。想用 AI 3D 生成？再填一个 <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API Key</a> 即可。</span><span class="en">Click "API Key…" in-app to save locally, or set an environment variable. Want AI 3D generation? Add a <a href="https://www.meshy.ai" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API key</a> too.</span></p>
+        <p><span class="zh">在程序内点「API Key…」保存到本机，或设置环境变量。想用 AI 3D 生成？再填一个 <a class="js-meshy-api" href="https://www.meshy.ai/zh/settings/api" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API Key</a> 即可。</span><span class="en">Click "API Key…" in-app to save locally, or set an environment variable. Want AI 3D generation? Add a <a class="js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener" style="color:var(--meshy)">Meshy API key</a> too.</span></p>
       </div>
     </div>
 
@@ -1627,7 +1627,9 @@ document.querySelectorAll('a[href^="#"]').forEach(a=>{
 
 /* language toggle */
 const body=document.body, langtog=document.getElementById('langtog');
-function setLang(l){body.dataset.lang=l;document.documentElement.lang=(l==='zh'?'zh':'en');langtog.textContent=(l==='zh'?'EN / 中':'中 / EN');try{localStorage.setItem('ha_lang',l)}catch(e){}if(window.__lpSetPH)window.__lpSetPH();}
+function setLang(l){body.dataset.lang=l;document.documentElement.lang=(l==='zh'?'zh':'en');langtog.textContent=(l==='zh'?'EN / 中':'中 / EN');try{localStorage.setItem('ha_lang',l)}catch(e){}if(window.__lpSetPH)window.__lpSetPH();
+  var apiUrl=(l==='zh')?'https://www.meshy.ai/zh/settings/api':'https://www.meshy.ai/settings/api';
+  document.querySelectorAll('.js-meshy-api').forEach(function(a){a.href=apiUrl;});}
 setLang((()=>{try{return localStorage.getItem('ha_lang')||'zh'}catch(e){return 'zh'}})());
 langtog.addEventListener('click',()=>setLang(body.dataset.lang==='zh'?'en':'zh'));
 
