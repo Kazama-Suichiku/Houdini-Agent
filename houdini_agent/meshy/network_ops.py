@@ -351,9 +351,9 @@ def search_animations(kwargs):
     from . import animation_lib
     q = (kwargs or {}).get("query", "")
     try:
-        limit = int((kwargs or {}).get("limit", 12) or 12)
+        limit = int((kwargs or {}).get("limit", 5) or 5)
     except (ValueError, TypeError):
-        limit = 12
+        limit = 5
     limit = max(1, min(limit, 40))
     items = animation_lib.search(q, limit=limit)
     if not items:
@@ -363,8 +363,8 @@ def search_animations(kwargs):
     lines = ["匹配到 %d 个候选动作（[]内为 action_id，供 meshy_animate 使用）：" % len(items)]
     for a in items:
         lines.append("- [%d] %s · %s" % (a["id"], a["name"], a.get("category", "")))
-    lines.append("请把候选列给用户挑选/确认，再用 meshy_animate(rig_task_id=..., actions=[选中的 id]) 生成"
-                 "（每个动作约 3 credits）。")
+    lines.append("请你从中挑 3–5 个最贴合当前任务的：意图明确就直接定下来进入 meshy_animate；"
+                 "若需用户拍板，再把这几个简短列给用户选。每个动作约 3 credits。")
     return {"success": True, "error": "", "result": "\n".join(lines),
             "data": {"actions": items}}
 

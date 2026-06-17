@@ -259,10 +259,11 @@ _SEARCH_ANIM = {
         "name": "meshy_search_animations",
         "description": (
             "【免费、不消耗 credits、不联网】在 Meshy 预设动作库（约 600 个动作，分 5 类："
-            "DailyActions/WalkAndRun/Fighting/Dancing/BodyMovements）里按自然语言检索候选动作。"
-            "这是套动画的第一步：先用本工具把用户的意图（如'走路、挥手、跳一段舞、拔剑攻击'）"
-            "匹配成若干候选动作，把结果（名称+编号+类别）列给用户看、让用户确认/挑选要哪些，"
-            "再调用 meshy_animate 真正生成。支持中英文查询。"
+            "DailyActions/WalkAndRun/Fighting/Dancing/BodyMovements）里按自然语言检索动作（中英文均可）。"
+            "这是套动画的第一步。用法：用本工具检索后，【你自己】从结果里挑出 3–5 个最贴合当前任务/"
+            "用户意图的动作作为候选——不要把一长串动作原样甩给用户去翻。挑好这 3–5 个后，你来判断："
+            "①若意图明确，直接替用户决定用哪个/哪几个，进入 meshy_animate；"
+            "②若有多种合理选择或用户偏好不明，把这 3–5 个（名称+编号，最好附一句简短说明）列给用户做最终选择。"
             "返回 [{id, name, category}]——id 就是 meshy_animate 要用的 action_id。"
         ),
         "parameters": {
@@ -270,7 +271,8 @@ _SEARCH_ANIM = {
             "properties": {
                 "query": {"type": "string",
                           "description": "动作意图，中英文均可（如'跳舞''attack''坐下'）；留空则返回一组常用基础动作"},
-                "limit": {"type": "integer", "description": "返回候选数量，默认 12，最多 40"},
+                "limit": {"type": "integer",
+                          "description": "返回候选数量，默认 5（够你从中挑 3–5 个即可）；最多 40，一般无需调大"},
             },
             "required": [],
         },

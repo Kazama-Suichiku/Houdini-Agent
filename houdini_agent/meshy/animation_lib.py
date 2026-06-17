@@ -120,9 +120,9 @@ def _name_tokens(name):
     return set(t for t in name.lower().replace("-", "_").split("_") if t)
 
 
-def search(query, limit=12):
+def search(query, limit=5):
     """按自然语言/关键词检索动作库，返回打分最高的若干 {id, name, category, score}。
-    查询为空时返回一组常用基础动作。"""
+    默认只返回少量精准候选（够 Agent 从中挑 3–5 个即可）。查询为空时返回一组常用基础动作。"""
     actions = _load().get("actions", [])
     if not actions:
         return []
