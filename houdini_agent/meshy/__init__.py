@@ -12,6 +12,14 @@ Meshy 集成包 — 把 Meshy 的图生/文生 3D、重打材质、重拓扑接�
   - HOUDINI_TOOLS（import_3d_asset/export_node_to_glb）在 Houdini 主线程执行
 """
 
+# 兜底：确保顶层 shared 包可被 import。Houdini 侧 bridge 从 bridge_payload 加载 houdini_agent 时，
+# 若加载根未在 sys.path 上会报 "No module named 'shared'"，导致 import_3d_asset 等工具注册失败。
+import os as _os
+import sys as _sys
+_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+
 from .schemas import (
     MESHY_TOOLS, NETWORK_TOOLS, HOUDINI_TOOLS, CONFIRM_TOOLS,
     MUTATING_TOOLS, INTERACTIVE_TOOLS, ALL_TOOL_NAMES,

@@ -1546,7 +1546,7 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
       <p><span class="zh">免费、开源。下载独立程序，自动连接 Houdini —— 无需配置 Python。建网、写 VEX、生成 3D 资产，全在一句话之间。</span><span class="en">Free and open source. Download the standalone app — it connects to Houdini, no Python setup. Build networks, write VEX, generate 3D assets — all a sentence away.</span></p>
       <div class="reqline">v2.0 · Houdini 20.5+ / 21+ · Windows · macOS · Linux · MIT</div>
       <div class="dl-cta">
-        <a class="btn solid" href="/download/HoudiniAgent-Setup.exe" download><span class="zh">下载安装程序</span><span class="en">Download installer</span></a>
+        <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download><span class="zh">下载安装程序</span><span class="en">Download installer</span></a>
         <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases" target="_blank" rel="noopener"><span class="zh">所有版本</span><span class="en">All releases</span></a>
         <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener"><span class="zh">GitHub 仓库</span><span class="en">View on GitHub</span></a>
       </div>
@@ -1592,6 +1592,11 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
 <button class="totop" id="totop" aria-label="back to top">&#8593;</button>
 
 <script>
+/* 下载地址（单一来源）：默认走源站 /download/。接入 COS/CDN 后，把下面这一行换成
+   upload_installer_cos.py 打印出的完整 URL（如 https://dl.houdini-agent.com/download/HoudiniAgent-Setup.exe）即可，无需改其它地方。 */
+window.HA_DOWNLOAD_URL = "/download/HoudiniAgent-Setup.exe";
+(function(){var b=document.getElementById('dlBtn');if(b&&window.HA_DOWNLOAD_URL)b.href=window.HA_DOWNLOAD_URL;})();
+
 /* mobile hamburger */
 const navToggle=document.getElementById('navToggle');
 if(navToggle){navToggle.addEventListener('click',()=>document.getElementById('nav').classList.toggle('open'));}

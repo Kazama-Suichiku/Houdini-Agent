@@ -352,6 +352,7 @@ class Controller(QObject):
     _sigLibrary = Signal(str)        # json {items, append} -> store on main thread
     _sigMeshyAccount = Signal(str)   # json {connected, balance, error} -> main thread
     _sigDeliverBg = Signal()         # a backgrounded Meshy task finished -> feed agent
+    _sigShowBgGallery = Signal(str)  # token -> pop an interactive gallery after a bg concept run
     libraryOpenChanged = Signal()
     libraryChanged = Signal()        # items list changed
     libraryLoadingChanged = Signal()
@@ -393,6 +394,8 @@ class Controller(QObject):
         self._meshy_bg_requests = {}    # op -> threading.Event（请求转入后台）
         self._meshy_bg_feedback = []    # 已完成、待投递给 agent 的结果文本
         self._meshy_bg_lock = threading.Lock()
+        self._bg_galleries = {}         # token -> 后台跑完待呈现/可交互的概念图画廊数据
+        self._pending_bg_galleries = [] # agent 忙时排队待弹出的画廊 token
         self._token_stats = {"input": 0, "output": 0, "reasoning": 0,
                              "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
         self._call_records = []
@@ -481,6 +484,7 @@ class Controller(QObject):
         self._sigLibrary.connect(self._ui_library)
         self._sigMeshyAccount.connect(self._ui_meshy_account)
         self._sigDeliverBg.connect(self._flush_bg_feedback)
+        self._sigShowBgGallery.connect(self._show_bg_gallery)
         self._sigShell.connect(self._ui_shell)
         self._sigStatus.connect(self._ui_status)
         self._sigPreview.connect(self._ui_preview)
@@ -2455,16 +2459,19 @@ class Controller(QObject):
                              note="%d/%d 完成" % (len(done_imgs), _n))
 
                     def deliver_gen_bg(res, err):
-                        # 后台生成完成：不再更新卡片（已冻结），只把图片路径发给 agent
+                        # 后台生成完成：在独立消息行弹出完整可交互画廊，让用户照常挑选
                         if err or not res:
                             self._enqueue_bg_feedback(
                                 "【后台任务】%s 失败：%s" % (label, err or "未知"), label)
                             return
-                        lines = ["【后台任务完成】%s 已生成 %d 张图片：" % (label, len(res))]
-                        lines += ["- %s" % c["image"] for c in res]
-                        lines.append("若要继续（拿某张做 3D 用 meshy_image_to_3d，"
-                                     "或在某张基础上改图用 meshy_image_to_image，传 image=上面的本地路径）。")
-                        self._enqueue_bg_feedback("\n".join(lines), label)
+                        concepts_full = [{"index": c["index"], "image": c["image"],
+                                          "prompt": c.get("prompt", "")} for c in res]
+                        with self._meshy_bg_lock:
+                            self._bg_galleries[token] = {
+                                "concepts": concepts_full, "mode": mode,
+                                "card_prompt": card_prompt, "tool": tool_name, "label": label}
+                            self._meshy_bg.pop(token, None)   # 不再算"运行中"
+                        self._sigShowBgGallery.emit(token)
 
                     status, concepts, gerr = self._await_or_background(
                         token,
@@ -2475,13 +2482,14 @@ class Controller(QObject):
                             on_image=on_img, should_stop=should_stop),
                         deliver_gen_bg)
                     if status == "bg":
-                        # 冻结卡片为"已转入后台"终态（显示已生成的部分图，无按钮、不再更新）
+                        # 转后台：这张卡片定格（显示已生成的部分），完成后会另弹一张可交互画廊
                         show(phase="background", prompt=card_prompt,
                              images=list(done_imgs),
-                             note="已转入后台运行中…完成后结果会自动发给 Agent")
+                             note="已转入后台运行中…完成后会在下方弹出可挑选的画廊")
                         return {"success": True, "error": "",
-                                "result": ("已将【%s】转入后台（任务号 %s）。你可以继续做别的；"
-                                           "完成后结果会自动发给你。" % (label, token[:8])),
+                                "result": ("已将【%s】的概念图生成转入后台（任务号 %s）。完成后会"
+                                           "【自动弹出可交互画廊让用户挑选】——你无需处理这批图，"
+                                           "继续响应用户的其他需求即可。" % (label, token[:8])),
                                 "data": {"background": True, "op": token}}
                     if gerr:
                         show(phase="cancelled", note="生成失败: %s" % gerr)
@@ -3008,13 +3016,123 @@ class Controller(QObject):
     @Slot(str, str)
     def resolveConcept(self, token, decision_json):
         """QML -> worker: {action:'submit',selected:[..]} | {action:'regenerate',prompt} | {action:'cancel'}"""
+        try:
+            d = json.loads(decision_json) if decision_json else {}
+        except Exception:
+            d = {}
         q = self._interactive.get(token)
         if q is not None:
-            try:
-                d = json.loads(decision_json) if decision_json else {}
-            except Exception:
-                d = {}
             q.put(d)
+            return
+        # 后台跑完弹出的画廊：原阻塞流程已结束，挑选结果转成给 Agent 的指令
+        if token in self._bg_galleries:
+            self._handle_bg_gallery_decision(token, d)
+
+    @Slot(str)
+    def _show_bg_gallery(self, token):
+        """后台概念图跑完：在一条独立消息行里弹出完整可交互画廊（agent 忙时排队）。"""
+        g = self._bg_galleries.get(token)
+        if not g:
+            return
+        if self._running:
+            if token not in self._pending_bg_galleries:
+                self._pending_bg_galleries.append(token)
+            return
+        concepts = g["concepts"]
+        # 独立系统消息行承载这张画廊（不调 _start_run，避免触发 agent 轮次）
+        self._bm = BlockModel()
+        self._ai_row = self._model.append({"type": "ai", "payload": {"bm": self._bm}})
+        block = {"kind": "concept", "token": token, "phase": "pick",
+                 "mode": g.get("mode", "concept"), "prompt": g.get("card_prompt", ""),
+                 "images": list(concepts), "selected": [], "progress": 100,
+                 "count": len(concepts),
+                 "note": "后台已生成 %d 张 · 勾选后可生成 3D / 二次编辑 / 换提示词" % len(concepts)}
+        self._blocks = [block]
+        self._concept_blocks = {token: block}
+        self._do_flush()
+        self.toast.emit("后台已生成 %d 张概念图，请在画廊里挑选" % len(concepts))
+
+    def _drain_pending_bg_galleries(self):
+        if self._running or not self._pending_bg_galleries:
+            return
+        pend = self._pending_bg_galleries
+        self._pending_bg_galleries = []
+        for tok in pend:
+            if tok in self._bg_galleries:
+                self._show_bg_gallery(tok)
+
+    def _handle_bg_gallery_decision(self, token, d):
+        """后台画廊（原阻塞已结束）里的挑选：统一转成给 Agent 的指令并发起新一轮。"""
+        g = self._bg_galleries.get(token)
+        if not g:
+            return
+        action = (d or {}).get("action")
+        concepts = g["concepts"]
+        card_prompt = g.get("card_prompt", "")
+
+        def _blk(**fields):
+            blk = self._concept_blocks.get(token)
+            if blk is not None:
+                blk.update(fields)
+                self._do_flush()
+
+        if action == "submit":
+            sel = [int(i) for i in (d.get("selected") or [])]
+            chosen = [c for c in concepts if c["index"] in sel] or concepts[:1]
+            paths = [c["image"] for c in chosen]
+            _blk(phase="done", selected=sel, note="已交给 Agent 生成 3D…")
+            self._bg_galleries.pop(token, None)
+            lines = ["【用户操作 · 把选中的概念图做成 3D】",
+                     "用户在后台完成的画廊里选了这 %d 张图，要【直接升级成 3D 模型】"
+                     "（不是要你重做 2D 图）：" % len(paths)]
+            lines += ["- %s" % p for p in paths]
+            lines.append("请对每张调用 meshy_image_to_3d(image=\"<上面的本地路径>\") 生成，"
+                         "再用 import_3d_asset 导入 Houdini。")
+            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
+            return
+
+        if action == "edit":
+            fb = (d.get("prompt") or "").strip()
+            sel = [int(i) for i in (d.get("selected") or [])]
+            sel_imgs = [c["image"] for c in concepts if c["index"] in sel]
+            if not sel_imgs or not fb:
+                _blk(note="请先选中图片并在提示词框写明想要的改动，再点二次编辑")
+                return
+            _blk(phase="done", selected=sel, note="已把反馈交给 Agent，做二次编辑…")
+            self._bg_galleries.pop(token, None)
+            lines = ["【用户反馈 · 二次编辑选中图】", "用户希望的改动：%s" % fb,
+                     "选中的参考图（本地路径）："]
+            lines += ["- %s" % p for p in sel_imgs]
+            lines.append("请理解意图、写出更好的英文编辑提示词，再调用 "
+                         "meshy_image_to_image(image=\"<上面某个路径>\", prompt=\"<优化后的编辑提示>\") 重做。")
+            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
+            return
+
+        if action == "regenerate":
+            fb = (d.get("prompt") or "").strip()
+            gen_tool = ("meshy_image_to_image" if g.get("tool") == "meshy_image_to_image"
+                        else "meshy_text_to_image")
+            _blk(phase="done", note="已把你的意见交给 Agent，优化提示词后重做…")
+            self._bg_galleries.pop(token, None)
+            lines = ["【用户反馈 · 要求重做这批图】"]
+            lines.append("用户意见：%s" % fb if fb
+                         else "用户没满意但未给具体意见——请你判断如何改进。")
+            lines.append("当前提示词：%s" % card_prompt)
+            lines.append("请【理解用户意图、自行改写/优化提示词】（不要原样照搬用户字面），"
+                         "再重新调用 %s 生成新的一批。" % gen_tool)
+            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
+            return
+
+        if action == "done":
+            selset = sorted(set(int(i) for i in (d.get("selected") or [])))
+            _blk(phase="done", selected=selset,
+                 note="已保留 %d 张图片" % (len(selset) or len(concepts)))
+            self._bg_galleries.pop(token, None)
+            return
+
+        # cancel / 其他
+        _blk(phase="cancelled", note="已取消")
+        self._bg_galleries.pop(token, None)
 
     # ---- Meshy 云资产库（侧滑抽屉） ----
     def _exec_houdini_tool(self, name, kwargs):
@@ -4160,6 +4278,9 @@ class Controller(QObject):
         # 本轮结束后，若有已完成的后台 Meshy 任务结果在排队，投递给 agent 继续
         if self._meshy_bg_feedback:
             QTimer.singleShot(0, self._flush_bg_feedback)
+        # 本轮结束后，弹出排队中的后台概念图画廊（供用户挑选）
+        if self._pending_bg_galleries:
+            QTimer.singleShot(0, self._drain_pending_bg_galleries)
 
     # ---- markdown + code rendering of the final answer ----
     def _finalize_answer(self):

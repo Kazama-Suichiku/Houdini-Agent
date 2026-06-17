@@ -9,8 +9,10 @@ def _repo_root():
     root = os.environ.get("HAGENT_REPO")
     if root and os.path.isdir(root):
         return root
+    # pythonrc.py 在 <root>/houdini_agent/houdini_package/scripts/python/ 下，
+    # 需向上 5 层才到加载根 <root>（含 houdini_agent + shared），之前少了一层。
     here = os.path.abspath(__file__)
-    return os.path.abspath(os.path.join(here, "..", "..", "..", ".."))
+    return os.path.abspath(os.path.join(here, "..", "..", "..", "..", ".."))
 
 
 root = _repo_root()

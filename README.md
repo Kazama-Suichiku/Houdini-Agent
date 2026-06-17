@@ -2,9 +2,11 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-An AI-powered assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, a plugin hook system for community extensions, user-defined context rules, and a modern dark UI with bilingual support.
+A standalone AI assistant for SideFX Houdini, featuring autonomous multi-turn tool calling, **Meshy AI 3D generation** (text/image→3D, concept galleries, image-to-image editing, retexture, remesh), a **cloud asset library**, web search, VEX/Python code execution, Plan mode for complex tasks, a brain-inspired long-term memory system, a plugin hook system for community extensions, user-defined context rules, and a modern **QML/Qt Quick** desktop UI with bilingual support.
 
-Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, execute system shell commands, search the web, query local documentation, create structured execution plans, learn from past interactions, and be extended via plugins — all within an iterative agent loop. A centralized **ToolRegistry** unifies core tools, skills, and plugin tools with mode-based access control.
+As of **v2.0**, Houdini Agent runs as a **standalone desktop app** that connects to a running Houdini over a lightweight **bridge** (no longer embedded in the Houdini process), with a completely rewritten **QML/Qt Quick** front-end (Mono Editorial design).
+
+Built on the **OpenAI Function Calling** protocol, the agent can read node networks, create/modify/connect nodes, run VEX wrangles, generate and import 3D assets via Meshy, execute system shell commands, search the web, query local documentation, create structured execution plans, learn from past interactions, and be extended via plugins — all within an iterative agent loop. A centralized **ToolRegistry** unifies core tools, skills, and plugin tools with mode-based access control.
 
 ## Core Features
 
@@ -12,7 +14,7 @@ Built on the **OpenAI Function Calling** protocol, the agent can read node netwo
 
 The AI operates in an autonomous **agent loop**: it receives a user request, plans the steps, calls tools, inspects results, and iterates until the task is complete. Three modes are available:
 
-- **Agent mode** — Full access to all 40+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, and save the scene.
+- **Agent mode** — Full access to all 50+ tools. The AI can create, modify, connect, and delete nodes, set parameters, execute scripts, generate and import 3D assets, and save the scene.
 - **Ask mode** — Read-only. The AI can only query scene structure, inspect parameters, search documentation, and provide analysis. All mutating tools are blocked by a `ToolRegistry` mode guard.
 - **Plan mode** — The AI enters a planning phase: it researches the current scene (read-only), clarifies requirements via `ask_question`, then generates a structured execution plan with DAG flow diagram. The user reviews and confirms before execution begins. An **auto-resume mechanism** detects premature AI termination and forces continuation until all steps are complete.
 
@@ -50,29 +52,30 @@ User request → AI plans → call tools → inspect results → call more tools
 - **Model-aware** — automatically checks if the current model supports vision; non-vision models show a clear warning
 - Supported: OpenAI GPT-5.2/5.3, Claude (all variants), Gemini
 
-### Dark UI
+### QML/Qt Quick UI (Mono Editorial)
 
-- Modern warm khaki dark theme with glassmorphism effects
-- Collapsible blocks for thinking process, tool calls, and results
-- Dedicated **Python Shell** and **System Shell** widgets with syntax highlighting
+The entire front-end was rewritten in **QML/Qt Quick** (`houdini_agent/ui_qml/`), driven by a slim Python `Controller` that streams agent state into a modular QML component library. The design is **Mono Editorial** — a near-black canvas with cream accents and bundled editorial fonts (Fraunces / Newsreader / Space Mono).
+
+- Modern Mono Editorial dark theme with a collapsible **library drawer** + chat column layout
+- Collapsible blocks for thinking process, tool calls, node operations, and results
+- **Meshy generation cards** — live progress for text/image→3D, retexture, remesh; "run in background" button
+- **Concept gallery cards** — interactive multi-select galleries for concept-to-3D / text-to-image / image-to-image, with editable prompts, regenerate, second-pass editing, and escalate-to-3D
+- **Cloud asset library** — a side drawer listing your Meshy generation history with thumbnails; one-click import into Houdini, pagination, and account/balance display
+- Dedicated **Python Shell** and **System Shell** blocks with syntax highlighting
 - **Clickable node paths** — paths like `/obj/geo1/box1` in AI responses become links that navigate to the node in Houdini
-- **Node context bar** showing the currently selected Houdini node
+- **Node context bar** showing the currently selected Houdini node (read-only during Plan planning)
 - **Todo list** displayed above the chat area with live status icons
 - **Token analytics** — real-time token count, reasoning tokens, cache hit rate, and per-model cost estimates (click for detailed breakdown)
-- **AuroraBar** — animated silver-white flowing gradient bar during AI generation
 - **Streaming VEX code preview** — real-time Cursor Apply-style code writing animation
 - Multi-session tabs — run multiple independent conversations
-- Copy button on AI responses
-- `Ctrl+Enter` to send messages
-- **Font scaling** — `Ctrl+=`/`Ctrl+-` to zoom, "Aa" button for slider control
-- **Bilingual UI** — Chinese/English language switching via overflow menu, with all UI elements and system prompts dynamically retranslated
-- **Update notification banner** — lightweight banner above the input area when a new version is detected, with "Update Now" and dismiss buttons
-- **Plugin Manager** — tabbed dialog with Plugins, Tools, and Skills management (enable/disable, reload, settings)
-- **Rules Editor** — dialog for creating and managing persistent user context rules
-- **Memory Manager** — dialog for browsing, editing, and exporting long-term semantic memories
-- **PySide2 IME support** — full Chinese/Japanese/Korean input method support on both Windows and macOS
+- Copy button on AI responses; `Ctrl+Enter` to send messages
+- **Font scaling** — slider popup for live UI zoom; preference persisted
+- **Bilingual UI** — Chinese/English language switching, with all UI elements and system prompts dynamically retranslated
+- **Update notification** — banner when a new version is detected, with "Update Now" and dismiss
+- **Management panel** — in-app Plugin Manager, Rules Editor, and long-term Memory browser
+- **IME support** — full Chinese/Japanese/Korean input method support on Windows and macOS
 
-## Available Tools (40+)
+## Available Tools (50+)
 
 ### Node Operations
 
@@ -113,21 +116,29 @@ User request → AI plans → call tools → inspect results → call more tools
 
 ### 3D Generation (Meshy)
 
-Self-contained integration (`houdini_agent/meshy/`) wrapping the [Meshy](https://meshy.ai) generative-3D API. Generation calls run on the app's background thread (never inside Houdini); the resulting GLB + PBR maps are imported into Houdini and wired into a Principled Shader on the main thread. Generation tools consume Meshy credits and are gated by **confirm mode**. Key via `MESHY_API_KEY` (env or `houdini_ai.ini`), or the ⋯ menu → **Meshy API Key…**.
+Self-contained integration (`houdini_agent/meshy/`) wrapping the [Meshy](https://meshy.ai) generative-3D API. Network calls run on the app's background thread (never inside Houdini); the resulting GLB + PBR maps are imported into Houdini and wired into a Principled Shader on the main thread. Generation tools consume Meshy credits and are gated by **confirm mode**. Key via `MESHY_API_KEY` (env or `houdini_ai.ini`), or the in-app menu → **Meshy API Key…**.
 
 | Tool | Description |
 |------|-------------|
-| `meshy_text_to_3d` | Text → textured 3D model (auto preview→refine), downloads GLB + PBR maps to cache |
+| `meshy_text_to_3d` | Text → textured 3D model (auto preview→refine), downloads GLB + PBR maps to cache; `count` for parallel variants |
 | `meshy_image_to_3d` | Image (URL / data URI / local path / attached concept image) → textured 3D model |
-| `meshy_text_to_image` | Text → N 2D concept/reference images in parallel (gallery: multi-select, editable prompt + regenerate, keep images or escalate selected to 3D) |
-| `meshy_concept_to_3d` | Concept-driven, human-in-the-loop: generates N concept images in parallel → gallery card (multi-select + editable prompt + regenerate) → image-to-3d for the chosen concepts (native `input_task_id` chaining) |
+| `meshy_text_to_image` | Text → N 2D concept/reference images in parallel (single `prompt`+`count` or a `prompts` array for distinct directions); pops a gallery (multi-select, editable prompt + regenerate, keep images or escalate selected to 3D) |
+| `meshy_image_to_image` | **Image-to-image / 2D editing** — reference image(s) + prompt → a new edited image (style swap, background change, variation); auto-uses the user's most recently attached image when none is given; same interactive gallery (regenerate, second-pass edit, escalate to 3D) |
+| `meshy_concept_to_3d` | Concept-driven, human-in-the-loop: generates N concept images in parallel → gallery card (multi-select + editable prompt + regenerate) → image-to-3d for the chosen concepts (native task chaining) |
 | `meshy_retexture` | Re-texture an existing model with a PBR set from a text/image prompt — pairs with `export_node_to_glb` to retexture geometry already in the scene |
 | `meshy_remesh` | Remesh / re-topologize (quad/triangle, target polycount) |
 | `meshy_balance` | Query remaining Meshy credits (free) |
+| `meshy_task_status` | Query progress of generations that were **moved to background** (free); no arg lists all, `op` targets one |
 | `import_3d_asset` | Import a GLB/FBX/OBJ into `/obj` (File SOP) and build + assign a Principled Shader from the PBR maps |
 | `export_node_to_glb` | Export a scene node's geometry to GLB (feeds `meshy_retexture`) |
 
-The value is in the seam: Meshy generates the **seed asset**, Houdini procedurally **amplifies** it (scatter, copy-to-points, fracture, terrain). A live progress card shows generation status; results land as an importable asset the agent chains into the scene.
+The value is in the seam: Meshy generates the **seed asset**, Houdini procedurally **amplifies** it (scatter, copy-to-points, fracture, terrain). A live `MeshyCard` shows generation status; results land as an importable asset the agent chains into the scene.
+
+**Interactive galleries** — `meshy_text_to_image`, `meshy_image_to_image`, and `meshy_concept_to_3d` pop a `ConceptGalleryCard` with phases `gen → pick → making3d → done`: multi-select the images you like, edit the prompt and regenerate, do a second-pass image-to-image edit on a selection, or escalate the chosen images to 3D — all human-in-the-loop.
+
+**Background tasks** — any long Meshy generation can be **moved to the background** ("转入后台"). The agent loop continues while it runs; on completion the result is delivered back as a fresh message, and for galleries an interactive `ConceptGalleryCard` auto-pops (queued until the agent is idle) so you can still pick / edit / escalate. Use `meshy_task_status` to poll explicitly.
+
+**Cloud asset library** — a side drawer (`LibraryContent.qml`) aggregates your Meshy generation history (text/image→3D, retexture, remesh) across pages with thumbnails; one click imports any asset into Houdini (downloads GLB + textures → `import_3d_asset`). The header shows account connection status and remaining credit balance.
 
 ### Code Execution
 
@@ -215,101 +226,91 @@ Skills are pre-optimized Python scripts that run inside the Houdini environment 
 
 ```
 Houdini-Agent/
-├── launcher.py                      # Entry point (auto-detects Houdini)
-├── README.md
-├── README_CN.md
-├── VERSION                          # Semantic version file (e.g. 1.5.5)
+├── launcher.py                      # Entry point — detects Houdini, routes to QML app (in-Houdini or standalone)
+├── README.md / README_CN.md
+├── VERSION                          # Semantic version file (e.g. 2.0.0)
+├── HoudiniAgent.spec                # PyInstaller build spec (standalone app)
+├── build_installer.ps1              # Inno Setup installer build
 ├── lib/                             # Bundled dependencies (requests, urllib3, certifi, tiktoken, …)
+├── assets/                          # App icon (houdini-agent.ico) and brand assets
 ├── config/                          # Runtime config (auto-created, gitignored)
-│   ├── houdini_ai.ini              # API keys & settings
+│   ├── houdini_ai.ini              # API keys & settings (incl. MESHY_API_KEY, telemetry opt-out, install id)
 │   ├── plugins.json                # Plugin enable/disable state, tool disable list, plugin settings
 │   └── user_rules.json             # User-defined context rules (UI rules)
 ├── cache/                           # Conversation cache, doc index, HIP previews
-│   └── plans/                      # Plan mode data files (plan_{session_id}.json)
+│   ├── plans/                      # Plan mode data files (plan_{session_id}.json)
+│   └── meshy/                      # Downloaded GLB/PBR assets + telemetry spool
 ├── rules/                           # File-based user rules (*.md, *.txt auto-loaded)
-├── plugins/                         # Community plugins directory
-│   ├── __init__.py                 # Plugin package marker
-│   ├── _example_plugin.py          # Example plugin template (not auto-loaded, starts with _)
-│   └── PLUGIN_DEV_GUIDE.md         # Plugin development documentation
-├── Doc/                             # Offline documentation
-│   ├── houdini_knowledge_base.txt  # Houdini programming knowledge base
-│   ├── vex_attributes_reference.txt
-│   ├── vex_snippets_reference.txt
-│   ├── labs_knowledge_base.txt     # SideFX Labs nodes knowledge base
-│   ├── heightfields_knowledge_base.txt  # HeightField / Terrain knowledge base
-│   ├── copernicus_knowledge_base.txt    # Copernicus (COP) knowledge base
-│   ├── ml_knowledge_base.txt       # Machine Learning knowledge base
-│   ├── mpm_knowledge_base.txt      # MPM solver knowledge base
-│   ├── copernicus/                  # Copernicus raw docs
-│   ├── heightfields/                # HeightField raw docs
-│   ├── ml/                          # ML raw docs
-│   ├── mpm/                         # MPM raw docs
-│   ├── nodes.zip                   # Node docs index (wiki markup)
-│   ├── vex.zip                     # VEX function docs index
-│   └── hom.zip                     # HOM class/method docs index
-├── shared/                          # Shared utilities
-│   └── common_utils.py             # Path & config helpers
+├── plugins/                         # Community plugins directory (+ PLUGIN_DEV_GUIDE.md)
+├── Doc/                             # Offline documentation (knowledge bases + nodes/vex/hom zip indexes)
+├── shared/                          # Shared utilities (path & config helpers)
 ├── trainData/                       # Exported training data (JSONL)
+├── deploy/                          # Deployment & backend
+│   ├── remote_deploy.py            # Homepage / site deploy (paramiko)
+│   ├── upload_installer.py         # Upload built installer to the download host
+│   └── telemetry_server/           # Usage-telemetry backend (stdlib http.server + sqlite3)
+│       ├── server.py               #   POST /api/telemetry, GET /api/telemetry/stats
+│       ├── ha-telemetry.service    #   systemd unit
+│       └── deploy_telemetry.py     #   deploy script
+├── website/                         # Marketing homepage (houdini-agent.com)
 └── houdini_agent/                   # Main module
+    ├── ui_qml/                     # QML/Qt Quick front-end (Mono Editorial) — primary UI
+    │   ├── controller.py          # Controller (QObject) — QML⇄backend bridge, drives the agent loop,
+    │   │                          #   streams signals, Meshy galleries, background tasks, cloud library
+    │   ├── agent_session.py       # In-Houdini session backend (wraps AIClient + HoudiniMCP)
+    │   ├── bridge_session.py      # Standalone session backend (talks to Houdini via BridgeClient)
+    │   ├── app.py                 # In-Houdini launcher (Houdini-parented QML window, hot-reload)
+    │   ├── external_app.py        # Standalone double-click launcher (+ app/window icon)
+    │   ├── host.py                # QQuickWidget factory; registers bundled editorial fonts
+    │   ├── preview.py             # Dev QML preview (mock data, no Houdini)
+    │   ├── qml/
+    │   │   ├── Main.qml           # Root window — library drawer + chat column
+    │   │   └── HAgent/            # Component library
+    │   │       ├── Theme.qml      #   Mono Editorial palette / fonts / scale
+    │   │       ├── ChatView.qml, MessageUser.qml, MessageAI.qml, Composer.qml, Header.qml,
+    │   │       │   SessionTabs.qml, ContextBar.qml, StatusBar.qml
+    │   │       ├── ProseBlock.qml, CodeBlock.qml, CodePreviewBlock.qml, ThinkingBlock.qml,
+    │   │       │   TodoBlock.qml, ShellBlock.qml, ExecBlock.qml, NodeOpRow.qml, ImageBlock.qml
+    │   │       ├── MeshyCard.qml, ConceptGalleryCard.qml      # Meshy progress + interactive gallery
+    │   │       ├── LibraryContent.qml, ManagementPanel.qml    # Cloud library + plugin/rules/memory panel
+    │   │       └── PlanCard.qml, PlanDag.qml, PlanStreamBlock.qml, AskQuestionCard.qml, ConfirmCard.qml, …
+    │   └── fonts/                 # Fraunces / Newsreader / Space Mono
     ├── meshy/                      # Meshy 3D-generation integration (self-contained, self-registering)
-    │   ├── client.py              # MeshyClient — REST (create/poll/download/balance)
-    │   ├── config.py              # MESHY_API_KEY + cache dir
-    │   ├── schemas.py             # tool schemas + tool-name sets
-    │   ├── network_ops.py         # background-thread orchestration (gen/retexture/remesh)
-    │   └── houdini_io.py          # main-thread import + Principled Shader + GLB export
-    ├── main.py                     # Module entry & window management
+    │   ├── client.py              # MeshyClient — REST (create/poll/download/balance/list_tasks)
+    │   ├── config.py              # MESHY_API_KEY resolution + cache dir
+    │   ├── schemas.py             # tool schemas + tool-name sets (NETWORK/INTERACTIVE/HOUDINI/CONFIRM)
+    │   ├── network_ops.py         # background-thread orchestration (gen/retexture/remesh/library)
+    │   ├── houdini_io.py          # main-thread import + Principled Shader + GLB export
+    │   └── telemetry.py           # anonymous usage telemetry (spool + background upload, opt-out)
+    ├── bridge/                     # Standalone⇄Houdini IPC
+    │   ├── client.py              # BridgeClient — localhost socket client
+    │   └── server.py              # bridge server (runs in Houdini, dispatches tools on main thread)
+    ├── ui/                         # Legacy PySide widgets UI (fallback, HAGENT_UI=legacy)
+    ├── core/                       # Legacy UI core (main_window / agent_runner / session_manager mixins)
+    ├── main.py                     # Legacy module entry (fallback)
     ├── shelf_tool.py               # Houdini shelf tool integration
     ├── qt_compat.py                # PySide2/PySide6 compatibility layer
-    ├── QUICK_SHELF_CODE.py         # Quick shelf code snippet
-    ├── core/
-    │   ├── main_window.py          # Main window (workspace save/restore)
-    │   ├── agent_runner.py         # AgentRunnerMixin — agent loop helpers, confirm mode, tool scheduling
-    │   └── session_manager.py      # SessionManagerMixin — multi-session create/switch/close
-    ├── ui/
-    │   ├── ai_tab.py              # AI Agent tab (Mixin host, agent loop, context management, streaming UI)
-    │   ├── cursor_widgets.py      # UI widgets (theme, chat blocks, todo, shells, token analytics, plan viewer, plugin manager, rules editor)
-    │   ├── header.py              # HeaderMixin — top settings bar (provider, model, toggles, Custom provider dialog)
-    │   ├── input_area.py          # InputAreaMixin — input area, mode switches, @mention, confirm mode
-    │   ├── chat_view.py           # ChatViewMixin — chat display, scrolling, toast messages
-    │   ├── i18n.py                # Internationalization — bilingual support (Chinese/English)
-    │   ├── theme_engine.py        # QSS template rendering & font-size scaling
-    │   ├── font_settings_dialog.py # Font zoom slider dialog
-    │   ├── memory_manager_dialog.py # Memory system UI — browse, edit, delete, export memories
-    │   └── style_template.qss    # Centralized QSS theme stylesheet
+    ├── launcher/                   # Houdini discovery & launch (houdini_discovery.py)
+    ├── houdini_package/            # Bridge package payload installed into Houdini's packages/
     ├── skills/                     # Pre-built analysis scripts (auto-registered as skill:xxx tools)
-    │   ├── __init__.py            # Skill registry, loader & ToolRegistry integration
-    │   ├── analyze_normals.py     # Normal quality detection
-    │   ├── analyze_point_attrib.py # Geometry attribute statistics
-    │   ├── bounding_box_info.py   # Bounding box info
-    │   ├── compare_attributes.py  # Attribute diff between nodes
-    │   ├── connectivity_analysis.py # Connected components
-    │   ├── find_attrib_references.py # Attribute usage search
-    │   ├── find_dead_nodes.py     # Dead/orphan node finder
-    │   ├── trace_dependencies.py  # Dependency tree tracer
-    │   └── analyze_cook_performance.py # Cook-time ranking & bottleneck detection
     └── utils/
         ├── ai_client.py           # AI API client (streaming, Function Calling, web search)
+        ├── ai_client_*.py         # Provider / context / streaming / agent-loop mixins
         ├── doc_rag.py             # Local doc index (nodes/VEX/HOM O(1) lookup)
         ├── token_optimizer.py     # Token budget & compression (tiktoken-powered)
         ├── ultra_optimizer.py     # System prompt & tool definition optimizer
-        ├── training_data_exporter.py # Export conversations as training JSONL
-        ├── updater.py             # Auto-updater (GitHub Releases, ETag caching, notification banner)
+        ├── updater.py             # Auto-updater (GitHub Releases, ETag caching, notification)
         ├── plan_manager.py        # Plan mode data model & persistence
-        ├── hooks.py               # Plugin hook system (HookManager, PluginContext, PluginLoader, decorator API)
-        ├── tool_registry.py       # Unified ToolRegistry — centralizes core/skill/plugin/user tools
-        ├── rules_manager.py       # User Rules manager (UI rules + file rules, prompt injection)
+        ├── hooks.py               # Plugin hook system (HookManager, PluginContext, PluginLoader)
+        ├── tool_registry.py       # Unified ToolRegistry — core/skill/plugin/user tools
+        ├── rules_manager.py       # User Rules manager (UI + file rules, prompt injection)
         ├── memory_store.py        # Three-layer memory (episodic/semantic/procedural) with SQLite
-        ├── embedding.py           # Local text embedding (sentence-transformers / fallback)
-        ├── reward_engine.py       # Reward scoring & memory importance updates
-        ├── reflection.py          # Rule-based + LLM deep reflection module
-        ├── growth_tracker.py      # Growth metrics & personality trait formation
-        └── mcp/                   # Houdini MCP (Model Context Protocol) layer
+        ├── embedding.py / reward_engine.py / reflection.py / growth_tracker.py  # Long-term memory system
+        └── mcp/                   # Houdini MCP layer
             ├── client.py          # Tool executor (node ops, shell, skills dispatch, ToolRegistry fallback)
-            ├── hou_core.py        # Low-level hou module wrappers
+            ├── tools/             # Tool handlers (node_ops / param_ops / exec_ops / doc_ops / inspect)
             ├── node_inputs.json   # Pre-cached input port info (210+ nodes)
-            ├── server.py          # MCP server (reserved)
-            ├── settings.py        # MCP settings
-            └── logger.py          # Logging
+            └── server.py / settings.py / logger.py
 ```
 
 ## Quick Start
@@ -386,19 +387,36 @@ Click the "Set API Key…" button and check "Save to local config".
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Mixin Architecture
+### QML Front-end Architecture
 
-`AITab` is the central widget, composed from five focused Mixins:
+The UI is **QML/Qt Quick** driven by a thin Python layer. The agent loop runs on a background thread; Houdini calls are marshalled back to the Qt main thread.
 
-| Mixin | Module | Responsibility |
-|-------|--------|---------------|
-| `HeaderMixin` | `ui/header.py` | Top settings bar — provider/model selectors, Agent/Web/Think toggles |
-| `InputAreaMixin` | `ui/input_area.py` | Input area, send/stop buttons, mode switches, @-mention autocomplete, confirm mode UI |
-| `ChatViewMixin` | `ui/chat_view.py` | Chat display, message insertion, scroll control, toast notifications |
-| `AgentRunnerMixin` | `core/agent_runner.py` | Agent loop helpers, auto title generation, confirm mode interception, tool category constants |
-| `SessionManagerMixin` | `core/session_manager.py` | Multi-session create/switch/close, session tab bar, state save/restore |
+| Component | Module | Responsibility |
+|-----------|--------|---------------|
+| `Controller` | `ui_qml/controller.py` | Central `QObject` exposed to QML — owns UI state, drives the agent loop, streams callbacks as Qt signals (`_sigThink`, `_sigContent`, `_sigToolCall`, `_sigToolResult`, `_sigNodeOp`, `_sigPlan`, `_sigMeshyProgress`, `_sigConcept`, `_sigLibrary`, `_sigShowBgGallery`, …), and orchestrates Meshy galleries, background tasks, and the cloud library |
+| `ChatModel` | `ui_qml/controller.py` | `QAbstractListModel` of chat rows (user / ai / plan) consumed by `ChatView.qml` |
+| `AgentSession` | `ui_qml/agent_session.py` | UI-agnostic backend wrapping `AIClient` + `HoudiniMCP`; one `run()` drives `agent_loop_auto()` with caller callbacks (in-Houdini mode) |
+| `BridgeAgentSession` | `ui_qml/bridge_session.py` | Standalone backend — same interface, but routes `hou.*` tool calls through `BridgeClient` to a running Houdini |
+| `host.py` / `app.py` / `external_app.py` | `ui_qml/` | QQuickWidget host (registers fonts), in-Houdini launcher, and standalone launcher respectively |
 
-Each Mixin accesses `AITab` state via `self`, enabling clean separation without breaking shared state.
+QML components live in `ui_qml/qml/HAgent/`; `Theme.qml` centralizes the Mono Editorial palette, fonts, and scale.
+
+### Bridge (Standalone ⇄ Houdini)
+
+Since v2.0 the app runs **outside** the Houdini process and talks to it over a small localhost socket bridge:
+
+- **`bridge/server.py`** — runs inside Houdini (auto-started by the installed bridge package). Receives JSON-lines requests and dispatches `execute_tool` calls onto Houdini's **main thread**, auto-registering the Meshy Houdini handlers (`import_3d_asset`, `export_node_to_glb`).
+- **`bridge/client.py`** — `BridgeClient` used by the standalone app: `execute_tool(name, args)`, scene context, and undo, all over the bridge port.
+
+This keeps all `hou.*` access main-thread-safe while letting the UI live in its own process (so the app can launch, detect, and even start Houdini for you).
+
+### Usage Telemetry (anonymous, opt-out)
+
+To measure how much Meshy usage flows through Houdini Agent, each **successful** billable Meshy task records an anonymous event (`meshy/telemetry.py`):
+
+- **What** — random install id (UUID in `houdini_ai.ini`), timestamp, app version, task kind, task id, AI model, mode, **credits consumed**, and the prompt. No account or personal identity.
+- **How** — events are written to a local JSONL spool under `cache/meshy/`, then a background thread batches and POSTs them (with exponential backoff) to `https://houdini-agent.com/api/telemetry`. Offline events survive restarts and upload later; dedup is by event id.
+- **Opt-out** — set `HAGENT_TELEMETRY_OFF=1` or `telemetry_optout` in `houdini_ai.ini`. The backend (`deploy/telemetry_server/`) is pure-stdlib `http.server` + `sqlite3` behind nginx, exposing `POST /api/telemetry` and `GET /api/telemetry/stats`.
 
 ### Plan Mode
 
@@ -466,7 +484,7 @@ Similar to Cursor Rules, users can define persistent context that is automatical
 - **UI Rules** — created and managed via the Rules Editor dialog; stored in `config/user_rules.json`; individually enable/disable
 - **File Rules** — `.md` and `.txt` files placed in the `rules/` directory are auto-loaded (files starting with `_` are treated as drafts and excluded)
 - **Prompt injection** — all enabled rules are merged and wrapped in `<user_rules>` tags, injected into the system prompt
-- Rules Editor features a warm khaki theme matching the main UI, with a list/editor split layout and empty state guidance
+- The Rules Editor lives in the in-app management panel (`ManagementPanel.qml`), with a list/editor split layout and empty-state guidance
 
 ### Context Management
 
@@ -503,7 +521,7 @@ Similar to Cursor Rules, users can define persistent context that is automatical
 ### Internationalization (i18n)
 
 - **Bilingual support** — full Chinese/English interface with `tr()` translation function
-- **Dynamic switching** — change language via overflow menu → Language; all UI elements, tooltips, and system prompts update instantly
+- **Dynamic switching** — change language from the settings menu; all UI elements, tooltips, and system prompts update instantly
 - **Persistent preference** — language choice saved via `QSettings` and restored on startup
 - **System prompt adaptation** — AI reply language enforced via system prompt rules that adapt to the selected UI language
 
@@ -591,6 +609,7 @@ Created attribwrangle1 with random Cd attribute on all points.
 
 ## Version History
 
+- **v2.0.0** — **Standalone app + QML rewrite + Meshy suite**: Houdini Agent becomes a **standalone desktop app** that connects to a running Houdini over a new **socket bridge** (`bridge/client.py` + `bridge/server.py`) — no longer embedded in the Houdini process; all `hou.*` calls stay main-thread-safe. The entire front-end was **rewritten in QML/Qt Quick** (`houdini_agent/ui_qml/`) with a Mono Editorial design, a slim `Controller` (QObject) driving the agent loop and streaming state to a modular QML component library, plus a `ChatModel` (`QAbstractListModel`). **Meshy suite expanded** to 11 tools — added `meshy_text_to_image` (parallel concept galleries, single/multi-direction), `meshy_image_to_image` (2D image-to-image / second-pass editing, auto-uses the attached image), and `meshy_task_status` (poll backgrounded tasks); all interactive tools pop a `ConceptGalleryCard` (multi-select, editable prompt, regenerate, escalate-to-3D). **Background tasks** — any long generation can be moved to the background; the result is auto-delivered as a fresh message and galleries auto-pop when the agent goes idle. **Cloud asset library** — a side drawer aggregating your Meshy generation history with thumbnails and one-click import, plus account/credit-balance display. **Anonymous usage telemetry** (opt-out) records per-task credit consumption to a pure-stdlib backend (`deploy/telemetry_server/`). New branded app/installer icon; PyInstaller + Inno Setup packaging.
 - **v1.6.0** — **Meshy 3D generation integration**: New self-contained `houdini_agent/meshy/` package adding text/image→3D, retexture, and remesh via the Meshy API, plus `import_3d_asset` (GLB import + auto Principled Shader from PBR maps) and `export_node_to_glb`. Network calls run app-side on the background thread; Houdini I/O runs on the main thread (in-process or over the bridge). Generation tools consume credits and are gated by confirm mode. Tools self-register via `ToolRegistry` handlers — core files (`agent_session`/`bridge_session`/`controller`/`bridge.server`) carry only minimal reference hooks. New `MeshyCard` QML block streams live generation progress; in-app key entry via ⋯ → Meshy API Key… (`MESHY_API_KEY`).
 - **v1.5.5** — **DeepSeek V4 API adaptation + JSON Output**: New `deepseek-v4-flash` / `deepseek-v4-pro` models with explicit `thinking` parameter and `reasoning_effort` support. Old models (`deepseek-chat` / `deepseek-reasoner`) retained for compatibility (deprecated 2026/07/24). Default model migrated to `deepseek-v4-flash`. `chat_stream()` / `chat()` gain `response_format` parameter; reflection module uses `json_object` mode for reliable JSON output. V4 model pricing, context limits, and feature configs added.
 - **v1.5.4** — **Long-term memory global toggle**: Added enable/disable switch for the entire memory system. Multiple fixes.

@@ -154,7 +154,8 @@ Item {
                                 visible: !cell.pending
                                 anchors.fill: parent; anchors.margins: 2
                                 source: cg.fileUrl(cell.modelData.image)
-                                fillMode: Image.PreserveAspectCrop
+                                // 完整显示整图（非正方形比例不裁切，正方格内留边），尊重 API 生成的实际画幅
+                                fillMode: Image.PreserveAspectFit
                                 asynchronous: true; clip: true
                             }
                             // generating placeholder (pulsing dot + label)
