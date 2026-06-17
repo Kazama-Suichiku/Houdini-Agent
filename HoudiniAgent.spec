@@ -32,6 +32,9 @@ datas += datas_for("houdini_agent/ui_qml/qml", "houdini_agent/ui_qml/qml")
 datas += datas_for("houdini_agent/ui_qml/fonts", "houdini_agent/ui_qml/fonts")
 datas += datas_for("houdini_agent/houdini_package", "houdini_agent/houdini_package")
 datas += datas_for("houdini_agent/utils/mcp/node_inputs.json", "houdini_agent/utils/mcp")
+# meshy 动作库目录：app 侧由冻结模块按 __file__ 相对路径加载，必须放到顶层 meshy 包路径下
+# （bridge_payload 那份只供 Houdini 侧；此处与 node_inputs.json 同理）。
+datas += datas_for("houdini_agent/meshy/animation_library.json", "houdini_agent/meshy")
 datas += collect_data_files("PySide6", includes=["Qt/qml/**", "Qt/plugins/**", "Qt/translations/**"])
 
 hiddenimports = []

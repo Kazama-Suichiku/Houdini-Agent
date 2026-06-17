@@ -13,18 +13,36 @@ meshy_search_animations 用它做"语义初筛"：把用户的自然语言意图
 import json
 import os
 
-_DATA_PATH = os.path.join(os.path.dirname(__file__), "animation_library.json")
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 _CACHE = None
+
+
+def _candidate_paths():
+    """动作库 JSON 的候选路径：优先本模块同目录；冻结打包时再兜底到 bridge_payload。"""
+    cands = [os.path.join(_HERE, "animation_library.json")]
+    # PyInstaller 冻结场景：app 侧冻结模块的 __file__ 目录可能没放数据文件，
+    # 兜底去 bundle 根 / bridge_payload 找一份。
+    base = getattr(__import__("sys"), "_MEIPASS", None)
+    if base:
+        cands.append(os.path.join(base, "houdini_agent", "meshy", "animation_library.json"))
+        cands.append(os.path.join(base, "bridge_payload", "houdini_agent", "meshy",
+                                  "animation_library.json"))
+    return cands
 
 
 def _load():
     global _CACHE
     if _CACHE is None:
-        try:
-            with open(_DATA_PATH, "r", encoding="utf-8") as f:
-                _CACHE = json.load(f)
-        except Exception:
+        for p in _candidate_paths():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    _CACHE = json.load(f)
+                    break
+            except Exception:
+                continue
+        if _CACHE is None:
+            print("[meshy] 动作库 JSON 未找到（检索将为空）。已尝试: %s" % _candidate_paths())
             _CACHE = {"actions": [], "id_range": [0, 696], "verified_max_id": 0}
     return _CACHE
 
