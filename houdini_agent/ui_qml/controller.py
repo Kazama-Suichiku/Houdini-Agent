@@ -1431,7 +1431,7 @@ class Controller(QObject):
                             "发现新版本：%s\n"
                             "当前版本：%s\n\n"
                             "%s\n\n"
-                            "自动下载应用暂未接入 QML 面板，请先使用测试环境验证后再更新正式目录。"
+                            "请到 houdini-agent.com 或 GitHub Releases 下载新版安装包更新。"
                         ) % (r.get("remote_version", "?"), r.get("local_version", "?"), notes)
                     else:
                         msg = "已是最新版本。\n\n当前版本：%s\n最新 Release：%s" % (
