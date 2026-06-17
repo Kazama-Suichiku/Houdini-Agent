@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>历史版本下载 · Houdini Agent</title>
+<meta name="description" content="Houdini Agent 各版本独立安装程序下载。" />
+<style>
+@font-face{font-family:'Fraunces';src:url('../assets/fonts/Fraunces.ttf') format('truetype');font-weight:300 700;font-display:swap}
+@font-face{font-family:'Newsreader';src:url('../assets/fonts/Newsreader.ttf') format('truetype');font-weight:300 600;font-display:swap}
+@font-face{font-family:'Space Mono';src:url('../assets/fonts/SpaceMono-Regular.ttf') format('truetype');font-weight:400 700;font-display:swap}
+:root{
+  --bg:#0d0d0d; --bg2:#0a0a0a;
+  --text:#d8d6d0; --text-bright:#fafafa; --text-dim:#9a978f; --text-mute:#6b6862;
+  --accent:#e8e2d4; --accent-soft:rgba(232,226,212,.10); --accent-line:rgba(232,226,212,.30);
+  --border:rgba(255,255,255,.12); --border-soft:rgba(255,255,255,.07);
+  --display:"Fraunces","Noto Serif SC",serif;
+  --body:"Newsreader","Noto Serif SC",serif;
+  --mono:"Space Mono","Noto Sans SC",monospace;
+  --maxw:880px; --track:.18em;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent);color:var(--bg)}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+
+header{border-bottom:1px solid var(--border);padding:22px 0}
+.bar{display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px}
+.mark{width:28px;height:28px;display:grid;place-items:center;background:var(--accent);color:var(--bg);font-family:var(--display);font-weight:700;font-size:16px}
+.brand .nm{font-family:var(--mono);font-size:12px;letter-spacing:var(--track);text-transform:uppercase;color:var(--text-dim)}
+.home{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--text-dim);border:1px solid var(--border-soft);padding:7px 12px;transition:.25s}
+.home:hover{color:var(--text-bright);border-color:var(--accent-line)}
+
+.head{padding:64px 0 36px}
+.eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.eyebrow .ln{height:1px;width:40px;background:var(--accent-line)}
+.eyebrow .ml{font-family:var(--mono);font-size:11px;letter-spacing:var(--track);text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--display);font-weight:500;font-size:44px;line-height:1.08;color:var(--text-bright);letter-spacing:-.01em}
+h1 em{font-style:italic;font-weight:400;color:var(--accent)}
+.lede{margin-top:16px;color:var(--text-dim);max-width:60ch}
+.lede code{font-family:var(--mono);font-size:.85em;color:var(--accent);background:var(--accent-soft);padding:1px 6px}
+
+.list{padding:8px 0 80px;display:flex;flex-direction:column;gap:18px}
+.rel{border:1px solid var(--border);background:var(--bg2);padding:26px 28px;position:relative;transition:.25s}
+.rel:hover{border-color:var(--accent-line)}
+.rel.latest::before{content:"LATEST";position:absolute;top:0;right:0;font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--bg);background:var(--accent);padding:4px 9px}
+.rel .top{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+.ver{font-family:var(--display);font-weight:600;font-size:30px;color:var(--text-bright)}
+.meta{font-family:var(--mono);font-size:12px;color:var(--text-mute);letter-spacing:.04em}
+.rel .desc{margin-top:12px;color:var(--text-dim);max-width:64ch}
+.rel .cta{margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.dl{font-family:var(--mono);font-size:13px;letter-spacing:.05em;background:var(--accent);color:var(--bg);font-weight:700;padding:11px 20px;transition:.2s}
+.dl:hover{background:#fff}
+.sub{font-family:var(--mono);font-size:12px;color:var(--text-dim);border:1px solid var(--border-soft);padding:10px 16px;transition:.2s}
+.sub:hover{color:var(--text-bright);border-color:var(--accent-line)}
+
+footer{border-top:1px solid var(--border);padding:28px 0 60px;color:var(--text-mute);font-family:var(--mono);font-size:12px;letter-spacing:.03em}
+footer code{color:var(--text-dim)}
+footer a{color:var(--text-dim);border-bottom:1px solid var(--border-soft)}
+footer a:hover{color:var(--accent)}
+@media(max-width:600px){h1{font-size:34px}.ver{font-size:26px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/">
+      <span class="mark">H</span>
+      <span class="nm">Houdini Agent</span>
+    </a>
+    <a class="home" href="/">← 返回首页 · Home</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="head">
+    <div class="eyebrow"><span class="ln"></span><span class="ml">Downloads · 历史版本</span></div>
+    <h1>各版本<em>独立下载</em>。</h1>
+    <p class="lede">每个版本都是独立的安装程序，可单独下载安装。想要永远拿最新稳定版，直接用 <code>/download/HoudiniAgent-Setup.exe</code> 即可。</p>
+  </section>
+
+  <section class="list">
+
+    <article class="rel latest">
+      <div class="top">
+        <span class="ver">v2.0.5</span>
+        <span class="meta">2026-06-17 · Windows x64 · ~72 MB</span>
+      </div>
+      <p class="desc">关闭 Houdini 后能正确识别连接已断开（不再卡超时）；安装程序写入 Windows 文件版本信息。含 2.0.4 的 Houdini 19.5 支持与 QML 版本选择弹窗。</p>
+      <div class="cta">
+        <a class="dl" href="/download/HoudiniAgent-Setup-2.0.5.exe" download>下载 v2.0.5 · Download</a>
+        <a class="sub" href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases/tag/v2.0.5" target="_blank" rel="noopener">发行说明 · Release notes</a>
+      </div>
+    </article>
+
+    <article class="rel">
+      <div class="top">
+        <span class="ver">v2.0.4</span>
+        <span class="meta">2026-06-17 · Windows x64 · ~72 MB</span>
+      </div>
+      <p class="desc">支持 Houdini 19.5+（经 Bridge 连接，独立窗口运行）；版本选择弹窗重写为 QML / Mono Editorial 风格。包含 2.0.1–2.0.3 的就地更新与崩溃修复。</p>
+      <div class="cta">
+        <a class="dl" href="/download/HoudiniAgent-Setup-2.0.4.exe" download>下载 v2.0.4 · Download</a>
+        <a class="sub" href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases/tag/v2.0.4" target="_blank" rel="noopener">发行说明 · Release notes</a>
+      </div>
+    </article>
+
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    最新稳定版固定链接：<code>houdini-agent.com/download/HoudiniAgent-Setup.exe</code> · 全部发行版见 <a href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases" target="_blank" rel="noopener">GitHub Releases</a>
+  </div>
+</footer>
+</body>
+</html>
