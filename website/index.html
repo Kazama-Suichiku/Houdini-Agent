@@ -1,0 +1,1912 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Houdini Agent — AI 智能助手 + AI 3D 生成 for SideFX Houdini</title>
+<meta name="description" content="基于 AI 的 SideFX Houdini 智能助手 — 自主 Agent 循环、50+ 工具、VEX/Python 执行、Plan 模式、长期记忆、插件系统，并集成 Meshy AI 3D 生成：文生/图生 3D、概念图画廊、图生图二次编辑、云资产库。" />
+<link rel="canonical" href="https://houdini-agent.com/" />
+<meta name="theme-color" content="#0d0d0d" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20fill='%23e8e2d4'/%3E%3Cpath%20d='M16%207L25%2016L16%2025L7%2016Z'%20fill='%230d0d0d'/%3E%3C/svg%3E" />
+<!-- Open Graph / 分享卡片 -->
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://houdini-agent.com/" />
+<meta property="og:title" content="Houdini Agent — 在 Houdini 里用自然语言建网，并生成 3D 资产" />
+<meta property="og:description" content="基于 AI 的 SideFX Houdini 智能助手 — 自主 Agent 循环、50+ 工具、VEX/Python、Plan 模式、长期记忆、插件，并集成 Meshy AI 3D 生成与云资产库。" />
+<meta property="og:image" content="https://houdini-agent.com/assets/ui-main.png" />
+<meta property="og:locale" content="zh_CN" />
+<meta property="og:locale:alternate" content="en_US" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Houdini Agent — AI assistant + AI 3D generation for SideFX Houdini" />
+<meta name="twitter:description" content="An AI assistant for Houdini — autonomous agent loop, 50+ tools, VEX/Python, Plan mode, memory, plugins — plus Meshy AI 3D generation, concept galleries and a cloud asset library." />
+<meta name="twitter:image" content="https://houdini-agent.com/assets/ui-main.png" />
+<style>
+/* ---- self-hosted fonts (no external CDN; fast & reliable for CN visitors) ---- */
+@font-face{font-family:'Fraunces';src:url('assets/fonts/Fraunces.ttf') format('truetype');font-weight:300 700;font-style:normal;font-display:swap}
+@font-face{font-family:'Fraunces';src:url('assets/fonts/Fraunces.ttf') format('truetype');font-weight:300 700;font-style:italic;font-display:swap}
+@font-face{font-family:'Newsreader';src:url('assets/fonts/Newsreader.ttf') format('truetype');font-weight:300 600;font-style:normal;font-display:swap}
+@font-face{font-family:'Newsreader';src:url('assets/fonts/Newsreader.ttf') format('truetype');font-weight:300 600;font-style:italic;font-display:swap}
+@font-face{font-family:'Space Mono';src:url('assets/fonts/SpaceMono-Regular.ttf') format('truetype');font-weight:400 700;font-style:normal;font-display:swap}
+/* ============================================================
+   MONO EDITORIAL — Houdini Agent homepage
+   palette + type mirror the QML Theme singleton (single source).
+   ============================================================ */
+:root{
+  --bg:#0d0d0d; --bg2:#0a0a0a; --code-bg:#080808;
+  --text:#d8d6d0; --text-bright:#fafafa; --text-dim:#9a978f; --text-mute:#6b6862;
+  --accent:#e8e2d4; --accent-soft:rgba(232,226,212,.10); --accent-line:rgba(232,226,212,.30);
+  --border:rgba(255,255,255,.12); --border-soft:rgba(255,255,255,.07);
+  --ok:#b8c5a0; --ok-soft:rgba(184,197,160,.12); --warn:#d4a373; --err:#dd9999;
+  --syn-com:#5e5b54; --syn-kw:#e8e2d4; --syn-fn:#c9b896; --syn-attr:#d4a373; --syn-num:#a3b18a; --syn-str:#bc9b7a;
+  --display:"Fraunces","Noto Serif SC",serif;
+  --body:"Newsreader","Noto Serif SC",serif;
+  --mono:"Space Mono","Noto Sans SC",monospace;
+  --maxw:1180px;
+  --track:.18em;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:var(--body); font-size:17px; line-height:1.7;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  overflow-x:hidden;
+}
+/* grain + faint vignette atmosphere */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:1; opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:1;
+  background:radial-gradient(120% 80% at 50% -10%, rgba(232,226,212,.05), transparent 60%);
+}
+::selection{background:var(--accent);color:var(--bg)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(232,226,212,.18);border-radius:0}
+::-webkit-scrollbar-track{background:var(--bg2)}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 32px;position:relative;z-index:2}
+
+/* micro label */
+.ml{font-family:var(--mono);font-size:11px;letter-spacing:var(--track);text-transform:uppercase;color:var(--text-mute)}
+.ml.accent{color:var(--accent)}
+
+/* ============================================================ NAV */
+header.nav{
+  position:fixed;top:0;left:0;right:0;z-index:50;
+  border-bottom:1px solid transparent;transition:.3s;
+  background:linear-gradient(180deg,rgba(13,13,13,.7),rgba(13,13,13,0));
+  backdrop-filter:blur(0px);
+}
+header.nav.scrolled{
+  background:rgba(13,13,13,.85);backdrop-filter:blur(16px);border-bottom-color:var(--border);
+}
+.nav-in{max-width:var(--maxw);margin:0 auto;padding:16px 32px;display:flex;align-items:center;gap:14px}
+.brand{display:flex;align-items:center;gap:11px;margin-right:auto}
+.brand .mark{
+  width:30px;height:30px;display:grid;place-items:center;background:var(--accent);color:var(--bg);
+  font-size:16px;line-height:1;flex-shrink:0;
+}
+.brand .nm{font-family:var(--display);font-weight:500;font-size:19px;color:var(--text-bright);letter-spacing:-.01em}
+.nav-links{display:flex;gap:30px;align-items:center}
+.nav-links a{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);transition:.2s;position:relative;padding:4px 0}
+.nav-links a:hover{color:var(--text-bright)}
+.nav-links a::after{content:"";position:absolute;left:0;right:100%;bottom:-2px;height:1px;background:var(--accent);transition:right .25s}
+.nav-links a:hover::after{right:0}
+.nav-links a.active{color:var(--text-bright)}
+.nav-links a.active::after{right:0;background:var(--accent)}
+.nav-actions{display:flex;gap:10px;align-items:center}
+.langtog{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--text-dim);border:1px solid var(--border);background:transparent;cursor:pointer;padding:7px 10px;transition:.2s}
+.langtog:hover{color:var(--text-bright);border-color:var(--accent-line)}
+.btn{
+  font-family:var(--mono);font-size:12px;letter-spacing:.05em;text-transform:uppercase;
+  padding:9px 18px;cursor:pointer;transition:.2s;border:1px solid var(--border);background:transparent;color:var(--text);
+  display:inline-flex;align-items:center;gap:8px;white-space:nowrap;
+}
+.btn:hover{border-color:var(--accent-line);color:var(--text-bright)}
+.btn.solid{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
+.btn.solid:hover{filter:brightness(1.08)}
+/* hamburger (hidden on desktop) */
+.nav-toggle{display:none;width:34px;height:34px;border:1px solid var(--border);background:transparent;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0}
+.nav-toggle span{display:block;width:16px;height:1.5px;background:var(--text);transition:.25s}
+header.nav.open .nav-toggle span:nth-child(1){transform:translateY(5.5px) rotate(45deg)}
+header.nav.open .nav-toggle span:nth-child(2){opacity:0}
+header.nav.open .nav-toggle span:nth-child(3){transform:translateY(-5.5px) rotate(-45deg)}
+@media(max-width:880px){
+  .nav-toggle{display:flex}
+  .nav-links{
+    position:absolute;top:100%;left:0;right:0;flex-direction:column;align-items:flex-start;gap:0;
+    background:rgba(13,13,13,.98);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);
+    padding:8px 32px 16px;display:none;
+  }
+  header.nav.open .nav-links{display:flex}
+  .nav-links a{padding:13px 0;width:100%;border-bottom:1px solid var(--border-soft);font-size:13px}
+  .nav-links a::after{display:none}
+  .nav-actions .btn{padding:9px 13px}
+}
+@media(max-width:520px){
+  .nav-actions .btn[href*="github"]{display:none}
+  .nav-in{gap:8px;padding:14px 20px}
+  .wrap{padding:0 20px}
+}
+
+/* back-to-top */
+.totop{
+  position:fixed;right:24px;bottom:24px;z-index:45;width:44px;height:44px;
+  border:1px solid var(--border);background:rgba(13,13,13,.7);backdrop-filter:blur(10px);
+  color:var(--text);cursor:pointer;font-size:18px;display:grid;place-items:center;
+  opacity:0;transform:translateY(10px);pointer-events:none;transition:.3s;
+}
+.totop.show{opacity:1;transform:none;pointer-events:auto}
+.totop:hover{border-color:var(--accent-line);color:var(--accent)}
+
+/* accessibility: respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .reveal,.st-child{opacity:1!important;transform:none!important}
+}
+
+/* ============================================================ HERO */
+.hero{padding:170px 0 90px;position:relative}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.hero .eyebrow{display:flex;align-items:center;gap:14px;margin-bottom:30px}
+.hero .eyebrow .ln{height:1px;width:46px;background:var(--accent-line)}
+.hero h1{
+  font-family:var(--display);font-weight:300;font-size:clamp(40px,5.4vw,72px);line-height:1.02;
+  letter-spacing:-.02em;color:var(--text-bright);margin-bottom:26px;
+}
+.hero h1 em{font-style:italic;font-weight:400;color:var(--accent)}
+.hero .lede{font-size:19px;line-height:1.65;color:var(--text-dim);max-width:540px;margin-bottom:18px}
+.hero .lede b{color:var(--text);font-weight:500}
+.hero .sub{font-size:15px;color:var(--text-mute);max-width:520px;margin-bottom:36px;font-family:var(--body)}
+.hero-cta{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.hero-cta .ver{font-family:var(--mono);font-size:12px;color:var(--text-mute);letter-spacing:.06em;margin-left:6px}
+.hero-stats{display:flex;gap:34px;margin-top:46px;padding-top:30px;border-top:1px solid var(--border-soft);flex-wrap:wrap}
+.hstat .n{font-family:var(--display);font-size:34px;font-weight:400;color:var(--text-bright);line-height:1}
+.hstat .n em{font-style:italic;color:var(--accent)}
+.hstat .l{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mute);margin-top:8px}
+
+/* product shot frame */
+.shot{position:relative}
+.shot-frame{
+  border:1px solid var(--border);background:var(--bg2);position:relative;overflow:hidden;
+  box-shadow:0 50px 120px -40px rgba(0,0,0,.9);
+}
+.shot-frame img{display:block;width:100%;height:auto}
+.shot{position:relative;padding-bottom:30px}
+.shot .tag{
+  position:absolute;left:0;bottom:0;
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-mute);display:flex;align-items:center;gap:10px;
+}
+.shot .tag::before{content:"";width:22px;height:1px;background:var(--accent-line)}
+@media(max-width:920px){.hero-grid{grid-template-columns:1fr;gap:40px}.shot{max-width:440px}}
+
+/* ============================================================ SECTION CHROME */
+section{padding:96px 0;position:relative}
+.sec-head{margin-bottom:56px;max-width:680px}
+.sec-head .kicker{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.sec-head .kicker .ln{height:1px;width:34px;background:var(--accent-line)}
+.sec-head h2{font-family:var(--display);font-weight:300;font-size:clamp(30px,3.6vw,46px);line-height:1.08;letter-spacing:-.02em;color:var(--text-bright)}
+.sec-head h2 em{font-style:italic;color:var(--accent)}
+.sec-head p{margin-top:18px;color:var(--text-dim);font-size:18px;line-height:1.65}
+.divider{height:1px;background:var(--border-soft);max-width:var(--maxw);margin:0 auto}
+
+/* ============================================================ FEATURE GRID */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft)}
+.feat{background:var(--bg);padding:34px 30px;transition:.3s;position:relative}
+.feat:hover{background:var(--bg2)}
+.feat .idx{font-family:var(--mono);font-size:11px;color:var(--text-mute);letter-spacing:.1em}
+.feat h3{font-family:var(--display);font-weight:500;font-size:22px;color:var(--text-bright);margin:16px 0 12px;letter-spacing:-.01em}
+.feat h3 em{font-style:italic;color:var(--accent)}
+.feat p{font-size:15.5px;line-height:1.62;color:var(--text-dim)}
+.feat .pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+.feat .pill{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-mute);border:1px solid var(--border);padding:3px 8px}
+@media(max-width:920px){.feat-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.feat-grid{grid-template-columns:1fr}}
+
+/* modes */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:50px}
+.mode{border:1px solid var(--border);padding:30px 26px;position:relative;overflow:hidden;transition:.3s}
+.mode::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent);transform:scaleY(0);transform-origin:top;transition:.35s}
+.mode:hover::before{transform:scaleY(1)}
+.mode .mtag{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+.mode h4{font-family:var(--display);font-style:italic;font-weight:400;font-size:26px;color:var(--text-bright);margin-bottom:12px}
+.mode p{font-size:15px;color:var(--text-dim);line-height:1.6}
+@media(max-width:760px){.modes{grid-template-columns:1fr}}
+
+/* loop diagram */
+.loop{margin-top:54px;border:1px solid var(--border);padding:40px;background:var(--bg2)}
+.loop-flow{display:flex;align-items:center;gap:0;flex-wrap:wrap;row-gap:16px;justify-content:center}
+.lnode{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--text);border:1px solid var(--border);padding:11px 16px;white-space:nowrap;transition:.2s}
+.lnode.hot{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+.ledge{width:30px;height:1px;background:var(--border);position:relative;flex-shrink:0}
+.ledge::after{content:"";position:absolute;right:0;top:-3px;border-left:5px solid var(--border);border-top:3px solid transparent;border-bottom:3px solid transparent}
+@media(max-width:760px){.ledge{width:16px}.lnode{font-size:11px;padding:9px 11px}}
+
+/* ============================================================ TOOLS CATALOG */
+.tools-cat{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 56px}
+.tcat .tcat-h{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px}
+.tcat .tcat-h .t{font-family:var(--display);font-weight:500;font-size:19px;color:var(--text-bright)}
+.tcat .tcat-h .c{font-family:var(--mono);font-size:11px;color:var(--text-mute);margin-left:auto}
+.trow{display:flex;gap:12px;padding:7px 0;align-items:baseline;border-bottom:1px solid var(--border-soft)}
+.trow:last-child{border-bottom:none}
+.trow .tn{font-family:var(--mono);font-size:12.5px;color:var(--accent);flex-shrink:0;min-width:188px}
+.trow .tdz{font-size:14px;color:var(--text-dim);line-height:1.5}
+@media(max-width:820px){.tools-cat{grid-template-columns:1fr;gap:30px}.trow{flex-direction:column;gap:2px}.trow .tn{min-width:0}}
+
+/* ============================================================ PROVIDERS */
+.prov-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft)}
+.prov{background:var(--bg);padding:26px 24px;transition:.3s}
+.prov:hover{background:var(--bg2)}
+.prov .pn{font-family:var(--display);font-weight:500;font-size:20px;color:var(--text-bright);margin-bottom:6px}
+.prov .pk{font-family:var(--mono);font-size:11px;color:var(--text-mute);letter-spacing:.04em;margin-bottom:14px;text-transform:uppercase}
+.prov .pm{display:flex;flex-wrap:wrap;gap:6px}
+.prov .pm code{font-family:var(--mono);font-size:11px;color:var(--text-dim);border:1px solid var(--border);padding:3px 8px;background:var(--code-bg)}
+@media(max-width:920px){.prov-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.prov-grid{grid-template-columns:1fr}}
+
+/* ============================================================ GALLERY */
+.gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:24px}
+.gcard{border:1px solid var(--border);background:var(--bg2);overflow:hidden;display:flex;flex-direction:column}
+.gcard .gimg{aspect-ratio:16/10;background:var(--code-bg);position:relative;overflow:hidden;display:grid;place-items:center}
+.gcard .gimg img{width:100%;height:100%;object-fit:cover;object-position:top}
+.gcard .ph{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:30px;color:var(--text-mute)}
+.gcard .ph .pico{font-family:var(--display);font-style:italic;font-size:38px;color:var(--border)}
+.gcard .ph .pl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.gcard .ph .pspec{font-size:13px;color:var(--text-mute);max-width:280px;line-height:1.5}
+.gcard .gmeta{padding:18px 22px;border-top:1px solid var(--border)}
+.gcard .gmeta .gt{font-family:var(--display);font-weight:500;font-size:18px;color:var(--text-bright)}
+.gcard .gmeta .gd{font-size:14px;color:var(--text-dim);margin-top:5px}
+.gcard .gmeta .gfile{font-family:var(--mono);font-size:10.5px;color:var(--accent);margin-top:10px;letter-spacing:.04em}
+@media(max-width:760px){.gallery{grid-template-columns:1fr}}
+
+/* ============================================================ INSTALL */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-bottom:44px}
+.step{border:1px solid var(--border);padding:28px 24px}
+.step .sn{font-family:var(--display);font-style:italic;font-size:40px;color:var(--accent);line-height:1;margin-bottom:16px}
+.step h4{font-family:var(--display);font-weight:500;font-size:19px;color:var(--text-bright);margin-bottom:10px}
+.step p{font-size:14.5px;color:var(--text-dim);line-height:1.55}
+@media(max-width:760px){.steps{grid-template-columns:1fr}}
+
+/* code block */
+.code{border:1px solid var(--border);background:var(--code-bg);margin:18px 0;overflow:hidden}
+.code .chd{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
+.code .chd .lang{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.code .chd .cp{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-mute);border:1px solid var(--border);background:transparent;padding:4px 11px;cursor:pointer;transition:.2s}
+.code .chd .cp:hover{color:var(--text-bright);border-color:var(--accent-line)}
+.code pre{padding:18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.8;color:var(--text)}
+.code .com{color:var(--syn-com)}.code .kw{color:var(--syn-kw)}.code .fn{color:var(--syn-fn)}
+.code .attr{color:var(--syn-attr)}.code .num{color:var(--syn-num)}.code .str{color:var(--syn-str)}
+.subhead{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin:34px 0 4px}
+
+/* env requirements inline list */
+.reqs{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.reqs .req{font-family:var(--mono);font-size:12px;color:var(--text-dim);border:1px solid var(--border);padding:8px 14px}
+.reqs .req b{color:var(--accent);font-weight:400}
+
+/* ============================================================ USAGE / TRANSCRIPTS */
+.usage-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.tx{border:1px solid var(--border);background:var(--bg2);padding:0;overflow:hidden;display:flex;flex-direction:column}
+.tx .txh{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mute);padding:13px 18px;border-bottom:1px solid var(--border)}
+.tx .txb{padding:20px 18px;display:flex;flex-direction:column;gap:14px}
+.bub-u{align-self:flex-end;max-width:88%;border:1px solid var(--border);padding:11px 14px;color:var(--text-bright);font-size:14.5px;line-height:1.5}
+.ai-row{border-left:1px solid var(--border);padding-left:14px;display:flex;flex-direction:column;gap:9px}
+.ai-tools{display:flex;flex-direction:column;gap:4px}
+.ai-tool{display:flex;align-items:center;gap:9px;border:1px solid var(--border);padding:7px 11px;font-size:12px}
+.ai-tool .tg{color:var(--ok);font-family:var(--mono)}
+.ai-tool .tn{font-family:var(--mono);font-size:11.5px;color:var(--text-bright)}
+.ai-tool .td{font-family:var(--mono);font-size:11px;color:var(--text-mute);margin-left:auto}
+.ai-say{font-size:14.5px;line-height:1.6;color:var(--text)}
+.ai-say b{color:var(--text-bright);font-weight:500}
+.ai-say code{font-family:var(--mono);font-size:12.5px;color:var(--accent);background:var(--code-bg);padding:1px 6px;border:1px solid var(--border-soft)}
+@media(max-width:820px){.usage-grid{grid-template-columns:1fr}}
+
+/* ============================================================ FAQ */
+.faq{max-width:820px}
+.qa{border-bottom:1px solid var(--border);padding:4px 0}
+.qa summary{list-style:none;cursor:pointer;padding:22px 0;display:flex;align-items:center;gap:16px;font-family:var(--display);font-size:21px;font-weight:400;color:var(--text-bright);transition:.2s}
+.qa summary::-webkit-details-marker{display:none}
+.qa summary .qx{font-family:var(--mono);font-size:18px;color:var(--accent);transition:.3s;flex-shrink:0;width:18px}
+.qa[open] summary .qx{transform:rotate(45deg)}
+.qa summary:hover{color:var(--accent)}
+.qa .ans{padding:0 0 24px 34px;color:var(--text-dim);font-size:16px;line-height:1.7}
+.qa .ans code{font-family:var(--mono);font-size:13px;color:var(--accent)}
+
+/* ============================================================ DOWNLOAD CTA */
+.dl{border:1px solid var(--accent-line);background:linear-gradient(180deg,rgba(232,226,212,.05),transparent);padding:64px 48px;text-align:center;position:relative;overflow:hidden}
+.dl h2{font-family:var(--display);font-weight:300;font-size:clamp(32px,4.4vw,56px);line-height:1.05;color:var(--text-bright);margin-bottom:18px;letter-spacing:-.02em}
+.dl h2 em{font-style:italic;color:var(--accent)}
+.dl p{color:var(--text-dim);font-size:18px;max-width:540px;margin:0 auto 16px}
+.dl .reqline{font-family:var(--mono);font-size:12px;color:var(--text-mute);letter-spacing:.04em;margin-bottom:34px}
+.dl .dl-cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.dl .btn{padding:14px 26px;font-size:13px}
+
+/* ============================================================ FOOTER */
+footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
+.foot{display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap}
+.foot .fbrand{margin-right:auto;max-width:300px}
+.foot .fbrand .nm{font-family:var(--display);font-weight:500;font-size:20px;color:var(--text-bright);display:flex;align-items:center;gap:10px}
+.foot .fbrand .nm .mark{width:24px;height:24px;background:var(--accent);color:var(--bg);display:grid;place-items:center;font-size:13px}
+.foot .fbrand p{font-size:14px;color:var(--text-mute);margin-top:14px;line-height:1.6}
+.foot .fcol h5{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mute);margin-bottom:16px}
+.foot .fcol a{display:block;font-size:14.5px;color:var(--text-dim);padding:5px 0;transition:.2s}
+.foot .fcol a:hover{color:var(--accent)}
+.foot-btm{max-width:var(--maxw);margin:44px auto 0;padding:24px 32px 0;border-top:1px solid var(--border-soft);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-family:var(--mono);font-size:11px;color:var(--text-mute);letter-spacing:.04em}
+
+/* ============================================================ TIMELINE */
+.timeline{position:relative;max-width:800px;border-left:1px solid var(--border);margin-left:5px}
+.tl{position:relative;padding:0 0 30px 30px}
+.tl:last-child{padding-bottom:0}
+.tl::before{content:"";position:absolute;left:-4.5px;top:7px;width:8px;height:8px;background:var(--accent)}
+.tl.now::before{box-shadow:0 0 0 4px var(--accent-soft)}
+.tl .tlv{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--accent)}
+.tl .tlt{font-family:var(--display);font-weight:500;font-size:20px;color:var(--text-bright);margin:5px 0 6px;letter-spacing:-.01em}
+.tl .tld{font-size:15px;color:var(--text-dim);line-height:1.62}
+.memo-note{margin-top:32px;padding-top:22px;border-top:1px solid var(--border-soft);font-size:16px;color:var(--text-dim);line-height:1.7;max-width:760px}
+.memo-note b{color:var(--text-bright);font-weight:500}
+.memo-note code{font-family:var(--mono);font-size:13px;color:var(--accent)}
+
+/* reveal animation */
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none}
+
+/* staggered children (cascade) */
+.st-child{opacity:0;transform:translateY(20px);transition:opacity .65s cubic-bezier(.2,.7,.2,1),transform .65s cubic-bezier(.2,.7,.2,1)}
+.st-child.in{opacity:1;transform:none}
+
+/* scroll-progress hairline */
+.progress{position:fixed;top:0;left:0;height:2px;width:0;background:var(--accent);z-index:60;transition:width .08s linear;will-change:width}
+
+/* cursor-follow glow on cards */
+.feat,.prov{position:relative;--mx:50%;--my:50%}
+.feat::before,.prov::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .35s;z-index:0;
+  background:radial-gradient(200px circle at var(--mx) var(--my),rgba(232,226,212,.09),transparent 60%)}
+.feat:hover::before,.prov:hover::before{opacity:1}
+.feat > *,.prov > *{position:relative;z-index:1}
+
+/* count-up number */
+.cnt{font-variant-numeric:tabular-nums}
+
+/* lang visibility */
+[data-lang="en"] .zh{display:none}
+[data-lang="zh"] .en{display:none}
+
+/* ---- gallery: rendered UI mocks (reuse .lp component styles) ---- */
+.gcard .gimg .lp{position:absolute;inset:0;width:100%;height:100%;max-height:none;border:0;box-shadow:none;font-size:12px;overflow:hidden}
+.gmock-pad{padding:14px;display:flex;flex-direction:column;gap:11px}
+.lp .tkhd{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);padding:13px 14px 4px}
+.lp .tkpanel{padding:6px 14px 14px;display:flex;flex-direction:column;gap:2px}
+.lp .tkrow{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);padding:7px 0;border-bottom:1px solid var(--border-soft)}
+.lp .tkrow .tkk{color:var(--text-mute);letter-spacing:.06em;text-transform:uppercase;font-size:10px}
+.lp .tkrow .tkv{margin-left:auto;color:var(--text-bright);font-size:12px}
+.lp .tkbar{height:5px;background:var(--surface);position:relative;margin:8px 0 0}
+.lp .tkbar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}
+.lp .tkcost{margin-top:9px;font-family:var(--font-mono);font-size:13px;color:var(--ok)}
+
+/* live panel: meshy concept-gallery mock */
+.lp .mgal{border:1px solid var(--accent-line);background:var(--accent-soft);padding:11px}
+.lp .mgal-hd{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:9px}
+.lp .mgal-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+.lp .mtile{aspect-ratio:1/1;border:1px solid var(--border);background:linear-gradient(140deg,var(--g1,#333),var(--g2,#141414));position:relative}
+.lp .mtile.sel{border:2px solid var(--accent)}
+.lp .mtile .mck{position:absolute;top:5px;right:5px;width:16px;height:16px;background:var(--accent);color:#0d0d0d;display:grid;place-items:center;font-size:10px;font-family:var(--font-mono)}
+.lp .mgal-foot{margin-top:9px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:7px}
+.lp .mgal-foot .mgo{margin-left:auto;color:#0d0d0d;background:var(--accent);padding:4px 10px;cursor:pointer}
+
+/* ============================================================
+   LIVE PANEL — interactive editorial demo (scoped under .lp)
+   variables mirror the QML Theme singleton / editorial direction
+   ============================================================ */
+.lp{
+  --font-display:"Fraunces","Noto Serif SC",serif;--font-body:"Newsreader","Noto Serif SC",serif;--font-mono:"Space Mono",monospace;
+  --bg:#0d0d0d;--text:#d8d6d0;--text-bright:#fafafa;--text-dim:#9a978f;--text-mute:#6b6862;
+  --border:rgba(255,255,255,.12);--surface:rgba(255,255,255,.04);
+  --accent:#e8e2d4;--accent-soft:rgba(232,226,212,.1);--accent-line:rgba(232,226,212,.3);--pop:#161616;
+  --ok:#b8c5a0;--ok-soft:rgba(184,197,160,.12);--err:#d99;--warn:#d4a373;--warn-soft:rgba(212,163,115,.1);
+  --rail:#e8e2d4;--rail-op:.6;
+  --user-bg:transparent;--user-fg:#fafafa;--user-border:rgba(255,255,255,.2);--user-r:2px;
+  --think-bg:transparent;--think-fg:#9a978f;--think-border:rgba(255,255,255,.12);
+  --tool-bg:transparent;--tool-border:rgba(255,255,255,.1);--tool-r:0;--tool-gap:4px;
+  --op-bg:transparent;--op-border:rgba(255,255,255,.12);
+  --code-bg:#080808;--code-border:rgba(255,255,255,.12);--block-r:0;--chip-r:2px;--input-r:2px;--seg-r:2px;
+  --plan-bg:transparent;--plan-border:rgba(255,255,255,.12);
+  --seg-bg:transparent;--seg-border:rgba(255,255,255,.18);--seg-active:#fafafa;--seg-active-fg:#0d0d0d;
+  --input-bg:transparent;--input-border:rgba(255,255,255,.18);--send-fg:#0d0d0d;--scroll:rgba(232,226,212,.2);
+  --t-com:#5e5b54;--t-kw:#e8e2d4;--t-fn:#c9b896;--t-attr:#d4a373;--t-num:#a3b18a;--t-str:#bc9b7a;
+  height:622px;max-height:80vh;display:flex;flex-direction:column;position:relative;overflow:hidden;
+  background:var(--bg);border:1px solid var(--border);box-shadow:0 50px 120px -40px rgba(0,0,0,.9);
+  font-family:var(--font-body);color:var(--text);font-size:13.5px;
+}
+.lp *{box-sizing:border-box}
+.lp *::-webkit-scrollbar{width:6px;height:6px}
+.lp *::-webkit-scrollbar-thumb{background:var(--scroll)}
+.lp *::-webkit-scrollbar-track{background:transparent}
+/* header */
+.lp .hd{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.lp .hd-brand{display:flex;align-items:center;gap:8px;margin-right:auto}
+.lp .hd-brand .logo{width:24px;height:24px;display:grid;place-items:center;background:#fafafa;color:#0d0d0d;font-size:13px}
+.lp .hd-brand .title{font-family:var(--font-display);font-weight:500;font-size:16px;color:var(--text-bright)}
+.lp .chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--font-body);cursor:pointer;transition:.2s;border-radius:var(--chip-r)}
+.lp .chip:hover{border-color:var(--accent)}
+.lp .chip i{font-style:normal;font-size:8px;opacity:.6}
+.lp .chip.model{color:var(--accent);border-color:var(--accent-line)}
+.lp .toggle{height:26px;padding:0 11px;font-size:11.5px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-dim);transition:.2s;border-radius:var(--chip-r)}
+.lp .toggle.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+.lp .icon-btn{width:26px;height:26px;border:1px solid transparent;background:transparent;color:var(--text-dim);cursor:pointer;font-size:15px;transition:.2s}
+.lp .icon-btn:hover{background:var(--surface);color:var(--text)}
+/* tabs */
+.lp .tabs{display:flex;align-items:center;gap:4px;padding:7px 11px;border-bottom:1px solid var(--border);overflow-x:auto}
+.lp .tabs::-webkit-scrollbar{height:0}
+.lp .tab{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:5px 10px;border:1px solid transparent;background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;transition:.18s;font-family:var(--font-body)}
+.lp .tab:hover{color:var(--text);background:var(--surface)}
+.lp .tab.active{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-line)}
+.lp .tab-new{width:22px;height:22px;border:1px dashed var(--border);background:transparent;color:var(--text-mute);cursor:pointer;font-size:12px;flex-shrink:0;transition:.18s}
+.lp .tab-new:hover{color:var(--accent);border-color:var(--accent)}
+/* context bar */
+.lp .ctxbar{display:flex;align-items:center;gap:7px;padding:7px 14px;font-size:11px;color:var(--text-mute);border-bottom:1px solid var(--border)}
+.lp .ctx-path{color:var(--accent);font-family:var(--font-mono);font-size:10.5px}
+.lp .ctx-refresh{margin-left:auto;background:none;border:none;color:var(--text-mute);cursor:pointer;font-size:13px}
+.lp .ctx-refresh.spin{animation:lpsp .6s linear}
+/* thread */
+.lp .thread{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:16px}
+.lp .msg.user{display:flex;justify-content:flex-end}
+.lp .msg.user .bubble{max-width:88%;padding:10px 13px;border:1px solid var(--user-border);color:var(--user-fg);line-height:1.5;font-size:13.5px}
+.lp .msg.ai{display:flex}
+.lp .msg.ai .rail{display:none}
+.lp .ai-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:11px;border-left:1px solid var(--border);padding-left:13px}
+/* think */
+.lp .think{border:1px solid var(--think-border);background:var(--think-bg);overflow:hidden}
+.lp .think-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--think-fg);cursor:pointer}
+.lp .think-hd .spark{color:var(--accent)}
+.lp .think-hd .chev{margin-left:auto;opacity:.5;font-size:10px;transition:transform .25s}
+.lp .think.collapsed .chev{transform:rotate(-90deg)}
+.lp .think.collapsed .think-body{display:none}
+.lp .think-body{padding:11px 12px 12px;font-size:12.5px;line-height:1.7;color:var(--text-mute);border-top:1px solid var(--border)}
+/* exec / tools */
+.lp .exec-hd{display:flex;align-items:center;gap:8px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);cursor:pointer;padding:1px 2px}
+.lp .exec-hd .spark{color:var(--accent)}
+.lp .exec-hd .chev{margin-left:auto;opacity:.5;font-size:10px;transition:transform .25s}
+.lp .exec.collapsed .chev{transform:rotate(-90deg)}
+.lp .exec.collapsed .tools,.lp .exec.collapsed .tool-detail{display:none}
+.lp .tools{display:flex;flex-direction:column;gap:var(--tool-gap);margin-top:6px}
+.lp .tool{display:flex;align-items:center;gap:9px;padding:7px 11px;font-size:12px;background:var(--tool-bg);border:1px solid var(--tool-border);cursor:pointer;transition:.15s}
+.lp .tool:hover{filter:brightness(1.25)}
+.lp .tool .tg{width:14px;text-align:center;color:var(--ok);font-family:var(--font-mono)}
+.lp .tool.run .tg{color:var(--accent)}
+.lp .tool.warn .tg{color:var(--warn)}
+.lp .tool.warn{background:var(--warn-soft)}
+.lp .tool .tn{font-family:var(--font-mono);font-size:11px;color:var(--text-bright)}
+.lp .tool .td{color:var(--text-mute);font-size:11px}
+.lp .tool .tt{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-mute);opacity:.8}
+.lp .tool-detail{display:none;white-space:pre-line;font-family:var(--font-mono);font-size:10.5px;line-height:1.6;color:var(--text-mute);padding:8px 11px;margin-top:3px;background:var(--surface);border:1px solid var(--border)}
+.lp .tool.open + .tool-detail{display:block;animation:lpslide .2s ease}
+/* node op */
+.lp .nodeop{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 12px;background:var(--op-bg);border:1px solid var(--op-border);font-size:12px}
+.lp .op-badge{font-family:var(--font-mono);font-weight:700;font-size:10.5px;padding:2px 6px;background:var(--ok-soft);color:var(--ok)}
+.lp .op-text{color:var(--text)}
+.lp .op-paths{color:var(--text-mute);font-family:var(--font-mono);font-size:10px;flex-basis:100%;opacity:.85}
+.lp .op-actions{margin-left:auto;display:flex;gap:6px}
+.lp .mini{font-size:11px;padding:4px 9px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;font-family:var(--font-body)}
+.lp .mini.keep{color:var(--ok);border-color:var(--ok)}
+.lp .res-tag{font-size:11.5px;font-family:var(--font-mono)}
+.lp .res-tag.kept{color:var(--ok)}.lp .res-tag.reverted{color:var(--text-mute)}
+/* code (override homepage .code) */
+.lp .code{border:1px solid var(--code-border);background:var(--code-bg);overflow:hidden;margin:0}
+.lp .code-hd{display:flex;align-items:center;padding:7px 11px;border-bottom:1px solid var(--border);background:transparent}
+.lp .code-hd .lang{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.lp .code-actions{margin-left:auto;display:flex;gap:6px}
+.lp .code-actions button{font-size:10.5px;padding:3px 8px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;font-family:var(--font-body)}
+.lp .code-actions .green{color:var(--ok);border-color:var(--ok)}
+.lp .code pre{padding:11px 12px;overflow-x:auto;font-family:var(--font-mono);font-size:11px;line-height:1.7;margin:0;color:var(--text)}
+.lp .code .com{color:var(--t-com)}.lp .code .kw{color:var(--t-kw)}.lp .code .fn{color:var(--t-fn)}
+.lp .code .attr{color:var(--t-attr)}.lp .code .num{color:var(--t-num)}.lp .code .str{color:var(--t-str)}
+/* prose */
+.lp .prose{font-size:14px;line-height:1.75;color:var(--text)}
+.lp .prose b{color:var(--text-bright);font-weight:500}
+.lp .prose code{font-family:var(--font-mono);font-size:11.5px;background:var(--surface);padding:1px 5px;color:var(--accent)}
+/* plan */
+.lp .plan{border:1px solid var(--plan-border);border-top:2px solid var(--accent);background:var(--plan-bg);overflow:hidden}
+.lp .plan-hd{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--border)}
+.lp .plan-ico{color:var(--accent)}
+.lp .plan-title{font-family:var(--font-display);font-style:italic;font-weight:500;font-size:14px;color:var(--text-bright)}
+.lp .plan-badge{margin-left:auto;font-size:10px;font-family:var(--font-mono);color:var(--text-mute);border:1px solid var(--border);padding:2px 8px}
+.lp .plan-steps{padding:9px 13px;display:flex;flex-direction:column;gap:1px}
+.lp .pstep{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px;color:var(--text-dim);cursor:pointer}
+.lp .pstep .ps-n{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-family:var(--font-mono);border:1px solid var(--border);color:var(--text-mute);flex-shrink:0}
+.lp .pstep.done{color:var(--text)}
+.lp .pstep.done .ps-n{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.lp .pstep.active{color:var(--text-bright)}
+.lp .pstep.active .ps-n{background:var(--accent-soft);color:var(--accent);border-color:transparent;box-shadow:0 0 0 3px var(--accent-soft)}
+.lp .pstep-detail{display:none;font-size:11px;color:var(--text-mute);padding:0 0 7px 30px;line-height:1.55;font-family:var(--font-mono)}
+.lp .pstep.open + .pstep-detail{display:block;animation:lpslide .2s ease}
+.lp .dag{display:block;padding:6px 14px 12px}
+.dagsvg{width:100%;height:auto;display:block;max-width:470px}
+.lp .dnode{font-family:var(--font-mono);font-size:10px;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim)}
+.lp .dnode.hot{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.lp .dnode.ghost{opacity:.45;border-style:dashed}
+.lp .dedge{width:14px;height:1px;background:var(--border);position:relative}
+.lp .dedge::after{content:"";position:absolute;right:0;top:-2px;border-left:4px solid var(--border);border-top:2.5px solid transparent;border-bottom:2.5px solid transparent}
+.lp .plan-actions{display:flex;gap:8px;padding:2px 13px 13px}
+.lp .plan-btn{flex:1;padding:8px 0;font-size:12px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text);font-family:var(--font-body);transition:.18s}
+.lp .plan-btn:hover{border-color:var(--accent)}
+.lp .plan-btn.confirm{background:var(--accent);color:var(--send-fg);border-color:transparent}
+.lp .plan-btn.confirm:hover{filter:brightness(1.08)}
+/* composer */
+.lp .composer{border-top:1px solid var(--border);padding:11px 13px;display:flex;flex-direction:column;gap:9px}
+.lp .modes{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--seg-border);width:fit-content}
+.lp .mode{padding:5px 14px;font-size:11.5px;border:none;background:transparent;color:var(--text-dim);cursor:pointer;transition:.2s;font-family:var(--font-body)}
+.lp .mode.active{background:var(--seg-active);color:var(--seg-active-fg)}
+.lp .input{display:flex;align-items:center;gap:9px;padding:7px 8px 7px 11px;background:var(--input-bg);border:1px solid var(--input-border)}
+.lp .attach{width:24px;height:24px;border:none;background:var(--surface);color:var(--text-dim);cursor:pointer;font-size:13px;flex-shrink:0}
+.lp .field{flex:1;color:var(--text);font-size:13px;outline:none;max-height:80px;overflow-y:auto;line-height:1.5}
+.lp .field:empty::before{content:attr(data-ph);color:var(--text-mute)}
+.lp .send{width:30px;height:30px;border:none;background:var(--accent);color:var(--send-fg);cursor:pointer;font-size:15px;display:grid;place-items:center;flex-shrink:0;transition:.15s}
+.lp .send:active{transform:scale(.92)}
+.lp .meta{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-mute);font-family:var(--font-mono)}
+.lp .meta .dotsep{opacity:.4}.lp .meta .cost{color:var(--ok)}
+/* dropdown */
+.lp .dd{position:relative;display:inline-flex}
+.lp .dd .menu{position:absolute;top:calc(100% + 6px);left:0}
+.lp .dd.right .menu{left:auto;right:0}
+.lp .menu{z-index:40;min-width:150px;padding:6px;background:var(--pop);border:1px solid var(--border);box-shadow:0 22px 60px -18px rgba(0,0,0,.8);display:none;flex-direction:column;gap:1px}
+.lp .menu.show{display:flex;animation:lpmenu .15s ease}
+.lp .menu button{text-align:left;background:none;border:none;color:var(--text);font-family:var(--font-body);font-size:12px;padding:7px 9px;cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.lp .menu button:hover{background:var(--surface);color:var(--text-bright)}
+.lp .menu button.sel{color:var(--accent)}
+.lp .menu button .ck{margin-left:auto;color:var(--accent);font-size:11px;visibility:hidden}
+.lp .menu button.sel .ck{visibility:visible}
+.lp .menu .sep{height:1px;background:var(--border);margin:5px 3px}
+.lp .menu .mh{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mute);padding:5px 9px 3px}
+/* live bits */
+.lp .caret{display:inline-block;width:6px;height:1em;background:var(--accent);margin-left:1px;vertical-align:-2px;animation:lpbl 1s steps(1) infinite}
+.lp .gen-row{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--text-dim);padding:3px 0}
+.lp .gen-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:lpgp 1s ease-in-out infinite}
+.lp .flash-ok{color:var(--ok)!important;border-color:var(--ok)!important}
+.lp .fade-in{animation:lpfade .35s ease both}
+@keyframes lpsp{to{transform:rotate(360deg)}}
+@keyframes lpbl{50%{opacity:0}}
+@keyframes lpgp{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+@keyframes lpslide{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes lpmenu{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes lpfade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media(max-width:920px){.lp{height:580px}}
+</style>
+</head>
+<body data-lang="zh">
+
+<div class="progress" id="progress"></div>
+
+<!-- ============================================ NAV -->
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top">
+      <span class="mark">&#9671;</span>
+      <span class="nm">Houdini Agent</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features"><span class="zh">功能</span><span class="en">Features</span></a>
+      <a href="#generation"><span class="zh">3D 生成</span><span class="en">3D Gen</span></a>
+      <a href="#tools"><span class="zh">工具</span><span class="en">Tools</span></a>
+      <a href="#gallery"><span class="zh">界面</span><span class="en">Interface</span></a>
+      <a href="#install"><span class="zh">安装</span><span class="en">Install</span></a>
+      <a href="#usage"><span class="zh">用法</span><span class="en">Usage</span></a>
+    </nav>
+    <div class="nav-actions">
+      <button class="langtog" id="langtog">EN / 中</button>
+      <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn solid" href="#download"><span class="zh">下载</span><span class="en">Download</span></a>
+    </div>
+    <button class="nav-toggle" id="navToggle" aria-label="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<!-- ============================================ HERO -->
+<a id="top"></a>
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div class="hero-copy" data-stagger>
+        <div class="eyebrow">
+          <span class="ln"></span>
+          <span class="ml accent">AI Agent · AI 3D Generation · SideFX Houdini</span>
+        </div>
+        <h1>
+          <span class="zh">在 Houdini 里，<br>用<em>自然语言</em>建网与<em>造物</em>。</span>
+          <span class="en">Build networks &amp; <em>generate 3D</em><br>with <em>natural language</em>.</span>
+        </h1>
+        <p class="lede">
+          <span class="zh">一个基于 AI 的 Houdini 智能助手。<b>自主 Agent 循环</b>读取节点网络、创建与连接节点、编写 VEX、执行 Python；并集成 <b>Meshy AI 3D 生成</b> —— 一句话从概念图到带贴图的 3D 资产，直接落进你的节点网络。</span>
+          <span class="en">An AI assistant for Houdini. An <b>autonomous agent loop</b> reads your network, creates and wires nodes, writes VEX, runs Python — now with <b>Meshy AI 3D generation</b>: from a sentence to textured 3D assets, dropped straight into your node graph.</span>
+        </p>
+        <p class="sub">
+          <span class="zh">50+ 工具 · 文生/图生 3D · 概念图画廊 · 图生图二次编辑 · 云资产库 · 后台任务 · 六大 AI 提供商 · Plan 模式 · 长期记忆 · 全新 QML 界面 · 中英双语。独立程序自带运行环境，自动桥接到 Houdini。</span>
+          <span class="en">50+ tools · text/image-to-3D · concept galleries · image-to-image editing · cloud asset library · background tasks · six AI providers · Plan mode · long-term memory · new QML UI · bilingual. A standalone app with its own runtime, auto-bridged to Houdini.</span>
+        </p>
+        <div class="hero-cta">
+          <a class="btn solid" href="#download"><span class="zh">立即下载</span><span class="en">Download</span></a>
+          <a class="btn" href="#generation"><span class="zh">看 3D 生成</span><span class="en">See 3D gen</span></a>
+          <span class="ver">v2.0</span>
+        </div>
+        <div class="hero-stats">
+          <div class="hstat"><div class="n"><em class="cnt" data-to="50">0</em>+</div><div class="l"><span class="zh">内置工具</span><span class="en">Built-in tools</span></div></div>
+          <div class="hstat"><div class="n"><span class="cnt" data-to="11">0</span></div><div class="l"><span class="zh">3D 生成工具</span><span class="en">3D-gen tools</span></div></div>
+          <div class="hstat"><div class="n"><span class="cnt" data-to="6">0</span></div><div class="l"><span class="zh">AI 提供商</span><span class="en">AI providers</span></div></div>
+          <div class="hstat"><div class="n"><span class="cnt" data-to="3">0</span></div><div class="l"><span class="zh">运行模式</span><span class="en">Run modes</span></div></div>
+        </div>
+      </div>
+      <div class="shot reveal">
+        <div class="lp" id="livePanel">
+          <div class="hd">
+            <div class="hd-brand"><span class="logo">&#9671;</span><span class="title">Houdini Agent</span></div>
+            <span class="dd" data-dd="provider">
+              <button class="chip provider">Anthropic <i>&#9662;</i></button>
+              <div class="menu">
+                <div class="mh">Provider</div>
+                <button data-val="Anthropic" class="sel">Anthropic<span class="ck">&#10003;</span></button>
+                <button data-val="OpenAI">OpenAI<span class="ck">&#10003;</span></button>
+                <button data-val="DeepSeek">DeepSeek<span class="ck">&#10003;</span></button>
+                <button data-val="Custom">Custom<span class="ck">&#10003;</span></button>
+              </div>
+            </span>
+            <span class="dd" data-dd="model">
+              <button class="chip model">Opus 4.8 <i>&#9662;</i></button>
+              <div class="menu">
+                <div class="mh">Model</div>
+                <button data-val="Opus 4.8" class="sel">Opus 4.8<span class="ck">&#10003;</span></button>
+                <button data-val="Sonnet 4.6">Sonnet 4.6<span class="ck">&#10003;</span></button>
+                <button data-val="Haiku 4.5">Haiku 4.5<span class="ck">&#10003;</span></button>
+              </div>
+            </span>
+            <button class="toggle on" data-tg>Think</button>
+            <span class="dd right" data-dd="more">
+              <button class="icon-btn">&#8943;</button>
+              <div class="menu" style="min-width:188px">
+                <button data-act="apikey">API Key&hellip;</button>
+                <button data-act="custom_cfg"><span class="zh">自定义 Provider&hellip;</span><span class="en">Custom provider&hellip;</span></button>
+                <button data-act="export"><span class="zh">导出对话</span><span class="en">Export chat</span></button>
+                <button data-act="tokens"><span class="zh">Token 分析</span><span class="en">Token analytics</span></button>
+                <button data-act="optimize"><span class="zh">压缩上下文</span><span class="en">Compress context</span></button>
+                <button data-act="cache"><span class="zh">缓存位置</span><span class="en">Cache location</span></button>
+                <div class="sep"></div>
+                <button data-act="update"><span class="zh">检查更新</span><span class="en">Check update</span></button>
+                <button data-act="font"><span class="zh">字号&hellip;</span><span class="en">Font&hellip;</span></button>
+                <div class="sep"></div>
+                <button data-act="rules"><span class="zh">规则编辑器</span><span class="en">Rules editor</span></button>
+                <button data-act="plugins"><span class="zh">插件管理</span><span class="en">Plugins</span></button>
+                <button data-act="memory_mgr"><span class="zh">记忆管理</span><span class="en">Memory manager</span></button>
+                <div class="sep"></div>
+                <button data-act="confirm"><span class="zh">执行前确认</span><span class="en">Confirm before run</span><span class="ck">&#10003;</span></button>
+                <button data-act="memory"><span class="zh">长期记忆</span><span class="en">Long-term memory</span><span class="ck">&#10003;</span></button>
+                <button data-act="cook" class="sel"><span class="zh">实时 Cook</span><span class="en">Live cook</span><span class="ck">&#10003;</span></button>
+                <div class="sep"></div>
+                <button data-act="lang_toggle">语言 / Language: <span class="zh">中文</span><span class="en">English</span></button>
+                <div class="sep"></div>
+                <button data-act="clear"><span class="zh">清空对话</span><span class="en">Clear chat</span></button>
+              </div>
+            </span>
+          </div>
+          <div class="tabs">
+            <button class="tab active"><span class="zh">地形散布</span><span class="en">Terrain</span></button>
+            <button class="tab"><span class="zh">VEX 调试</span><span class="en">VEX debug</span></button>
+            <button class="tab"><span class="zh">3D 生成</span><span class="en">3D gen</span></button>
+            <button class="tab-new">+</button>
+          </div>
+          <div class="ctxbar">
+            <span class="ctx-path">/obj/geo1</span><span>&middot;</span><span class="ctx-sel">2 nodes selected</span>
+            <button class="ctx-refresh" title="refresh context">&#8635;</button>
+          </div>
+          <div class="thread">
+            <div class="msg user"><div class="bubble"><span class="zh">给 grid 加 noise 让表面起伏，再 scatter 5000 个点。</span><span class="en">Add noise to a grid to displace it, then scatter 5000 points.</span></div></div>
+            <div class="msg ai">
+              <div class="ai-body">
+                <div class="think collapsed">
+                  <div class="think-hd"><span class="spark">&#10022;</span> Thought for 4.2s<span class="chev">&#9662;</span></div>
+                  <div class="think-body"><span class="zh">叠加 noise 有两条路：mountain SOP 最快，或用 attribwrangle 写 @P.y 拿到完全控制。后者更利于调参。scatter 默认沿曲面均匀采样，5000 点足够。</span><span class="en">Two paths for noise: a mountain SOP is fastest, or an attribwrangle writing @P.y for full control. The latter is easier to tune. Scatter samples the surface evenly; 5000 points is plenty.</span></div>
+                </div>
+                <div class="exec collapsed">
+                  <div class="exec-hd"><span class="spark">&#9670;</span> <span class="ex-label">Completed &middot; 4 tools &middot; 1.0s</span><span class="chev">&#9662;</span></div>
+                  <div class="tools">
+                    <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">create_node</span><span class="td">grid1</span><span class="tt">0.3s</span></div>
+                    <div class="tool-detail">parent /obj/geo1 &middot; type grid &middot; rows 200 &middot; cols 200 &rarr; /obj/geo1/grid1</div>
+                    <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">create_wrangle_node</span><span class="td">mountain_vex</span><span class="tt">0.5s</span></div>
+                    <div class="tool-detail">run_over Points &middot; VEX 6 lines &middot; input grid1 &rarr; /obj/geo1/mountain_vex</div>
+                    <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">create_node</span><span class="td">scatter1</span><span class="tt">0.2s</span></div>
+                    <div class="tool-detail">type scatter &middot; input mountain_vex &rarr; /obj/geo1/scatter1</div>
+                    <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">set_parameter</span><span class="td">npts = 5000</span><span class="tt">0.1s</span></div>
+                    <div class="tool-detail">node scatter1 &middot; npts 1000 &rarr; 5000 &middot; seed 0</div>
+                  </div>
+                </div>
+                <div class="nodeop">
+                  <span class="op-badge">+3</span><span class="op-text"><span class="zh">个节点已创建</span><span class="en">nodes created</span></span>
+                  <span class="op-actions"><button class="mini keep">Keep</button><button class="mini undo">Undo</button></span>
+                  <span class="op-paths">/obj/geo1/grid1 &middot; mountain_vex &middot; scatter1</span>
+                </div>
+                <div class="code">
+                  <div class="code-hd"><span class="lang">VEX</span><span class="code-actions"><button>Copy</button><button class="green">&#65291; Wrangle</button></span></div>
+                  <pre><code><span class="com">// 抬升曲面，制造山脉起伏</span>
+<span class="kw">float</span> amp  = <span class="num">2.5</span>;
+<span class="kw">float</span> freq = <span class="num">0.35</span>;
+<span class="kw">float</span> n = <span class="fn">noise</span>(<span class="attr">@P</span> * freq);
+<span class="attr">@P</span>.y += n * amp;
+<span class="attr">@Cd</span>  = <span class="fn">set</span>(n, n*<span class="num">0.6</span>, <span class="num">1.0</span>-n);</code></pre>
+                </div>
+                <p class="prose"><span class="zh">已搭好 <b>grid &rarr; mountain_vex &rarr; scatter</b> 链路。noise 通过 VEX 抬升 <code>@P.y</code>，scatter 输出 5000 点。需要我把点 <code>copy</code> 上实例几何吗？</span><span class="en">Built the <b>grid &rarr; mountain_vex &rarr; scatter</b> chain. Noise displaces <code>@P.y</code> via VEX; scatter outputs 5000 points. Want me to <code>copy</code> instances onto them?</span></p>
+              </div>
+            </div>
+            <div class="plan">
+              <div class="plan-hd"><span class="plan-ico">&#9672;</span><span class="plan-title">Terrain Scatter Setup</span><span class="plan-badge">5 steps</span></div>
+              <div class="plan-steps">
+                <div class="pstep done"><span class="ps-n">1</span> Create grid (200 &times; 200)</div>
+                <div class="pstep-detail">grid1 &middot; size 10 &times; 10 &middot; rows/cols 200 &middot; orient ZX</div>
+                <div class="pstep done"><span class="ps-n">2</span> Displace with noise VEX</div>
+                <div class="pstep-detail">mountain_vex &middot; run_over Points &middot; amp 2.5 &middot; freq 0.35</div>
+                <div class="pstep active"><span class="ps-n">3</span> Scatter 5000 points</div>
+                <div class="pstep-detail">scatter1 &middot; npts 5000 &middot; relax 25 iters &middot; seed 0</div>
+                <div class="pstep"><span class="ps-n">4</span> Align normals (polyframe)</div>
+                <div class="pstep-detail">polyframe1 &middot; N from Tangent+Up &middot; style first_edge</div>
+                <div class="pstep"><span class="ps-n">5</span> Copy instances to points</div>
+                <div class="pstep-detail">copytopoints1 &middot; pack instance &middot; inherit N / pscale</div>
+              </div>
+              <div class="dag">
+                <svg class="dagsvg" viewBox="0 0 460 146" role="img" aria-label="node graph">
+                  <defs>
+                    <marker id="dagar" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto-start-reverse">
+                      <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,.34)"/>
+                    </marker>
+                  </defs>
+                  <g fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1" marker-end="url(#dagar)">
+                    <path d="M66,52 H84"/>
+                    <path d="M150,52 H168"/>
+                    <path d="M240,52 H258"/>
+                    <path d="M338,52 C352,52 348,70 360,70"/>
+                    <path d="M66,116 H312 C342,116 336,82 360,82"/>
+                  </g>
+                  <g font-family="'Space Mono',monospace" font-size="11" text-anchor="middle" dominant-baseline="central">
+                    <rect x="8"   y="39"  width="58" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="37"  y="52"  fill="#9a978f">grid</text>
+                    <rect x="86"  y="39"  width="64" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="118" y="52"  fill="#9a978f">noise</text>
+                    <rect x="170" y="39"  width="70" height="26" fill="rgba(232,226,212,.14)" stroke="rgba(232,226,212,.5)"/><text x="205" y="52"  fill="#e8e2d4">scatter</text>
+                    <rect x="260" y="39"  width="78" height="26" fill="none" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 3" opacity=".6"/><text x="299" y="52" fill="#6b6862">polyframe</text>
+                    <rect x="8"   y="103" width="58" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="37"  y="116" fill="#9a978f">box</text>
+                    <rect x="362" y="63"  width="92" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="408" y="76"  fill="#9a978f">copytopoints</text>
+                  </g>
+                </svg>
+              </div>
+              <div class="plan-actions">
+                <button class="plan-btn reject"><span class="zh">驳回</span><span class="en">Reject</span></button>
+                <button class="plan-btn confirm"><span class="zh">确认执行</span><span class="en">Confirm</span></button>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="modes">
+              <button class="mode active" data-mode="Agent">Agent</button>
+              <button class="mode" data-mode="Ask">Ask</button>
+              <button class="mode" data-mode="Plan">Plan</button>
+            </div>
+            <div class="input">
+              <button class="attach" title="attach image">&#65291;</button>
+              <div class="field" contenteditable="true" data-ph-zh="描述你想在场景里做的事…  (Enter 发送)" data-ph-en="Describe what to do in the scene…  (Enter to send)"></div>
+              <button class="send" title="send">&#8593;</button>
+            </div>
+            <div class="meta"><span class="m-model">Opus 4.8</span><span class="dotsep">&middot;</span><span>12.4k / 200k ctx</span><span class="dotsep">&middot;</span><span class="cost">$0.03</span></div>
+          </div>
+        </div>
+        <span class="tag"><span class="zh">实时面板 · 试着输入并回车</span><span class="en">Live panel · type &amp; press Enter</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">01 — Capabilities</span></div>
+      <h2><span class="zh">不只是聊天，<em>它会动手</em>。</span><span class="en">Not just chat — <em>it acts</em>.</span></h2>
+      <p>
+        <span class="zh">基于 OpenAI Function Calling 协议，Agent 自主规划、调用工具、检查结果、继续迭代，直到任务真正完成。</span>
+        <span class="en">Built on the OpenAI Function Calling protocol, the agent plans, calls tools, inspects results, and keeps iterating until the task is truly done.</span>
+      </p>
+    </div>
+
+    <div class="feat-grid" data-stagger>
+      <div class="feat">
+        <div class="idx">F.01</div>
+        <h3><span class="zh">自主 <em>Agent 循环</em></span><span class="en">Autonomous <em>agent loop</em></span></h3>
+        <p><span class="zh">接收请求 → 规划 → 调用工具 → 检查结果 → 继续，直到完成。多轮工具调用由 AI 自主决定顺序。</span><span class="en">Request to plan to tools to inspection to continue — multi-turn tool calls, ordered by the AI itself, until finished.</span></p>
+        <div class="pills"><span class="pill">Streaming</span><span class="pill">Stoppable</span><span class="pill">Todo system</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">F.02</div>
+        <h3><span class="zh">VEX 与 <em>Python</em> 执行</span><span class="en">VEX &amp; <em>Python</em></span></h3>
+        <p><span class="zh">优先创建 Wrangle 写 VEX；可在 Houdini Python Shell 运行 hou 代码，或执行系统 Shell 命令（带超时与安全保护）。</span><span class="en">Writes VEX in wrangles, runs hou code in Houdini's Python shell, or executes system shell commands — with timeouts and safety guards.</span></p>
+        <div class="pills"><span class="pill">Wrangle</span><span class="pill">hou module</span><span class="pill">Shell</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">F.03</div>
+        <h3><span class="zh">大脑启发式 <em>长期记忆</em></span><span class="en">Brain-inspired <em>memory</em></span></h3>
+        <p><span class="zh">三层记忆系统 — 事件记忆、抽象知识、策略记忆，奖励驱动学习与自动反思。可全局开关。</span><span class="en">A three-tier system — episodic, abstract, and strategic memory — with reward-driven learning and auto-reflection. Globally toggleable.</span></p>
+        <div class="pills"><span class="pill">Episodic</span><span class="pill">Semantic</span><span class="pill">Reflection</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">F.04</div>
+        <h3><span class="zh">图片 / <em>多模态</em> 输入</span><span class="en">Image / <em>multimodal</em></span></h3>
+        <p><span class="zh">为视觉模型附加图片，支持粘贴、拖拽、文件选择与缩略图预览。可截取 3D 视口直接喂给模型。</span><span class="en">Attach images for vision models — paste, drag-drop, file picker, thumbnails. Capture the 3D viewport straight into the model.</span></p>
+        <div class="pills"><span class="pill">Paste / Drop</span><span class="pill">Viewport capture</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">F.05</div>
+        <h3><span class="zh"><em>插件</em> 与用户规则</span><span class="en"><em>Plugins</em> &amp; rules</span></h3>
+        <p><span class="zh">通过 plugins/ 目录扩展 Hook 事件、自定义工具与 UI。类似 Cursor Rules 的持久上下文规则，自动注入每次请求。</span><span class="en">Extend hooks, custom tools and UI via plugins/. Cursor-style persistent rules inject context into every request.</span></p>
+        <div class="pills"><span class="pill">Hooks</span><span class="pill">Custom tools</span><span class="pill">Rules</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">F.06</div>
+        <h3><span class="zh">编辑式 <em>深色界面</em></span><span class="en">Editorial <em>dark UI</em></span></h3>
+        <p><span class="zh">可点击节点路径、实时上下文栏、Token 分析、流式 VEX 预览、多会话标签页、中英双语动态重译。</span><span class="en">Clickable node paths, live context bar, token analytics, streaming VEX preview, multi-session tabs, dynamic bilingual retranslation.</span></p>
+        <div class="pills"><span class="pill">Token analytics</span><span class="pill">Multi-session</span></div>
+      </div>
+    </div>
+
+    <!-- modes -->
+    <div class="modes" data-stagger>
+      <div class="mode">
+        <div class="mtag">Mode · 01</div>
+        <h4>Agent</h4>
+        <p><span class="zh">完整权限。可用全部 40+ 工具 — 创建、修改、连接、删除节点，设置参数，执行脚本，保存场景。</span><span class="en">Full access. All 40+ tools — create, edit, connect, delete nodes, set parameters, run scripts, save the scene.</span></p>
+      </div>
+      <div class="mode">
+        <div class="mtag">Mode · 02</div>
+        <h4>Ask</h4>
+        <p><span class="zh">只读。仅查询场景结构、检查参数、搜索文档与分析；修改类工具被模式守卫拦截。</span><span class="en">Read-only. Query structure, inspect params, search docs, analyze — write tools are blocked by the mode guard.</span></p>
+      </div>
+      <div class="mode">
+        <div class="mtag">Mode · 03</div>
+        <h4>Plan</h4>
+        <p><span class="zh">先调研、再澄清，生成带 DAG 流程图的结构化计划，用户确认后执行。内置自动续接防止过早终止。</span><span class="en">Research, clarify, then produce a structured plan with a DAG. Executes only after you confirm — with auto-continue against early stops.</span></p>
+      </div>
+    </div>
+
+    <!-- loop diagram -->
+    <div class="loop reveal">
+      <div class="ml" style="margin-bottom:24px;text-align:center"><span class="zh">Agent 循环</span><span class="en">The agent loop</span></div>
+      <div class="loop-flow">
+        <span class="lnode"><span class="zh">用户请求</span><span class="en">Request</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">规划</span><span class="en">Plan</span></span>
+        <span class="ledge"></span>
+        <span class="lnode hot"><span class="zh">调用工具</span><span class="en">Call tools</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">检查结果</span><span class="en">Inspect</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">继续迭代</span><span class="en">Iterate</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">最终回复</span><span class="en">Answer</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ 3D GENERATION (Meshy) -->
+<section id="generation">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">02 — 3D Generation</span></div>
+      <h2><span class="zh">从一句话，到<em>可用的 3D 资产</em>。</span><span class="en">From a sentence to <em>usable 3D assets</em>.</span></h2>
+      <p>
+        <span class="zh">深度集成 <b>Meshy</b> AI 3D 生成。文生 3D、图生 3D、概念图画廊、图生图二次编辑、云资产库 —— 全部作为 Agent 的工具，由它在对话里自主编排，产物直接落进你的节点网络。</span>
+        <span class="en">Deeply integrated <b>Meshy</b> AI 3D generation — text-to-3D, image-to-3D, concept galleries, image-to-image editing and a cloud asset library. All exposed as agent tools, orchestrated in conversation, with results landing straight in your node graph.</span>
+      </p>
+    </div>
+
+    <div class="feat-grid" data-stagger>
+      <div class="feat">
+        <div class="idx">G.01</div>
+        <h3><span class="zh">文生 / 图生 <em>3D</em></span><span class="en">Text / image to <em>3D</em></span></h3>
+        <p><span class="zh">一句描述或一张参考图，生成带 PBR 贴图的 3D 模型，自动下载 glb 与贴图并导入 <code>/obj</code>。</span><span class="en">A description or a reference image becomes a PBR-textured 3D model — glb and maps auto-downloaded and imported to <code>/obj</code>.</span></p>
+        <div class="pills"><span class="pill">Text-to-3D</span><span class="pill">Image-to-3D</span><span class="pill">PBR</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">G.02</div>
+        <h3><span class="zh">概念图<em>画廊</em></span><span class="en">Concept <em>gallery</em></span></h3>
+        <p><span class="zh">并行生成多张概念图，画廊里多选你要的几张，一键升级成 3D —— 不喜欢就换提示词重生，全程在一张卡片里。</span><span class="en">Generate several concepts in parallel, multi-select your favourites in the gallery, then upgrade to 3D in one click — or regenerate with a new prompt, all in one card.</span></p>
+        <div class="pills"><span class="pill">Parallel</span><span class="pill">Multi-select</span><span class="pill">Concept&rarr;3D</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">G.03</div>
+        <h3><span class="zh">图生图 · <em>二次编辑</em></span><span class="en">Image-to-image <em>editing</em></span></h3>
+        <p><span class="zh">上传图片说"在这基础上改"，或选中概念图加提示词做局部编辑。反馈交给 Agent，由它改写提示词再生成 —— 不是把你的原话直接喂给 API。</span><span class="en">Upload an image and say "edit from this", or pick a concept and add a prompt for a local edit. The feedback goes to the agent, which rewrites the prompt before regenerating — not your raw text straight to the API.</span></p>
+        <div class="pills"><span class="pill">Image-to-image</span><span class="pill">Local edit</span><span class="pill">Agent-refined</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">G.04</div>
+        <h3><span class="zh">云资产库 + <em>账号</em></span><span class="en">Cloud library + <em>account</em></span></h3>
+        <p><span class="zh">侧滑抽屉式资产库，连接 Meshy 账号同步余额与云端历史模型，缩略图实时更新，一键拉进 Houdini —— 已缓存的零网络复用。</span><span class="en">A slide-out asset drawer connects your Meshy account, syncs balance and cloud history, updates thumbnails live, and pulls models into Houdini in one click — cached assets reuse with zero network.</span></p>
+        <div class="pills"><span class="pill">Account sync</span><span class="pill">Balance</span><span class="pill">Cloud library</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">G.05</div>
+        <h3><span class="zh"><em>后台</em>任务</span><span class="en"><em>Background</em> tasks</span></h3>
+        <p><span class="zh">生成耗时较久？一键转入后台，Agent 继续干别的，任务完成后结果自动回报给它；还有工具让 Agent 随时查询进度。</span><span class="en">Long generations? Send them to the background — the agent keeps working, results auto-report back on completion, and a tool lets it query progress anytime.</span></p>
+        <div class="pills"><span class="pill">Background</span><span class="pill">Auto-report</span><span class="pill">Progress query</span></div>
+      </div>
+      <div class="feat">
+        <div class="idx">G.06</div>
+        <h3><span class="zh">重材质 · 重拓扑 · <em>导入导出</em></span><span class="en">Retexture · remesh · <em>I/O</em></span></h3>
+        <p><span class="zh">为已有模型重打材质、四边面重拓扑；<code>import_3d_asset</code> 带贴图导入，<code>export_node_to_glb</code> 把节点导出回 Meshy 再加工。</span><span class="en">Retexture existing models, remesh to clean quads; <code>import_3d_asset</code> brings in textures, <code>export_node_to_glb</code> sends nodes back to Meshy for another pass.</span></p>
+        <div class="pills"><span class="pill">Retexture</span><span class="pill">Remesh</span><span class="pill">GLB I/O</span></div>
+      </div>
+    </div>
+
+    <!-- generation flow -->
+    <div class="loop reveal">
+      <div class="ml" style="margin-bottom:24px;text-align:center"><span class="zh">生成流程</span><span class="en">The generation flow</span></div>
+      <div class="loop-flow">
+        <span class="lnode"><span class="zh">提示词 / 图片</span><span class="en">Prompt / image</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">概念图（并行）</span><span class="en">Concepts</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">选择 / 二次编辑</span><span class="en">Pick / edit</span></span>
+        <span class="ledge"></span>
+        <span class="lnode hot"><span class="zh">升级 3D</span><span class="en">Upgrade to 3D</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">导入 /obj</span><span class="en">Import /obj</span></span>
+        <span class="ledge"></span>
+        <span class="lnode"><span class="zh">云资产库</span><span class="en">Cloud library</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ TOOLS -->
+<section id="tools">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">03 — Toolset</span></div>
+      <h2><span class="zh">50+ 工具，<em>一个注册中心</em>。</span><span class="en">50+ tools, <em>one registry</em>.</span></h2>
+      <p><span class="zh">统一的 ToolRegistry 集中管理核心工具、技能脚本与插件工具，支持基于模式的访问控制。</span><span class="en">A unified ToolRegistry manages core tools, skill scripts and plugin tools, with mode-based access control.</span></p>
+    </div>
+
+    <div class="tools-cat" data-stagger>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">节点操作</span><span class="en">Node ops</span></span><span class="c">11</span></div>
+        <div class="trow"><span class="tn">create_wrangle_node</span><span class="tdz"><span class="zh">创建 Wrangle 并写入 VEX（优先）</span><span class="en">Create wrangle + VEX (preferred)</span></span></div>
+        <div class="trow"><span class="tn">create_nodes_batch</span><span class="tdz"><span class="zh">批量创建并自动连接</span><span class="en">Batch create &amp; auto-connect</span></span></div>
+        <div class="trow"><span class="tn">connect_nodes</span><span class="tdz"><span class="zh">连接节点（可指定端口）</span><span class="en">Wire nodes by port</span></span></div>
+        <div class="trow"><span class="tn">set_node_parameter</span><span class="tdz"><span class="zh">设参 · 红绿 Diff · 一键撤销</span><span class="en">Set param · diff · undo</span></span></div>
+        <div class="trow"><span class="tn">copy_node · delete_node</span><span class="tdz"><span class="zh">复制 / 删除 · save_hip · undo_redo</span><span class="en">Copy / delete · save_hip · undo</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">查询与检查</span><span class="en">Query &amp; inspect</span></span><span class="c">9</span></div>
+        <div class="trow"><span class="tn">get_network_structure</span><span class="tdz"><span class="zh">网络拓扑 · NetworkBox 感知</span><span class="en">Topology · NetworkBox-aware</span></span></div>
+        <div class="trow"><span class="tn">semantic_search_nodes</span><span class="tdz"><span class="zh">自然语言搜索节点类型</span><span class="en">Natural-language node search</span></span></div>
+        <div class="trow"><span class="tn">get_node_parameters</span><span class="tdz"><span class="zh">参数 + 状态 + 错误 + 连接</span><span class="en">Params + flags + errors + wiring</span></span></div>
+        <div class="trow"><span class="tn">check_errors</span><span class="tdz"><span class="zh">检查 cook 错误与警告</span><span class="en">Inspect cook errors / warnings</span></span></div>
+        <div class="trow"><span class="tn">verify_and_summarize</span><span class="tdz"><span class="zh">验证完整性并生成总结</span><span class="en">Verify &amp; summarize network</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">代码 / 联网 / 文档</span><span class="en">Code · web · docs</span></span><span class="c">8</span></div>
+        <div class="trow"><span class="tn">execute_python</span><span class="tdz"><span class="zh">运行 hou 代码（30s 超时保护）</span><span class="en">Run hou code (30s guard)</span></span></div>
+        <div class="trow"><span class="tn">execute_shell</span><span class="tdz"><span class="zh">系统命令 · 安全检查 · 进程清理</span><span class="en">System cmds · safe · clean</span></span></div>
+        <div class="trow"><span class="tn">web_search · fetch_webpage</span><span class="tdz"><span class="zh">联网搜索与网页正文获取</span><span class="en">Search &amp; fetch web pages</span></span></div>
+        <div class="trow"><span class="tn">search_local_doc</span><span class="tdz"><span class="zh">本地文档索引 · 节点帮助</span><span class="en">Local doc index · node help</span></span></div>
+        <div class="trow"><span class="tn">capture_viewport</span><span class="tdz"><span class="zh">视口截图喂给视觉模型</span><span class="en">Viewport capture for vision</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">布局 · 分组 · 性能</span><span class="en">Layout · group · perf</span></span><span class="c">10</span></div>
+        <div class="trow"><span class="tn">layout_nodes</span><span class="tdz"><span class="zh">自动 / 网格 / 分列布局</span><span class="en">Auto / grid / column layout</span></span></div>
+        <div class="trow"><span class="tn">create_network_box</span><span class="tdz"><span class="zh">语义颜色分组框</span><span class="en">Semantic-colored group boxes</span></span></div>
+        <div class="trow"><span class="tn">perf_start_profile</span><span class="tdz"><span class="zh">perfMon cook 时间 / 内存报告</span><span class="en">perfMon cook / memory report</span></span></div>
+        <div class="trow"><span class="tn">create_plan · ask_question</span><span class="tdz"><span class="zh">Plan 模式：计划 + 澄清</span><span class="en">Plan mode: plan + clarify</span></span></div>
+        <div class="trow"><span class="tn">run_skill · search_memory</span><span class="tdz"><span class="zh">技能脚本 + 语义记忆检索</span><span class="en">Skill scripts + memory recall</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t">Meshy · <span class="zh">3D 生成</span><span class="en">3D gen</span></span><span class="c">7</span></div>
+        <div class="trow"><span class="tn">meshy_text_to_3d</span><span class="tdz"><span class="zh">文生 3D · PBR 贴图 · 自动下载</span><span class="en">Text-to-3D · PBR · auto-download</span></span></div>
+        <div class="trow"><span class="tn">meshy_image_to_3d</span><span class="tdz"><span class="zh">图生 3D · 参考图 / 概念图</span><span class="en">Image-to-3D · reference / concept</span></span></div>
+        <div class="trow"><span class="tn">meshy_concept_to_3d</span><span class="tdz"><span class="zh">概念图画廊 → 多选升级 3D</span><span class="en">Concept gallery → multi-select 3D</span></span></div>
+        <div class="trow"><span class="tn">meshy_image_to_image</span><span class="tdz"><span class="zh">图生图 · 二次编辑 / 局部改图</span><span class="en">Image-to-image · local edit</span></span></div>
+        <div class="trow"><span class="tn">meshy_retexture · remesh</span><span class="tdz"><span class="zh">重打材质 · 四边面重拓扑</span><span class="en">Retexture · quad remesh</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t">Meshy · <span class="zh">资产与查询</span><span class="en">Assets &amp; query</span></span><span class="c">4</span></div>
+        <div class="trow"><span class="tn">import_3d_asset</span><span class="tdz"><span class="zh">glb + 贴图导入 Houdini</span><span class="en">Import glb + textures to Houdini</span></span></div>
+        <div class="trow"><span class="tn">export_node_to_glb</span><span class="tdz"><span class="zh">把节点导出回 Meshy 再加工</span><span class="en">Export node back to Meshy</span></span></div>
+        <div class="trow"><span class="tn">meshy_balance</span><span class="tdz"><span class="zh">查询账号剩余 credits</span><span class="en">Query remaining credits</span></span></div>
+        <div class="trow"><span class="tn">meshy_task_status</span><span class="tdz"><span class="zh">查询后台生成任务进度</span><span class="en">Query background task progress</span></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ SKILLS -->
+<section id="skills">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">04 — Skills</span></div>
+      <h2><span class="zh">几何分析，<em>开箱即用</em>。</span><span class="en">Geometry analysis, <em>built in</em>.</span></h2>
+      <p><span class="zh">Skill 是预优化的 Python 脚本，在 Houdini 内运行做可靠的几何分析 —— 涉及分析时 Agent 优先调用 Skill 而非手写代码，也支持加载你自己的 Skill 目录。</span><span class="en">Skills are pre-optimized Python scripts that run inside Houdini for reliable geometry analysis — the agent prefers them over hand-written code, and you can load your own skill directory.</span></p>
+    </div>
+    <div class="tools-cat" data-stagger>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">属性与质量</span><span class="en">Attributes &amp; quality</span></span><span class="c">3</span></div>
+        <div class="trow"><span class="tn">analyze_geometry_attribs</span><span class="tdz"><span class="zh">属性统计 min/max/mean/std/NaN/Inf</span><span class="en">Attribute stats: min/max/mean/std/NaN</span></span></div>
+        <div class="trow"><span class="tn">analyze_normals</span><span class="tdz"><span class="zh">法线质量：NaN / 零向量 / 未归一化 / 翻面</span><span class="en">Normals: NaN / zero / unnormalized / flipped</span></span></div>
+        <div class="trow"><span class="tn">get_bounding_info</span><span class="tdz"><span class="zh">边界盒：中心 / 尺寸 / 体积 / 长宽比</span><span class="en">Bounds: center / size / volume / ratio</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">拓扑与对比</span><span class="en">Topology &amp; diff</span></span><span class="c">3</span></div>
+        <div class="trow"><span class="tn">analyze_connectivity</span><span class="tdz"><span class="zh">连通性：独立部分、每部分点/面数</span><span class="en">Connectivity: parts, points/prims each</span></span></div>
+        <div class="trow"><span class="tn">compare_attributes</span><span class="tdz"><span class="zh">两节点属性差异（新增/缺失/类型）</span><span class="en">Attribute diff between two nodes</span></span></div>
+        <div class="trow"><span class="tn">find_attribute_references</span><span class="tdz"><span class="zh">查找引用某属性的所有节点</span><span class="en">Find every node referencing an attr</span></span></div>
+      </div>
+      <div class="tcat">
+        <div class="tcat-h"><span class="t"><span class="zh">节点图与性能</span><span class="en">Graph &amp; perf</span></span><span class="c">3</span></div>
+        <div class="trow"><span class="tn">find_dead_nodes</span><span class="tdz"><span class="zh">孤立节点 / 未使用的链末端</span><span class="en">Orphan / unused dead-end nodes</span></span></div>
+        <div class="trow"><span class="tn">trace_node_dependencies</span><span class="tdz"><span class="zh">上游依赖树 / 下游影响范围</span><span class="en">Upstream deps / downstream impact</span></span></div>
+        <div class="trow"><span class="tn">analyze_cook_performance</span><span class="tdz"><span class="zh">全网 cook 排名 / 膨胀点 / 瓶颈</span><span class="en">Whole-network cook ranking / bottlenecks</span></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ MEMORY -->
+<section id="memory">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">05 — Memory</span></div>
+      <h2><span class="zh">会记忆，<em>会反思</em>。</span><span class="en">It <em>remembers</em>, and reflects.</span></h2>
+      <p><span class="zh">受大脑启发的三层长期记忆系统，让 Agent 跨会话越用越懂你的场景与偏好。</span><span class="en">A brain-inspired three-tier memory so the agent learns your scenes and preferences across sessions.</span></p>
+    </div>
+    <div class="modes" data-stagger>
+      <div class="mode">
+        <div class="mtag">Tier · 01</div>
+        <h4><span class="zh">事件记忆</span><span class="en">Episodic</span></h4>
+        <p><span class="zh">记录每次交互的具体操作、结果与上下文。</span><span class="en">Records each interaction's actions, results and context.</span></p>
+      </div>
+      <div class="mode">
+        <div class="mtag">Tier · 02</div>
+        <h4><span class="zh">抽象知识</span><span class="en">Semantic</span></h4>
+        <p><span class="zh">从事件中提炼可复用的规则与模式。</span><span class="en">Distills reusable rules and patterns from events.</span></p>
+      </div>
+      <div class="mode">
+        <div class="mtag">Tier · 03</div>
+        <h4><span class="zh">策略记忆</span><span class="en">Strategic</span></h4>
+        <p><span class="zh">沉淀"什么场景用什么解法"的高层策略。</span><span class="en">Builds high-level "which approach for which case" strategy.</span></p>
+      </div>
+    </div>
+    <p class="memo-note reveal"><span class="zh">外加<b>奖励驱动学习</b>与<b>自动反思</b>；<code>search_memory</code> 按类别、抽象层级与置信度检索相关经验。整套系统可一键<b>全局开关</b>，默认关闭、随时可开。</span><span class="en">Plus <b>reward-driven learning</b> and <b>auto-reflection</b>; <code>search_memory</code> retrieves by category, abstraction level and confidence. The whole system has a <b>global toggle</b> — off by default, on whenever you want.</span></p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ ARCHITECTURE -->
+<section id="architecture">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">06 — Architecture</span></div>
+      <h2><span class="zh">工程上，<em>靠得住</em>。</span><span class="en">Engineered to <em>hold up</em>.</span></h2>
+      <p><span class="zh">不是套壳。底层为在 Houdini 里安全、可控地跑 Agent 做了大量工程。</span><span class="en">Not a thin wrapper — real engineering underneath to run an agent safely inside Houdini.</span></p>
+    </div>
+    <div class="feat-grid" data-stagger>
+      <div class="feat">
+        <div class="idx">A.01</div>
+        <h3><span class="zh">主线程<em>编组</em></span><span class="en">Main-thread <em>marshalling</em></span></h3>
+        <p><span class="zh">所有 hou.* 调用经 Qt 队列回主线程执行，绝不在子线程动场景，从根上杜绝崩溃。</span><span class="en">Every hou.* call is marshalled back to the Qt main thread — the scene is never touched off-thread.</span></p>
+      </div>
+      <div class="feat">
+        <div class="idx">A.02</div>
+        <h3><span class="zh">模式<em>守卫</em></span><span class="en">Mode <em>guard</em></span></h3>
+        <p><span class="zh">ToolRegistry 在 Ask / Plan 模式下统一拦截改动类工具 —— 只读就是只读。</span><span class="en">ToolRegistry blocks mutating tools in Ask / Plan modes — read-only means read-only.</span></p>
+      </div>
+      <div class="feat">
+        <div class="idx">A.03</div>
+        <h3><span class="zh">智能<em>上下文</em></span><span class="en">Smart <em>context</em></span></h3>
+        <p><span class="zh">按轮次裁剪，永不截断用户/助手消息，只压缩工具结果，长对话也不溢出。</span><span class="en">Round-based trimming never truncates your messages — only tool results get compressed.</span></p>
+      </div>
+      <div class="feat">
+        <div class="idx">A.04</div>
+        <h3><span class="zh">错误<em>恢复</em></span><span class="en">Error <em>recovery</em></span></h3>
+        <p><span class="zh">工具报错自动诊断与重试，引导 Agent 走通而非卡死。</span><span class="en">Tool errors are diagnosed and retried, steering the agent through instead of stalling.</span></p>
+      </div>
+      <div class="feat">
+        <div class="idx">A.05</div>
+        <h3><span class="zh">Token <em>计费</em></span><span class="en">Token <em>accounting</em></span></h3>
+        <p><span class="zh">实时用量、推理 Token、缓存命中率与按模型估算的费用。</span><span class="en">Live usage, reasoning tokens, cache-hit rate and per-model cost estimates.</span></p>
+      </div>
+      <div class="feat">
+        <div class="idx">A.06</div>
+        <h3><span class="zh">Plan <em>自动续接</em></span><span class="en">Plan <em>auto-continue</em></span></h3>
+        <p><span class="zh">检测 AI 过早终止，注入续接消息强制跑完所有计划步骤。</span><span class="en">Detects early stops and forces the plan to run every step to completion.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ PROVIDERS -->
+<section id="providers">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">07 — Models</span></div>
+      <h2><span class="zh">接你想接的<em>任何模型</em>。</span><span class="en">Plug in <em>any model</em>.</span></h2>
+      <p><span class="zh">云端、中转、本地、自定义端点 — 一个面板里随时切换提供商与模型。</span><span class="en">Cloud, relay, local, custom endpoints — switch provider and model from one panel.</span></p>
+    </div>
+    <div class="prov-grid" data-stagger>
+      <div class="prov"><div class="pn">DeepSeek</div><div class="pk">Reasoning</div><div class="pm"><code>deepseek-v4-flash</code><code>deepseek-v4-pro</code></div></div>
+      <div class="prov"><div class="pn">智谱 GLM</div><div class="pk">Stable in CN</div><div class="pm"><code>glm-4.7</code></div></div>
+      <div class="prov"><div class="pn">OpenAI</div><div class="pk">Function calling · Vision</div><div class="pm"><code>gpt-5.2</code><code>gpt-5.3-codex</code></div></div>
+      <div class="prov"><div class="pn">Custom</div><div class="pk"><span class="zh">任意 OpenAI 兼容端点</span><span class="en">Any OpenAI-compatible endpoint</span></div><div class="pm"><code>LM Studio</code><code>vLLM</code><code>self-hosted</code></div></div>
+      <div class="prov"><div class="pn"><span class="zh">拼好饭 中转</span><span class="en">Relay</span></div><div class="pk">Claude · Gemini · MiniMax</div><div class="pm"><code>claude-opus-4-6</code><code>gemini-3.1-pro</code><code>MiniMax-M2.7</code></div></div>
+      <div class="prov"><div class="pn">OpenRouter</div><div class="pk">16+ models · one key</div><div class="pm"><code>claude-opus-4.6</code><code>gpt-5.2</code><code>grok-4.1-fast</code></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ GALLERY -->
+<section id="gallery">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">08 — Interface</span></div>
+      <h2><span class="zh">界面<em>一览</em>。</span><span class="en"><em>Inside</em> the interface.</span></h2>
+      <p><span class="zh">主面板是真实截图，其余几块用同一套组件<b>实时渲染</b> —— 不是图片，任意缩放都清晰。</span><span class="en">The main panel is a real screenshot; the rest are <b>live-rendered</b> from the same components — not images, crisp at any scale.</span></p>
+    </div>
+    <div class="gallery" data-stagger>
+      <div class="gcard">
+        <div class="gimg"><img src="assets/ui-main.png" alt="Main chat panel" /></div>
+        <div class="gmeta"><div class="gt"><span class="zh">主对话面板</span><span class="en">Main chat panel</span></div><div class="gd"><span class="zh">Plan 卡片 · 工具调用 · 流式 VEX 预览</span><span class="en">Plan card · tool calls · streaming VEX</span></div><div class="gfile">assets/ui-main.png · ready</div></div>
+      </div>
+      <div class="gcard">
+        <div class="gimg"><div class="lp">
+          <div class="tkhd">Plan mode</div>
+          <div class="gmock-pad">
+            <div class="plan">
+              <div class="plan-hd"><span class="plan-ico">&#9672;</span><span class="plan-title">Terrain Scatter Setup</span><span class="plan-badge">5 steps</span></div>
+              <div class="plan-steps">
+                <div class="pstep done"><span class="ps-n">1</span> Create grid (200 &times; 200)</div>
+                <div class="pstep done"><span class="ps-n">2</span> Displace with noise VEX</div>
+                <div class="pstep active"><span class="ps-n">3</span> Scatter 5000 points</div>
+                <div class="pstep"><span class="ps-n">4</span> Align normals (polyframe)</div>
+              </div>
+              <div class="dag">
+                <svg class="dagsvg" viewBox="0 0 460 146" role="img" aria-label="node graph">
+                  <defs>
+                    <marker id="dagar" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto-start-reverse">
+                      <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,.34)"/>
+                    </marker>
+                  </defs>
+                  <g fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1" marker-end="url(#dagar)">
+                    <path d="M66,52 H84"/>
+                    <path d="M150,52 H168"/>
+                    <path d="M240,52 H258"/>
+                    <path d="M338,52 C352,52 348,70 360,70"/>
+                    <path d="M66,116 H312 C342,116 336,82 360,82"/>
+                  </g>
+                  <g font-family="'Space Mono',monospace" font-size="11" text-anchor="middle" dominant-baseline="central">
+                    <rect x="8"   y="39"  width="58" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="37"  y="52"  fill="#9a978f">grid</text>
+                    <rect x="86"  y="39"  width="64" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="118" y="52"  fill="#9a978f">noise</text>
+                    <rect x="170" y="39"  width="70" height="26" fill="rgba(232,226,212,.14)" stroke="rgba(232,226,212,.5)"/><text x="205" y="52"  fill="#e8e2d4">scatter</text>
+                    <rect x="260" y="39"  width="78" height="26" fill="none" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 3" opacity=".6"/><text x="299" y="52" fill="#6b6862">polyframe</text>
+                    <rect x="8"   y="103" width="58" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="37"  y="116" fill="#9a978f">box</text>
+                    <rect x="362" y="63"  width="92" height="26" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)"/><text x="408" y="76"  fill="#9a978f">copytopoints</text>
+                  </g>
+                </svg>
+              </div>
+              <div class="plan-actions">
+                <button class="plan-btn"><span class="zh">驳回</span><span class="en">Reject</span></button>
+                <button class="plan-btn confirm"><span class="zh">确认执行</span><span class="en">Confirm</span></button>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <div class="gmeta"><div class="gt"><span class="zh">Plan 模式</span><span class="en">Plan mode</span></div><div class="gd"><span class="zh">结构化计划 · DAG 流程图 · 确认后执行</span><span class="en">Structured plan · DAG · confirm to run</span></div><div class="gfile"><span class="zh">实时渲染</span><span class="en">rendered UI</span></div></div>
+      </div>
+      <div class="gcard">
+        <div class="gimg"><div class="lp">
+          <div class="tkhd">Token analytics</div>
+          <div class="tkpanel">
+            <div class="tkrow"><span class="tkk">Input</span><span class="tkv">8,420</span></div>
+            <div class="tkrow"><span class="tkk">Output</span><span class="tkv">2,140</span></div>
+            <div class="tkrow"><span class="tkk">Reasoning</span><span class="tkv">1,180</span></div>
+            <div class="tkrow"><span class="tkk">Cache read</span><span class="tkv">5,020</span></div>
+            <div class="tkrow" style="border-bottom:none"><span class="tkk">Cache hit</span><span class="tkv">68%</span></div>
+            <div class="tkbar"><i style="width:68%"></i></div>
+            <div class="tkcost">&asymp; $0.031 &middot; Opus 4.8</div>
+          </div>
+        </div></div>
+        <div class="gmeta"><div class="gt"><span class="zh">Token 分析</span><span class="en">Token analytics</span></div><div class="gd"><span class="zh">用量 · 缓存命中率 · 按模型计费</span><span class="en">Usage · cache hit · per-model cost</span></div><div class="gfile"><span class="zh">实时渲染</span><span class="en">rendered UI</span></div></div>
+      </div>
+      <div class="gcard">
+        <div class="gimg"><div class="lp">
+          <div class="tkhd">Node ops &middot; streaming VEX</div>
+          <div class="gmock-pad">
+            <div class="nodeop">
+              <span class="op-badge">+3</span><span class="op-text"><span class="zh">个节点已创建</span><span class="en">nodes created</span></span>
+              <span class="op-actions"><button class="mini keep">Keep</button><button class="mini undo">Undo</button></span>
+              <span class="op-paths">/obj/geo1/grid1 &middot; mountain_vex &middot; scatter1</span>
+            </div>
+            <div class="code">
+              <div class="code-hd"><span class="lang">VEX</span><span class="code-actions"><button>Copy</button><button class="green">&#65291; Wrangle</button></span></div>
+              <pre><code><span class="com">// 抬升曲面</span>
+<span class="kw">float</span> n = <span class="fn">noise</span>(<span class="attr">@P</span> * <span class="num">0.35</span>);
+<span class="attr">@P</span>.y += n * <span class="num">2.5</span><span class="caret"></span></code></pre>
+            </div>
+          </div>
+        </div></div>
+        <div class="gmeta"><div class="gt"><span class="zh">节点操作与代码</span><span class="en">Node ops &amp; code</span></div><div class="gd"><span class="zh">Keep / Undo · 流式 VEX 书写预览</span><span class="en">Keep / Undo · streaming VEX preview</span></div><div class="gfile"><span class="zh">实时渲染</span><span class="en">rendered UI</span></div></div>
+      </div>
+      <div class="gcard">
+        <div class="gimg"><div class="lp">
+          <div class="tkhd">Concept gallery</div>
+          <div class="gmock-pad">
+            <div class="mgal">
+              <div class="mgal-hd">MESHY &middot; <span class="zh">概念图</span><span class="en">Concepts</span></div>
+              <div class="mgal-grid">
+                <div class="mtile sel" style="--g1:#4a4332;--g2:#1d1a13"><span class="mck">&#10003;</span></div>
+                <div class="mtile" style="--g1:#37404a;--g2:#161a1f"></div>
+                <div class="mtile sel" style="--g1:#3a4435;--g2:#171c15"><span class="mck">&#10003;</span></div>
+                <div class="mtile" style="--g1:#43374a;--g2:#1a151f"></div>
+              </div>
+              <div class="mgal-foot"><span class="zh">2 已选</span><span class="en">2 selected</span> &middot; <span class="mgo"><span class="zh">生成选中的 3D</span><span class="en">Make 3D</span></span></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="gmeta"><div class="gt"><span class="zh">概念图画廊</span><span class="en">Concept gallery</span></div><div class="gd"><span class="zh">并行生成 · 多选 · 一键升级 3D</span><span class="en">Parallel · multi-select · upgrade to 3D</span></div><div class="gfile"><span class="zh">实时渲染</span><span class="en">rendered UI</span></div></div>
+      </div>
+      <div class="gcard">
+        <div class="gimg"><div class="lp">
+          <div class="tkhd">Cloud asset library</div>
+          <div class="gmock-pad">
+            <div class="tkrow" style="border-bottom:1px solid var(--border);padding-bottom:8px"><span class="tkk">Meshy</span><span class="tkv" style="color:var(--ok)">412 credits</span></div>
+            <div class="mgal-grid" style="margin-top:6px">
+              <div class="mtile" style="--g1:#3d3a30;--g2:#19170f"></div>
+              <div class="mtile" style="--g1:#34404a;--g2:#15191f"></div>
+              <div class="mtile" style="--g1:#3a4435;--g2:#171c15"></div>
+              <div class="mtile" style="--g1:#43374a;--g2:#1a151f"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="gmeta"><div class="gt"><span class="zh">云资产库</span><span class="en">Cloud library</span></div><div class="gd"><span class="zh">账号同步 · 余额 · 一键拉进 Houdini</span><span class="en">Account sync · balance · pull into Houdini</span></div><div class="gfile"><span class="zh">实时渲染</span><span class="en">rendered UI</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ INSTALL -->
+<section id="install">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">09 — Install</span></div>
+      <h2><span class="zh">三步<em>开跑</em>。</span><span class="en">Running in <em>three steps</em>.</span></h2>
+      <p><span class="zh">独立程序，自带运行环境 —— 无需安装 Python，也无需 pip。下载、运行、自动连上 Houdini。</span><span class="en">A standalone app with its own runtime — no Python install, no pip. Download, run, and it connects to Houdini for you.</span></p>
+    </div>
+
+    <div class="steps" data-stagger>
+      <div class="step">
+        <div class="sn">01</div>
+        <h4><span class="zh">下载并安装</span><span class="en">Download &amp; install</span></h4>
+        <p><span class="zh">下载一个安装程序，运行后选择安装目录、可勾选添加桌面快捷方式。装好后双击桌面图标即可打开 —— 自带运行环境，无需 Python。</span><span class="en">Download one installer, pick an install folder, optionally add a desktop shortcut. Then just double-click the desktop icon — its own runtime, no Python.</span></p>
+      </div>
+      <div class="step">
+        <div class="sn">02</div>
+        <h4><span class="zh">连接 Houdini</span><span class="en">Connect Houdini</span></h4>
+        <p><span class="zh">程序自动探测 Houdini（20.5+）并装好桥接 package，点「打开 Houdini」即可 —— 启动后自动经 Bridge 连接。</span><span class="en">It auto-detects Houdini (20.5+), installs the bridge package, and offers "Open Houdini" — then connects over the bridge automatically.</span></p>
+      </div>
+      <div class="step">
+        <div class="sn">03</div>
+        <h4><span class="zh">配置 API Key</span><span class="en">Set an API key</span></h4>
+        <p><span class="zh">在程序内点「API Key…」保存到本机，或设置环境变量。想用 AI 3D 生成？再填一个 Meshy API Key 即可。</span><span class="en">Click "API Key…" in-app to save locally, or set an environment variable. Want AI 3D generation? Add a Meshy API key too.</span></p>
+      </div>
+    </div>
+
+    <div class="reqs reveal">
+      <span class="req"><b>Houdini</b>&nbsp; 20.5+ / 21+</span>
+      <span class="req"><b>Runtime</b>&nbsp; <span class="zh">自带（免安装）</span><span class="en">bundled</span></span>
+      <span class="req"><b>Bridge</b>&nbsp; <span class="zh">自动连接</span><span class="en">auto-connect</span></span>
+      <span class="req"><b>OS</b>&nbsp; Windows · macOS · Linux</span>
+    </div>
+
+    <div class="subhead reveal"><span class="zh">工作方式</span><span class="en">How it connects</span></div>
+    <div class="code reveal">
+      <div class="chd"><span class="lang">Bridge</span></div>
+      <pre><code><span class="zh"><span class="com"># 独立程序（自带运行环境）</span>
+Houdini Agent.exe  <span class="com">→ 探测 Houdini → 装桥接 package → 打开 Houdini</span>
+        <span class="attr">│</span>  bridge client
+        <span class="attr">▼</span>
+Houdini  <span class="com">（启动时自动起 bridge server）</span>  <span class="com"># hou.* 调用回主线程执行</span></span><span class="en"><span class="com"># standalone app (self-contained runtime)</span>
+Houdini Agent.exe  <span class="com">→ detect Houdini → install bridge pkg → open Houdini</span>
+        <span class="attr">│</span>  bridge client
+        <span class="attr">▼</span>
+Houdini  <span class="com">(bridge server auto-starts on launch)</span>  <span class="com"># hou.* runs on the main thread</span></span></code></pre>
+    </div>
+
+    <div class="subhead reveal"><span class="zh">进阶：在 Houdini 内直接运行（开发者）</span><span class="en">Advanced: run inside Houdini (developers)</span></div>
+    <div class="code reveal">
+      <div class="chd"><span class="lang">Python</span><button class="cp">Copy</button></div>
+      <pre><code><span class="kw">import</span> sys
+sys.path.insert(<span class="num">0</span>, <span class="str">r"C:\path\to\Houdini-Agent"</span>)
+<span class="kw">import</span> launcher
+launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini 内自动跑内嵌界面</span></code></pre>
+    </div>
+
+    <div class="subhead reveal"><span class="zh">配置 API Key（环境变量，推荐）</span><span class="en">Configure API key (env vars, recommended)</span></div>
+    <div class="code reveal">
+      <div class="chd"><span class="lang">PowerShell</span><button class="cp">Copy</button></div>
+      <pre><code><span class="com"># DeepSeek</span>
+[Environment]::<span class="fn">SetEnvironmentVariable</span>(<span class="str">'DEEPSEEK_API_KEY'</span>, <span class="str">'sk-xxx'</span>, <span class="str">'User'</span>)
+
+<span class="com"># OpenAI</span>
+[Environment]::<span class="fn">SetEnvironmentVariable</span>(<span class="str">'OPENAI_API_KEY'</span>, <span class="str">'sk-xxx'</span>, <span class="str">'User'</span>)
+
+<span class="com"># OpenRouter</span>
+[Environment]::<span class="fn">SetEnvironmentVariable</span>(<span class="str">'OPENROUTER_API_KEY'</span>, <span class="str">'sk-or-xxx'</span>, <span class="str">'User'</span>)</code></pre>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ USAGE -->
+<section id="usage">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">10 — In practice</span></div>
+      <h2><span class="zh">说人话，<em>它来建</em>。</span><span class="en">Say it plainly, <em>it builds</em>.</span></h2>
+      <p><span class="zh">真实交互示例 — 从一句话到一整套节点网络。</span><span class="en">Real interactions — from a sentence to a full node network.</span></p>
+    </div>
+
+    <div class="usage-grid reveal">
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 散点流程</span><span class="en">Example · scatter</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">创建一个 box，在上面 scatter 500 个点，然后把小球复制到这些点上。</span><span class="en">Create a box, scatter 500 points on it, then copy a sphere onto the points.</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">create_nodes_batch</span><span class="td">box &rarr; scatter &rarr; sphere</span></div>
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">set_node_parameter</span><span class="td">npts = 500</span></div>
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">connect_nodes</span><span class="td">copytopoints1</span></div>
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">verify_and_summarize</span><span class="td">0.4s</span></div>
+            </div>
+            <div class="ai-say"><span class="zh">完成。创建了 <code>box1</code> &rarr; <code>scatter1</code> &rarr; <code>copytopoints1</code>，球体模板半径 <b>0.05</b>，<b>500</b> 个点。</span><span class="en">Done. Built <code>box1</code> &rarr; <code>scatter1</code> &rarr; <code>copytopoints1</code>, template sphere radius <b>0.05</b>, <b>500</b> points.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 编写 VEX</span><span class="en">Example · write VEX</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">给所有点添加随机颜色。</span><span class="en">Give every point a random color.</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">create_wrangle_node</span><span class="td">point · Cd</span></div>
+            </div>
+            <div class="code" style="margin:2px 0">
+              <div class="chd"><span class="lang">VEX</span></div>
+              <pre style="padding:13px 14px;font-size:12px"><code><span class="attr">@Cd</span> = <span class="fn">set</span>(<span class="fn">rand</span>(<span class="attr">@ptnum</span>), <span class="fn">rand</span>(<span class="attr">@ptnum</span>*<span class="num">13.37</span>), <span class="fn">rand</span>(<span class="attr">@ptnum</span>*<span class="num">7.13</span>));</code></pre>
+            </div>
+            <div class="ai-say"><span class="zh">已创建 <code>attribwrangle1</code>，为所有点设置随机 <b>Cd</b> 属性。</span><span class="en">Created <code>attribwrangle1</code>, setting a random <b>Cd</b> on every point.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 分析属性</span><span class="en">Example · analyze</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">/obj/geo1/OUT 有哪些属性？</span><span class="en">What attributes does /obj/geo1/OUT have?</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">run_skill</span><span class="td">analyze_geometry_attribs</span></div>
+            </div>
+            <div class="ai-say"><span class="zh">该节点有 5 个 point 属性：<code>P</code>、<code>N</code>、<code>Cd</code>、<code>pscale</code>、<code>id</code>。</span><span class="en">5 point attributes: <code>P</code>, <code>N</code>, <code>Cd</code>, <code>pscale</code>, <code>id</code>.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 系统命令</span><span class="en">Example · shell</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">给 Houdini 的 Python 安装 numpy。</span><span class="en">Install numpy into Houdini's Python.</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">execute_shell</span><span class="td">hython -m pip install numpy</span></div>
+            </div>
+            <div class="ai-say"><span class="zh">成功安装 <b>numpy-1.26.4</b>。</span><span class="en">Successfully installed <b>numpy-1.26.4</b>.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 文生 3D</span><span class="en">Example · text-to-3D</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">生成一把低多边形的中世纪斧头，带贴图，导入进来。</span><span class="en">Generate a low-poly medieval axe with textures and import it.</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">meshy_text_to_3d</span><span class="td">PBR &middot; glb</span></div>
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">import_3d_asset</span><span class="td">/obj/axe_01</span></div>
+            </div>
+            <div class="ai-say"><span class="zh">已生成并导入 <code>/obj/axe_01</code>，含 base color / normal / roughness 贴图。消耗 <b>5</b> credits。</span><span class="en">Generated and imported <code>/obj/axe_01</code> with base color / normal / roughness maps. <b>5</b> credits used.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx">
+        <div class="txh"><span class="zh">示例 · 概念图二次编辑</span><span class="en">Example · concept edit</span></div>
+        <div class="txb">
+          <div class="bub-u"><span class="zh">第二张不错，但把盖子换成圆顶，再生成一版。</span><span class="en">Second one's good, but make the lid domed and regenerate.</span></div>
+          <div class="ai-row">
+            <div class="ai-tools">
+              <div class="ai-tool"><span class="tg">&#10003;</span><span class="tn">meshy_image_to_image</span><span class="td"><span class="zh">改写后的提示词</span><span class="en">refined prompt</span></span></div>
+            </div>
+            <div class="ai-say"><span class="zh">基于选中概念图做了局部编辑：我把提示词改写为 <code>…domed lid, rounded top…</code> 后重生，得到圆顶版本。要把它升级成 3D 吗？</span><span class="en">Edited from your selected concept — I rewrote the prompt to <code>…domed lid, rounded top…</code> before regenerating. Upgrade it to 3D?</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ CHANGELOG -->
+<section id="changelog">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">11 — Changelog</span></div>
+      <h2><span class="zh">持续<em>迭代</em>。</span><span class="en">Shipping, <em>continuously</em>.</span></h2>
+      <p><span class="zh">当前版本 v2.0。从初版原型，到 50+ 工具、能生成 3D 资产的自主 Agent，一直在更新。</span><span class="en">Currently v2.0. From the first prototype to a 50+ tool autonomous agent that generates 3D assets — and still moving.</span></p>
+    </div>
+    <div class="timeline" data-stagger>
+      <div class="tl now"><div class="tlv">v2.0</div><div class="tlt"><span class="zh">Meshy AI 3D 生成 · QML 新界面</span><span class="en">Meshy AI 3D · new QML UI</span></div><div class="tld"><span class="zh">深度集成 Meshy：文生 / 图生 3D、概念图画廊、图生图二次编辑、云资产库与账号同步、后台任务；前端用 QML / Qt Quick 全面重写。</span><span class="en">Deep Meshy integration: text/image-to-3D, concept galleries, image-to-image editing, a cloud asset library with account sync, and background tasks; the frontend fully rewritten in QML / Qt Quick.</span></div></div>
+      <div class="tl"><div class="tlv">v1.5</div><div class="tlt"><span class="zh">DeepSeek V4 · 记忆管理器</span><span class="en">DeepSeek V4 · memory manager</span></div><div class="tld"><span class="zh">DeepSeek V4 适配 + JSON Output、记忆管理器对话框、长期记忆全局开关。</span><span class="en">DeepSeek V4 + JSON output, a memory-manager dialog, and a global long-term-memory toggle.</span></div></div>
+      <div class="tl"><div class="tlv">v1.5.0</div><div class="tlt"><span class="zh">自定义提供商 + 视口截图</span><span class="en">Custom provider + viewport capture</span></div><div class="tld"><span class="zh">接入任意 OpenAI 兼容端点；新增 capture_viewport 把 3D 视口喂给视觉模型。</span><span class="en">Any OpenAI-compatible endpoint; capture_viewport feeds the 3D viewport to vision models.</span></div></div>
+      <div class="tl"><div class="tlv">v1.4.0</div><div class="tlt">OpenRouter</div><div class="tld"><span class="zh">单一 API Key 接入 16 个主流模型（Claude / GPT / Gemini / Grok / Llama / Qwen…）。</span><span class="en">16 mainstream models behind one API key (Claude / GPT / Gemini / Grok / Llama / Qwen…).</span></div></div>
+      <div class="tl"><div class="tlv">v1.3</div><div class="tlt"><span class="zh">ToolRegistry · 插件 · 规则</span><span class="en">ToolRegistry · plugins · rules</span></div><div class="tld"><span class="zh">统一工具注册中心 + 插件 Hook 系统 + Cursor 式用户规则 + Plan 自动续接。</span><span class="en">Unified tool registry + plugin hook system + Cursor-style user rules + Plan auto-continue.</span></div></div>
+      <div class="tl"><div class="tlv">v1.2</div><div class="tlt"><span class="zh">界面与体验大改</span><span class="en">UI &amp; experience overhaul</span></div><div class="tld"><span class="zh">Glassmorphism UI、中英双语 i18n、流式 VEX 代码预览、Anthropic 协议适配。</span><span class="en">Glassmorphism UI, bilingual i18n, streaming VEX code preview, Anthropic protocol layer.</span></div></div>
+      <div class="tl"><div class="tlv">v1.1</div><div class="tlt"><span class="zh">性能分析 · 知识库 · 布局</span><span class="en">Profiling · KB · layout</span></div><div class="tld"><span class="zh">perfMon 性能分析、扩展知识库（Labs / 地形 / COP / MPM / ML）、节点自动布局。</span><span class="en">perfMon profiling, expanded knowledge bases (Labs / terrain / COP / MPM / ML), auto layout.</span></div></div>
+      <div class="tl"><div class="tlv">v1.0</div><div class="tlt"><span class="zh">多模态 · Diff · 分组</span><span class="en">Multimodal · diff · grouping</span></div><div class="tld"><span class="zh">图片/多模态输入、参数红绿 Diff、NetworkBox 分组、Agent / Ask 模式。</span><span class="en">Image input, red/green param diffs, NetworkBox grouping, Agent / Ask modes.</span></div></div>
+      <div class="tl"><div class="tlv">v0.6</div><div class="tlt"><span class="zh">Houdini Agent 起点</span><span class="en">Houdini Agent begins</span></div><div class="tld"><span class="zh">原生工具链、Skill 系统、本地文档 RAG、多会话、线程安全工具分发。</span><span class="en">Native tool chain, Skills, local-doc RAG, multi-session, thread-safe dispatch.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================ FAQ -->
+<section id="faq">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker"><span class="ln"></span><span class="ml accent">12 — FAQ</span></div>
+      <h2><span class="zh">常见<em>问题</em>。</span><span class="en">Common <em>questions</em>.</span></h2>
+    </div>
+    <div class="faq reveal">
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">怎么用 AI 生成 3D 模型？需要 Meshy 账号吗？</span><span class="en">How do I generate 3D — and do I need a Meshy account?</span></span></summary>
+        <div class="ans"><span class="zh">在工具栏填入 <b>Meshy API Key</b>（或设置环境变量 <code>MESHY_API_KEY</code>）即可。之后直接对 Agent 说"生成一个…的 3D 模型"，它会自主调用文生 / 图生 3D、概念图画廊等工具，产物自动导入 <code>/obj</code>。云资产库会同步你 Meshy 账号下的余额与历史模型。Key 只存在本机，绝不明文上传。</span><span class="en">Add your <b>Meshy API key</b> in the toolbar (or set <code>MESHY_API_KEY</code>). Then just tell the agent "generate a 3D model of…" — it autonomously calls text/image-to-3D, the concept gallery and more, importing results into <code>/obj</code>. The cloud library syncs your account's balance and history. The key stays on your machine and is never uploaded in plaintext.</span></div>
+      </details>
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">Agent 不调用工具怎么办？</span><span class="en">The agent isn't calling tools?</span></span></summary>
+        <div class="ans"><span class="zh">确认所选提供商支持 Function Calling。DeepSeek、GLM-4.7、OpenAI、拼好饭（Claude）、OpenRouter 均支持；自定义端点需指向支持工具调用的模型。</span><span class="en">Make sure the provider supports function calling. DeepSeek, GLM-4.7, OpenAI, the Claude relay and OpenRouter all do; a custom endpoint must point at a tool-calling model.</span></div>
+      </details>
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">节点操作失败？</span><span class="en">Node operations failing?</span></span></summary>
+        <div class="ans"><span class="zh">确认 Houdini 正在运行、且程序已显示「已连接」（Bridge 通了）；节点路径用绝对路径（如 <code>/obj/geo1/box1</code>）；并查看工具结果中的具体错误信息。</span><span class="en">Make sure Houdini is running and the app shows "connected" (bridge is up); use absolute node paths like <code>/obj/geo1/box1</code>; and read the error in the tool result.</span></div>
+      </details>
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">API 连接有问题？</span><span class="en">API connection issues?</span></span></summary>
+        <div class="ans"><span class="zh">使用「测试连接」按钮诊断，检查 API Key 是否正确，并确认网络可访问 API 端点。</span><span class="en">Use the "Test connection" button, verify your API key, and confirm the endpoint is reachable.</span></div>
+      </details>
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">如何更新？会丢配置吗？</span><span class="en">How do updates work — do I lose config?</span></span></summary>
+        <div class="ans"><span class="zh">点击工具栏 <b>Update</b> 检查新版本；插件启动时静默检查 GitHub 并显示更新横幅。更新会保留 <code>config/</code>、<code>cache/</code>、<code>trainData/</code>、<code>plugins/</code>、<code>rules/</code> 目录。</span><span class="en">Click <b>Update</b> in the toolbar; the plugin also checks GitHub at startup and shows a banner. Updates preserve your <code>config/</code>, <code>cache/</code>, <code>trainData/</code>, <code>plugins/</code> and <code>rules/</code> directories.</span></div>
+      </details>
+      <details class="qa">
+        <summary><span class="qx">+</span><span><span class="zh">数据隐私如何保障？</span><span class="en">What about privacy?</span></span></summary>
+        <div class="ans"><span class="zh">可通过自定义端点接入自托管模型（如 LM Studio、vLLM），全程离线推理，数据不出本机。云端提供商仅在你配置对应 Key 时调用。</span><span class="en">Point a custom endpoint at a self-hosted model (LM Studio, vLLM) for fully offline inference — nothing leaves your machine. Cloud providers are only called when you configure their keys.</span></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ DOWNLOAD -->
+<section id="download">
+  <div class="wrap">
+    <div class="dl reveal">
+      <h2><span class="zh">把 AI 装进<em>你的节点网络</em>。</span><span class="en">Put AI <em>in your node graph</em>.</span></h2>
+      <p><span class="zh">免费、开源。下载独立程序，自动连接 Houdini —— 无需配置 Python。建网、写 VEX、生成 3D 资产，全在一句话之间。</span><span class="en">Free and open source. Download the standalone app — it connects to Houdini, no Python setup. Build networks, write VEX, generate 3D assets — all a sentence away.</span></p>
+      <div class="reqline">v2.0 · Houdini 20.5+ / 21+ · Windows · macOS · Linux · MIT</div>
+      <div class="dl-cta">
+        <a class="btn solid" href="/download/HoudiniAgent-Setup.exe" download><span class="zh">下载安装程序</span><span class="en">Download installer</span></a>
+        <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases" target="_blank" rel="noopener"><span class="zh">所有版本</span><span class="en">All releases</span></a>
+        <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener"><span class="zh">GitHub 仓库</span><span class="en">View on GitHub</span></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ FOOTER -->
+<footer>
+  <div class="wrap foot">
+    <div class="fbrand">
+      <div class="nm"><span class="mark">&#9671;</span> Houdini Agent</div>
+      <p><span class="zh">基于 AI 的 SideFX Houdini 智能助手。自主 Agent 循环、50+ 工具、Plan 模式、长期记忆、插件系统，并集成 Meshy AI 3D 生成与云资产库。</span><span class="en">An AI assistant for SideFX Houdini — autonomous agent loop, 50+ tools, Plan mode, long-term memory, plugins, plus Meshy AI 3D generation and a cloud asset library.</span></p>
+    </div>
+    <div class="fcol">
+      <h5>Product</h5>
+      <a href="#features"><span class="zh">功能</span><span class="en">Features</span></a>
+      <a href="#generation"><span class="zh">3D 生成</span><span class="en">3D Gen</span></a>
+      <a href="#tools"><span class="zh">工具</span><span class="en">Tools</span></a>
+      <a href="#providers"><span class="zh">模型</span><span class="en">Models</span></a>
+      <a href="#download"><span class="zh">下载</span><span class="en">Download</span></a>
+    </div>
+    <div class="fcol">
+      <h5>Docs</h5>
+      <a href="#install"><span class="zh">安装</span><span class="en">Install</span></a>
+      <a href="#usage"><span class="zh">用法</span><span class="en">Usage</span></a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/Kazama-Suichiku/Houdini-Agent/blob/main/README_CN.md" target="_blank" rel="noopener">README</a>
+    </div>
+    <div class="fcol">
+      <h5>Links</h5>
+      <a href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Kazama-Suichiku/Houdini-Agent/issues" target="_blank" rel="noopener">Issues</a>
+      <a href="https://github.com/Kazama-Suichiku/Houdini-Agent/releases" target="_blank" rel="noopener">Releases</a>
+    </div>
+  </div>
+  <div class="foot-btm">
+    <span>&copy; 2026 Houdini Agent · MIT License</span>
+    <span>Built with Fraunces · Newsreader · Space Mono</span>
+  </div>
+</footer>
+
+<button class="totop" id="totop" aria-label="back to top">&#8593;</button>
+
+<script>
+/* mobile hamburger */
+const navToggle=document.getElementById('navToggle');
+if(navToggle){navToggle.addEventListener('click',()=>document.getElementById('nav').classList.toggle('open'));}
+document.querySelectorAll('.nav-links a').forEach(a=>a.addEventListener('click',()=>document.getElementById('nav').classList.remove('open')));
+
+/* back-to-top */
+const totop=document.getElementById('totop');
+window.addEventListener('scroll',()=>totop.classList.toggle('show',window.scrollY>600),{passive:true});
+totop.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
+
+/* nav scrolled state */
+const nav=document.getElementById('nav');
+const navLinks=[...document.querySelectorAll('.nav-links a')];
+const spyMap=navLinks.map(a=>({a,sec:document.querySelector(a.getAttribute('href'))})).filter(x=>x.sec);
+function onScroll(){
+  nav.classList.toggle('scrolled',window.scrollY>20);
+  const y=window.scrollY+100;
+  let cur=null;
+  for(const it of spyMap){if(it.sec.offsetTop<=y)cur=it;}
+  navLinks.forEach(a=>a.classList.remove('active'));
+  if(cur)cur.a.classList.add('active');
+}
+onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+/* smooth-scroll for all in-page anchors, offset for the fixed header */
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const id=a.getAttribute('href');
+    if(id==='#'||id==='#top'){e.preventDefault();window.scrollTo({top:0,behavior:'smooth'});return;}
+    const t=document.querySelector(id);
+    if(t){e.preventDefault();const y=t.getBoundingClientRect().top+window.scrollY-72;window.scrollTo({top:y,behavior:'smooth'});}
+  });
+});
+
+/* language toggle */
+const body=document.body, langtog=document.getElementById('langtog');
+function setLang(l){body.dataset.lang=l;document.documentElement.lang=(l==='zh'?'zh':'en');langtog.textContent=(l==='zh'?'EN / 中':'中 / EN');try{localStorage.setItem('ha_lang',l)}catch(e){}if(window.__lpSetPH)window.__lpSetPH();}
+setLang((()=>{try{return localStorage.getItem('ha_lang')||'zh'}catch(e){return 'zh'}})());
+langtog.addEventListener('click',()=>setLang(body.dataset.lang==='zh'?'en':'zh'));
+
+/* motion preference */
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* scroll reveal */
+const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12,rootMargin:'0px 0px -8% 0px'});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+/* staggered cascade reveal */
+document.querySelectorAll('[data-stagger]').forEach(grid=>{
+  const kids=[...grid.children]; kids.forEach(k=>k.classList.add('st-child'));
+  if(REDUCED){kids.forEach(k=>k.classList.add('in'));return;}
+  const o=new IntersectionObserver(es=>es.forEach(e=>{
+    if(e.isIntersecting){kids.forEach((k,i)=>{k.style.transitionDelay=(i*70)+'ms';k.classList.add('in');});o.unobserve(e.target);}
+  }),{threshold:.12,rootMargin:'0px 0px -6% 0px'});
+  o.observe(grid);
+});
+
+/* scroll-progress hairline */
+const progress=document.getElementById('progress');
+const updProgress=()=>{const h=document.documentElement;const max=h.scrollHeight-h.clientHeight;progress.style.width=(max>0?(h.scrollTop/max*100):0)+'%';};
+updProgress(); window.addEventListener('scroll',updProgress,{passive:true});
+
+/* number count-up on hero stats */
+function countUp(el){
+  const to=+el.dataset.to;
+  if(REDUCED){el.textContent=to;return;}
+  const dur=1000,t0=performance.now();
+  (function f(now){const p=Math.min(1,(now-t0)/dur);el.textContent=Math.round((1-Math.pow(1-p,3))*to);if(p<1)requestAnimationFrame(f);})(performance.now());
+}
+const statsEl=document.querySelector('.hero-stats');
+if(statsEl){
+  const so=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){statsEl.querySelectorAll('.cnt').forEach(countUp);so.disconnect();}}),{threshold:.4});
+  so.observe(statsEl);
+}
+
+/* cursor-follow glow on cards */
+if(!REDUCED){
+  document.querySelectorAll('.feat,.prov').forEach(el=>{
+    el.addEventListener('mousemove',e=>{const r=el.getBoundingClientRect();el.style.setProperty('--mx',(e.clientX-r.left)+'px');el.style.setProperty('--my',(e.clientY-r.top)+'px');});
+  });
+}
+
+/* copy buttons (install/usage code blocks) */
+document.querySelectorAll('.code .cp').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const code=btn.closest('.code').querySelector('code').innerText;
+    navigator.clipboard.writeText(code).then(()=>{
+      const t=btn.textContent;btn.textContent='Copied';btn.style.color='var(--ok)';
+      setTimeout(()=>{btn.textContent=t;btn.style.color=''},1400);
+    }).catch(()=>{});
+  });
+});
+
+/* ============================================================
+   LIVE PANEL interactions (scoped to #livePanel)
+   ============================================================ */
+(function wireLivePanel(){
+  const frame=document.getElementById('livePanel');
+  if(!frame)return;
+  const $=(s)=>frame.querySelector(s), $$=(s)=>[...frame.querySelectorAll(s)];
+  const thread=$('.thread');
+  const scrollBot=()=>{thread.scrollTop=thread.scrollHeight;};
+  const timers=[];
+  const after=(ms,fn)=>{const id=setTimeout(fn,ms);timers.push(id);return id;};
+  const clearTimers=()=>{while(timers.length)clearTimeout(timers.pop());};
+  const isZH=()=>document.body.dataset.lang!=='en';
+  const clip=(s,n)=>s.length>n?s.slice(0,n)+'…':s;
+
+  /* localized placeholder, mode-aware */
+  const field=$('.field');
+  const PH={
+    Agent:{zh:field.dataset.phZh,en:field.dataset.phEn},
+    Ask:{zh:'问一个关于场景的问题…  (只读模式)',en:'Ask about the scene…  (read-only)'},
+    Plan:{zh:'描述目标，先生成可确认的执行计划…',en:'Describe a goal — get a plan to confirm first…'}
+  };
+  function activeMode(){const m=$('.mode.active');return m?m.dataset.mode:'Agent';}
+  function setPH(){const p=PH[activeMode()]||PH.Agent;field.dataset.ph=isZH()?p.zh:p.en;}
+  window.__lpSetPH=setPH; setPH();
+
+  /* Think toggle */
+  $$('.toggle[data-tg]').forEach(b=>b.onclick=()=>b.classList.toggle('on'));
+
+  /* session tabs — each tab keeps its own thread content */
+  const EMPTY='<div style="text-align:center;color:var(--text-mute);font-size:12px;padding:48px 0" class="fade-in">'+(isZH()?'新会话 · 在下方输入消息开始':'New session · type below to start')+'</div>';
+  const VEX_THREAD=`
+    <div class="msg user"><div class="bubble"><span class="zh">attribwrangle 报错 "Unknown attribute N"，帮我看下。</span><span class="en">My attribwrangle throws "Unknown attribute N" — can you check?</span></div></div>
+    <div class="msg ai"><div class="ai-body">
+      <div class="exec collapsed">
+        <div class="exec-hd"><span class="spark">&#9670;</span> <span class="ex-label">Completed &middot; 2 tools &middot; 0.4s</span><span class="chev">&#9662;</span></div>
+        <div class="tools">
+          <div class="tool warn"><span class="tg">!</span><span class="tn">check_errors</span><span class="td">attribwrangle1</span><span class="tt">0.2s</span></div>
+          <div class="tool-detail">error &middot; Unknown attribute "N" referenced on line 2 &middot; not present on input</div>
+          <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">get_node_parameters</span><span class="td">attribwrangle1</span><span class="tt">0.2s</span></div>
+          <div class="tool-detail">run_over Points &middot; input attribs: P, Cd &middot; no N</div>
+        </div>
+      </div>
+      <div class="code">
+        <div class="code-hd"><span class="lang">VEX</span><span class="code-actions"><button>Copy</button><button class="green">&#65291; Wrangle</button></span></div>
+        <pre><code><span class="com">// N 不存在 → 先用 normalize 生成</span>
+<span class="attr">@N</span> = <span class="fn">normalize</span>(<span class="attr">@P</span>);
+<span class="attr">v@up</span> = <span class="fn">set</span>(<span class="num">0</span>,<span class="num">1</span>,<span class="num">0</span>);</code></pre>
+      </div>
+      <p class="prose"><span class="zh">原因：输入几何没有 <code>N</code> 属性，wrangle 第 2 行直接引用了 <code>@N</code>。在引用前先生成法线，或在上游加一个 <b>Normal</b> SOP 即可。</span><span class="en">Cause: the input has no <code>N</code> attribute, but line 2 references <code>@N</code>. Generate the normal before using it, or add a <b>Normal</b> SOP upstream.</span></p>
+    </div></div>`;
+  const MESHY_THREAD=`
+    <div class="msg user"><div class="bubble"><span class="zh">生成一个低多边形的宝箱，给我几张概念图，挑两张做成 3D。</span><span class="en">Generate a low-poly treasure chest — give me concepts, turn two into 3D.</span></div></div>
+    <div class="msg ai"><div class="ai-body">
+      <div class="exec collapsed">
+        <div class="exec-hd"><span class="spark">&#9670;</span> <span class="ex-label">Completed &middot; 2 tools &middot; 11.4s</span><span class="chev">&#9662;</span></div>
+        <div class="tools">
+          <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">meshy_concept_to_3d</span><span class="td">4 concepts</span><span class="tt">6.0s</span></div>
+          <div class="tool-detail">text-to-image &middot; nano-banana &middot; aspect 1:1 &middot; 4 variants in parallel</div>
+          <div class="tool ok"><span class="tg">&#10003;</span><span class="tn">import_3d_asset</span><span class="td">2 &times; glb &rarr; /obj</span><span class="tt">0.6s</span></div>
+          <div class="tool-detail">picked #1, #3 &middot; image-to-3d (PBR) &middot; imported as packed geo</div>
+        </div>
+      </div>
+      <div class="mgal">
+        <div class="mgal-hd">MESHY &middot; <span class="zh">概念图</span><span class="en">Concepts</span></div>
+        <div class="mgal-grid">
+          <div class="mtile sel" style="--g1:#4a4332;--g2:#1d1a13"><span class="mck">&#10003;</span></div>
+          <div class="mtile" style="--g1:#37404a;--g2:#161a1f"></div>
+          <div class="mtile sel" style="--g1:#3a4435;--g2:#171c15"><span class="mck">&#10003;</span></div>
+          <div class="mtile" style="--g1:#43374a;--g2:#1a151f"></div>
+        </div>
+        <div class="mgal-foot"><span class="zh">2 已选</span><span class="en">2 selected</span> &middot; <span class="mgo"><span class="zh">生成选中的 3D</span><span class="en">Make 3D</span></span></div>
+      </div>
+      <div class="nodeop">
+        <span class="op-badge">+2</span><span class="op-text"><span class="zh">个 3D 模型已导入</span><span class="en">3D models imported</span></span>
+        <span class="op-paths">/obj/chest_01 &middot; /obj/chest_03 &middot; glb + PBR</span>
+      </div>
+      <p class="prose"><span class="zh">已生成 4 张概念图，把你选中的 <b>2 张</b>升级成带 PBR 贴图的 3D 模型并导入 <code>/obj</code>。需要我用 <code>meshy_remesh</code> 做四边面重拓扑吗？</span><span class="en">Generated 4 concepts, upgraded your <b>2 picks</b> into PBR-textured 3D models in <code>/obj</code>. Want me to <code>meshy_remesh</code> to quad topology?</span></p>
+    </div></div>`;
+  const tabStore=new Map();
+  const tabEls=$$('.tab');
+  let activeTab=$('.tab.active')||tabEls[0];
+  tabStore.set(tabEls[0],thread.innerHTML);
+  if(tabEls[1])tabStore.set(tabEls[1],VEX_THREAD);
+  if(tabEls[2])tabStore.set(tabEls[2],MESHY_THREAD);
+  function switchTab(t){
+    if(t===activeTab)return;
+    tabStore.set(activeTab,thread.innerHTML);   // save current
+    clearTimers();
+    $$('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');activeTab=t;
+    thread.innerHTML=tabStore.has(t)?tabStore.get(t):EMPTY;
+    thread.scrollTop=0;
+  }
+  tabEls.forEach(tb=>tb.onclick=()=>switchTab(tb));
+  let nNew=0; const tabNew=$('.tab-new');
+  if(tabNew)tabNew.onclick=()=>{
+    const nb=document.createElement('button');nb.className='tab';nb.textContent=(isZH()?'新对话 ':'New ')+(++nNew);
+    nb.onclick=()=>switchTab(nb);
+    tabStore.set(nb,EMPTY);
+    tabNew.parentElement.insertBefore(nb,tabNew);switchTab(nb);
+  };
+
+  /* all in-thread clicks are delegated on the frame, so they survive
+     thread innerHTML swaps when switching session tabs */
+  frame.addEventListener('click',e=>{
+    /* Keep / Undo */
+    const mini=e.target.closest('.nodeop .mini');
+    if(mini){e.stopPropagation();const act=mini.closest('.op-actions'),kept=mini.classList.contains('keep');act.innerHTML='<span class="res-tag '+(kept?'kept':'reverted')+'">'+(kept?'✓ Kept':'↩ Reverted')+'</span>';return;}
+    /* code copy / add-wrangle */
+    const cab=e.target.closest('.code-actions button');
+    if(cab){e.stopPropagation();const o=cab.textContent,green=cab.classList.contains('green');cab.textContent=green?'✓ Added':'✓ Copied';cab.classList.add('flash-ok');after(1200,()=>{cab.textContent=o;cab.classList.remove('flash-ok');});return;}
+    /* plan confirm / reject */
+    const pb=e.target.closest('.plan-btn');
+    if(pb){
+      const pa=pb.closest('.plan-actions');
+      if(pb.classList.contains('confirm')){
+        pa.innerHTML='<span class="res-tag kept" style="padding:8px 0;font-size:12.5px">✓ '+(isZH()?'计划已确认 · 开始执行':'Confirmed · executing')+'</span>';
+        const steps=[...pb.closest('.plan').querySelectorAll('.pstep')];let idx=steps.findIndex(s=>s.classList.contains('active'));
+        (function adv(){if(idx<0||idx>=steps.length)return;steps[idx].classList.remove('active');steps[idx].classList.add('done');idx++;if(idx<steps.length){steps[idx].classList.add('active');after(700,adv);}})();
+      }else{pa.innerHTML='<span class="res-tag reverted" style="padding:8px 0;font-size:12.5px">✕ '+(isZH()?'计划已驳回':'Rejected')+'</span>';}
+      return;
+    }
+    /* collapsibles */
+    const th=e.target.closest('.think-hd'); if(th){th.parentElement.classList.toggle('collapsed');return;}
+    const ex=e.target.closest('.exec-hd'); if(ex){ex.parentElement.classList.toggle('collapsed');return;}
+    const tl=e.target.closest('.tool'); if(tl){tl.classList.toggle('open');return;}
+    const ps=e.target.closest('.pstep'); if(ps){ps.classList.toggle('open');return;}
+  });
+
+  /* dropdowns */
+  $$('.dd').forEach(dd=>{
+    const trigger=dd.querySelector('.chip,.icon-btn'), menu=dd.querySelector('.menu');
+    trigger.addEventListener('click',ev=>{
+      ev.stopPropagation();
+      const open=menu.classList.contains('show');
+      $$('.menu').forEach(m=>m.classList.remove('show'));
+      if(!open)menu.classList.add('show');
+    });
+  });
+  function bindSelect(dd,onPick){
+    const btn=$('.dd[data-dd="'+dd+'"] .chip'), items=$$('.dd[data-dd="'+dd+'"] .menu button');
+    items.forEach(b=>b.onclick=()=>{items.forEach(x=>x.classList.remove('sel'));b.classList.add('sel');btn.firstChild.nodeValue=b.dataset.val+' ';onPick&&onPick(b.dataset.val);});
+  }
+  bindSelect('provider');
+  bindSelect('model',v=>{const m=$('.m-model');if(m)m.textContent=v;});
+  $$('.dd[data-dd="more"] .menu button').forEach(b=>{
+    b.onclick=()=>{
+      const act=b.dataset.act;
+      if(act==='clear'){clearTimers();thread.innerHTML='<div style="text-align:center;color:var(--text-mute);font-size:12px;padding:48px 0" class="fade-in">'+(isZH()?'对话已清空 · 在下方输入开始新对话':'Cleared · type below to start')+'</div>';tabStore.set(activeTab,thread.innerHTML);}
+      else if(act==='confirm'||act==='memory'||act==='cook'){b.classList.toggle('sel');}
+      else if(act==='lang_toggle'){setLang(isZH()?'en':'zh');}
+      else{b.classList.add('flash-ok');after(900,()=>b.classList.remove('flash-ok'));}  /* demo: dialog-opening items just flash */
+      $$('.menu.show').forEach(m=>m.classList.remove('show'));
+    };
+  });
+  document.addEventListener('click',()=>$$('.menu.show').forEach(m=>m.classList.remove('show')));
+
+  /* ctx refresh */
+  const rf=$('.ctx-refresh');
+  if(rf)rf.onclick=()=>{rf.classList.add('spin');after(600,()=>rf.classList.remove('spin'));$('.ctx-sel').textContent=(1+Math.floor(timers.length%4+1))+' nodes selected';};
+
+  /* mode switch */
+  $$('.mode').forEach(m=>m.onclick=()=>{$$('.mode').forEach(x=>x.classList.remove('active'));m.classList.add('active');setPH();});
+
+  /* typewriter */
+  function typewrite(el,text,speed,done){
+    el.textContent=''; const caret=document.createElement('span');caret.className='caret';el.appendChild(caret);
+    let i=0;(function step(){if(i<text.length){caret.insertAdjacentText('beforebegin',text.charAt(i));i++;scrollBot();after(speed,step);}else{caret.remove();done&&done();}})();
+  }
+
+  /* send → simulated streaming reply */
+  const sendBtn=$('.send');
+  function appendUser(txt){const d=document.createElement('div');d.className='msg user fade-in';d.innerHTML='<div class="bubble"></div>';d.querySelector('.bubble').textContent=txt;thread.appendChild(d);scrollBot();}
+  function simulateReply(txt){
+    const zh=isZH();
+    const msg=document.createElement('div');msg.className='msg ai fade-in';
+    msg.innerHTML='<div class="ai-body"><div class="gen-row"><span class="gen-dot"></span>'+(zh?'思考中…':'Thinking…')+'</div></div>';
+    thread.appendChild(msg);scrollBot();
+    const body=msg.querySelector('.ai-body');
+    after(650,()=>{
+      body.innerHTML='';
+      const think=document.createElement('div');think.className='think fade-in';
+      think.innerHTML='<div class="think-hd"><span class="spark">&#10022;</span> Thought for 2.1s<span class="chev">&#9662;</span></div><div class="think-body"></div>';
+      body.appendChild(think);scrollBot();
+      const tTxt=zh?('分析请求："'+clip(txt,22)+'"。先用只读工具确认当前网络，再决定新建还是修改节点；所有改动包进 undo 分组保证可回退。')
+                  :('Parsing "'+clip(txt,22)+'". First confirm the network read-only, then decide whether to create or edit nodes — all wrapped in an undo group.');
+      typewrite(think.querySelector('.think-body'),tTxt,15,()=>{
+        const exec=document.createElement('div');exec.className='exec fade-in';
+        exec.innerHTML='<div class="exec-hd"><span class="spark">&#9670;</span> <span class="ex-label">Executing…</span><span class="chev">&#9662;</span></div><div class="tools"></div>';
+        body.appendChild(exec);scrollBot();
+        const tools=exec.querySelector('.tools');
+        const seq=[['get_network_structure','/obj/geo1','0.2s'],['create_node','noise2','0.3s'],['set_parameter','amp = 1.8','0.2s']];
+        let k=0;(function addTool(){
+          if(k>=seq.length){exec.querySelector('.ex-label').textContent='Completed · '+seq.length+' tools · 0.7s';after(300,streamProse);return;}
+          const a=seq[k++];const row=document.createElement('div');row.className='tool ok fade-in';
+          row.innerHTML='<span class="tg">&#10003;</span><span class="tn"></span><span class="td"></span><span class="tt">'+a[2]+'</span>';
+          row.querySelector('.tn').textContent=a[0];row.querySelector('.td').textContent=a[1];
+          tools.appendChild(row);scrollBot();after(340,addTool);
+        })();
+        function streamProse(){
+          const p=document.createElement('p');p.className='prose fade-in';body.appendChild(p);
+          typewrite(p,zh?'已按你的描述更新网络：新增 noise 节点并设好参数。需要我继续细化或可视化结果吗？':'Updated the network as described: added a noise node and set its parameters. Want me to refine or visualize the result?',17,scrollBot);
+        }
+      });
+    });
+  }
+  function send(){const txt=(field.textContent||'').trim();if(!txt)return;field.textContent='';appendUser(txt);simulateReply(txt);}
+  sendBtn.onclick=send;
+  field.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+
+  /* auto-demo: type + send one scripted prompt on first view (once/session, aborts on any interaction) */
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let touched=false;
+  ['pointerdown','keydown'].forEach(ev=>frame.addEventListener(ev,()=>{touched=true;},{once:true}));
+  if(!reduce && !sessionStorage.getItem('ha_demo')){
+    const dio=new IntersectionObserver(es=>es.forEach(e=>{
+      if(!e.isIntersecting) return;
+      dio.disconnect();
+      if(touched) return;
+      sessionStorage.setItem('ha_demo','1');
+      after(1500,()=>{
+        if(touched) return;
+        const txt = (document.body.dataset.lang!=='en')
+          ? '在 /obj 里建个 geo，加 sphere，再 scatter 2000 个点。'
+          : 'In /obj make a geo, add a sphere, then scatter 2000 points.';
+        let i=0; field.textContent='';
+        (function tp(){
+          if(touched){field.textContent='';return;}
+          if(i<txt.length){field.textContent+=txt.charAt(i++);after(40,tp);}
+          else { after(250,()=>{ if(!touched) send(); }); }
+        })();
+      });
+    }),{threshold:.55});
+    dio.observe(frame);
+  }
+})();
+</script>
+</body>
+</html>
