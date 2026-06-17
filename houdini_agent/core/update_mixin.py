@@ -99,8 +99,12 @@ class UpdateMixin:
     # 自动更新
     # ============================================================
 
-    _updateCheckDone = QtCore.Signal(dict)   # 检查结果
-    _updateApplyDone = QtCore.Signal(dict)   # 应用结果
+    # 无参信号 + 属性传参：dict 跨线程排队投递在 Houdini 21/PySide6 下会触发
+    # PyObjectWrapper::toInt 段错误（signal 11 / access violation）。沿用本库
+    # _confirmToolRequest 既有的规避方案。payload 见 _update_check_payload /
+    # _update_apply_payload。_updateProgress 用原生 (str, int)，安全。
+    _updateCheckDone = QtCore.Signal()       # 检查结果（payload: _update_check_payload）
+    _updateApplyDone = QtCore.Signal()       # 应用结果（payload: _update_apply_payload）
     _updateProgress = QtCore.Signal(str, int)  # (stage, percent)
 
     def _silent_update_check(self):
@@ -111,13 +115,14 @@ class UpdateMixin:
             pass
         threading.Thread(target=self._bg_check_update, daemon=True).start()
 
-    @QtCore.Slot(dict)
-    def _on_silent_check_result(self, result: dict):
+    @QtCore.Slot()
+    def _on_silent_check_result(self):
         """[主线程] 静默检查结果 → 如果有更新，高亮按钮 + 显示通知横幅"""
+        result = getattr(self, '_update_check_payload', None) or {}
         # 断开静默回调，防止和手动点击冲突
         try:
             self._updateCheckDone.disconnect(self._on_silent_check_result)
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass
 
         if result.get('has_update') and result.get('remote_version'):
@@ -204,11 +209,14 @@ class UpdateMixin:
             result = check_update()
         except Exception as e:
             result = {'has_update': False, 'error': str(e), 'local_version': '?', 'remote_version': ''}
-        self._updateCheckDone.emit(result)
+        self._update_check_payload = result
+        self._updateCheckDone.emit()
 
-    @QtCore.Slot(dict)
-    def _on_update_check_result(self, result: dict):
-        """[主线程] 处理检查结果"""
+    @QtCore.Slot()
+    def _on_update_check_result(self, result: dict = None):
+        """[主线程] 处理检查结果（无参信号时取自 _update_check_payload；也兼容直接带参调用）"""
+        if result is None:
+            result = getattr(self, '_update_check_payload', None) or {}
         self.btn_update.setEnabled(True)
         self.btn_update.setText("Update")
         self.btn_update.setProperty("state", "")  # 恢复默认样式
@@ -302,7 +310,8 @@ class UpdateMixin:
             result = download_and_apply(progress_callback=self._update_progress_cb)
         except Exception as e:
             result = {'success': False, 'error': str(e), 'updated_files': 0}
-        self._updateApplyDone.emit(result)
+        self._update_apply_payload = result
+        self._updateApplyDone.emit()
 
     def _update_progress_cb(self, stage: str, percent: int):
         """进度回调（从后台线程调用 → 通过信号到主线程）"""
@@ -393,9 +402,11 @@ class UpdateMixin:
             self._update_progress_dlg.setValue(percent)
             self._update_progress_dlg.setLabelText(f"{stage} ({percent}%)")
 
-    @QtCore.Slot(dict)
-    def _on_update_apply_result(self, result: dict):
-        """[主线程] 更新完成后的处理"""
+    @QtCore.Slot()
+    def _on_update_apply_result(self, result: dict = None):
+        """[主线程] 更新完成后的处理（payload 取自 _update_apply_payload）"""
+        if result is None:
+            result = getattr(self, '_update_apply_payload', None) or {}
         self._stop_update_msg_timer()
         # 关闭进度条
         if hasattr(self, '_update_progress_dlg') and self._update_progress_dlg:
