@@ -125,6 +125,23 @@ _main_window = None
 def show_tool():
     global _main_window, MainWindow
 
+    # 默认转发到新的 QML 界面（in-Houdini 内嵌）。
+    # 旧版本(1.5.7 等)就地自动更新后会调用本函数“重启”，若不转发就会停在 2.0 里保留的
+    # 旧 PySide 界面（用户报“更新到 2.0 还是以前的 UI”）。这里让它落到新 QML 界面。
+    # 设环境变量 HAGENT_UI=legacy 可显式回退到旧 QtWidgets 界面。
+    if os.environ.get("HAGENT_UI", "qml").strip().lower() != "legacy":
+        try:
+            import importlib
+            from houdini_agent.ui_qml import app as _qml_app
+            importlib.reload(_qml_app)
+            print("[Houdini Agent] Startup: 转发到 QML 界面")
+            return _qml_app.show_tool()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("[Houdini Agent] QML 启动失败，回退旧界面: %s" % e)
+            # 失败则继续走下面的旧 QtWidgets 界面
+
     # 启动断点日志：用于诊断冷启动 freeze（参见 issue #9）。
     # 用户报错时贴出 Houdini Python Shell 输出即可定位卡死阶段。
     print("[Houdini Agent] Startup: reload_modules begin")
