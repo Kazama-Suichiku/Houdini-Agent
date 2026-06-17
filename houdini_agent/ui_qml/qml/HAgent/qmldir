@@ -3,6 +3,7 @@ singleton Theme Theme.qml
 Pill Pill.qml
 MenuPopup MenuPopup.qml
 ActionDialog ActionDialog.qml
+HoudiniPicker HoudiniPicker.qml
 LabeledField LabeledField.qml
 ManagementPanel ManagementPanel.qml
 Header Header.qml

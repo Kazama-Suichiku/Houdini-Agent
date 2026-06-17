@@ -8,17 +8,11 @@ from pathlib import Path
 os.environ.setdefault("QML_DISABLE_DISK_CACHE", "1")
 
 try:
-    from PySide6.QtCore import QSize, QSettings, QTimer, Qt
-    from PySide6.QtWidgets import (
-        QApplication, QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-        QMainWindow, QPushButton, QVBoxLayout, QWidget
-    )
+    from PySide6.QtCore import QSettings, QTimer
+    from PySide6.QtWidgets import QApplication, QMainWindow
 except ImportError:
-    from PySide2.QtCore import QSize, QSettings, QTimer, Qt
-    from PySide2.QtWidgets import (
-        QApplication, QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-        QMainWindow, QPushButton, QVBoxLayout, QWidget
-    )
+    from PySide2.QtCore import QSettings, QTimer
+    from PySide2.QtWidgets import QApplication, QMainWindow
 
 from houdini_agent.bridge.client import BridgeClient
 from houdini_agent.launcher.houdini_discovery import (
@@ -27,6 +21,7 @@ from houdini_agent.launcher.houdini_discovery import (
 from houdini_agent.ui_qml import host
 from houdini_agent.ui_qml.bridge_session import BridgeAgentSession
 from houdini_agent.ui_qml.controller import ChatModel, Controller
+from houdini_agent.ui_qml.houdini_picker import pick_houdini
 
 
 _GEO_ORG = ("HoudiniAI", "External")
@@ -46,217 +41,6 @@ class ExternalWindow(QMainWindow):
         except Exception:
             pass
         super().closeEvent(event)
-
-
-class HoudiniVersionDialog(QDialog):
-    def __init__(self, installs, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Open Houdini")
-        self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.resize(520, 380)
-        self.setMinimumSize(500, 360)
-        self.selected = None
-        self._installs = list(installs or [])
-        self._drag_pos = None
-        self.setStyleSheet("""
-            QDialog {
-                background: #0d0f12;
-                color: #eef0f2;
-                font-family: "Microsoft YaHei", "Segoe UI";
-            }
-            QLabel#eyebrow {
-                color: #6aa8ff;
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 1px;
-            }
-            QLabel#title {
-                color: #f5f7fa;
-                font-size: 24px;
-                font-weight: 700;
-            }
-            QLabel#body {
-                color: #aeb7c2;
-                font-size: 13px;
-                line-height: 1.45;
-            }
-            QLabel#chromeTitle {
-                color: #7d8794;
-                font-size: 12px;
-                font-weight: 700;
-            }
-            QListWidget {
-                background: #111419;
-                color: #eef0f2;
-                border: 1px solid #252b34;
-                border-radius: 14px;
-                padding: 8px;
-                outline: none;
-            }
-            QListWidget::item {
-                background: #171b22;
-                color: #e7edf5;
-                border: 1px solid #2b323d;
-                border-radius: 12px;
-                padding: 14px 16px;
-                margin: 6px;
-            }
-            QListWidget::item:hover {
-                background: #1c2531;
-                border-color: #3b83f6;
-            }
-            QListWidget::item:selected {
-                background: #12243b;
-                border: 1px solid #46a0ff;
-                color: #ffffff;
-            }
-            QPushButton {
-                min-width: 112px;
-                min-height: 36px;
-                border-radius: 10px;
-                padding: 0 18px;
-                font-size: 13px;
-                font-weight: 600;
-                color: #d9e1ec;
-                background: #171b22;
-                border: 1px solid #303845;
-            }
-            QPushButton:hover {
-                background: #202735;
-                border-color: #4b5b70;
-            }
-            QPushButton:pressed {
-                background: #121820;
-            }
-            QPushButton#primary {
-                color: #07111d;
-                background: #64b5ff;
-                border: 1px solid #84c6ff;
-            }
-            QPushButton#primary:hover {
-                background: #7bc0ff;
-            }
-            QPushButton:disabled {
-                color: #66707c;
-                background: #14171c;
-                border-color: #242a32;
-            }
-            QPushButton#close {
-                min-width: 28px;
-                max-width: 28px;
-                min-height: 28px;
-                max-height: 28px;
-                padding: 0;
-                border-radius: 14px;
-                color: #9ba6b4;
-                background: transparent;
-                border: 1px solid transparent;
-                font-size: 18px;
-                font-weight: 400;
-            }
-            QPushButton#close:hover {
-                color: #ffffff;
-                background: #2a1518;
-                border-color: #6b2a31;
-            }
-        """)
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(22, 16, 22, 20)
-        root.setSpacing(10)
-
-        chrome = QHBoxLayout()
-        chrome.setContentsMargins(0, 0, 0, 4)
-        chrome_title = QLabel("HOUDINI AGENT")
-        chrome_title.setObjectName("chromeTitle")
-        close_btn = QPushButton("×")
-        close_btn.setObjectName("close")
-        close_btn.clicked.connect(self.reject)
-        chrome.addWidget(chrome_title)
-        chrome.addStretch(1)
-        chrome.addWidget(close_btn)
-        root.addLayout(chrome)
-
-        eyebrow = QLabel("HOUDINI AGENT")
-        eyebrow.setObjectName("eyebrow")
-        title = QLabel("选择要连接的 Houdini")
-        title.setObjectName("title")
-        body = QLabel("完整的节点创建、场景读取和执行功能需要 Houdini Bridge。请选择一个 Houdini 20.5 或更高版本，Agent 会自动启动并连接。")
-        body.setObjectName("body")
-        body.setWordWrap(True)
-        root.addWidget(eyebrow)
-        root.addWidget(title)
-        root.addWidget(body)
-
-        self.list = QListWidget()
-        self.list.setFrameShape(QListWidget.NoFrame)
-        self.list.setSpacing(2)
-        self.list.setFocusPolicy(Qt.NoFocus)
-        for install in self._installs:
-            item = QListWidgetItem("Houdini %s\n%s" % (install["version"], install["path"]))
-            item.setData(Qt.UserRole, install)
-            item.setSizeHint(QSize(0, 64))
-            self.list.addItem(item)
-        if self.list.count() > 0:
-            self.list.setCurrentRow(0)
-        else:
-            item = QListWidgetItem("未检测到 Houdini 20.5+")
-            item.setFlags(Qt.NoItemFlags)
-            item.setSizeHint(QSize(0, 64))
-            self.list.addItem(item)
-        root.addWidget(self.list, 1)
-
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 6, 0, 0)
-        hint = QLabel("可以稍后从 Agent 再次连接 Houdini")
-        hint.setObjectName("body")
-        row.addWidget(hint)
-        row.addStretch(1)
-        self.cancel_btn = QPushButton("稍后再说")
-        self.open_btn = QPushButton("打开 Houdini")
-        self.open_btn.setObjectName("primary")
-        self.open_btn.setEnabled(bool(self._installs))
-        self.open_btn.setDefault(True)
-        row.addWidget(self.cancel_btn)
-        row.addWidget(self.open_btn)
-        root.addLayout(row)
-        self.cancel_btn.clicked.connect(self.reject)
-        self.open_btn.clicked.connect(self._accept)
-
-    def _accept(self):
-        item = self.list.currentItem()
-        self.selected = item.data(Qt.UserRole) if item else None
-        if self.selected:
-            self.accept()
-
-    def _global_pos(self, event):
-        try:
-            return event.globalPosition().toPoint()
-        except Exception:
-            return event.globalPos()
-
-    def mousePressEvent(self, event):
-        try:
-            y = event.position().y()
-        except Exception:
-            y = event.pos().y()
-        if event.button() == Qt.LeftButton and y < 56:
-            self._drag_pos = self._global_pos(event) - self.frameGeometry().topLeft()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
-            self.move(self._global_pos(event) - self._drag_pos)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
 
 
 class ExternalCoordinator:
@@ -330,10 +114,10 @@ class ExternalCoordinator:
         self.prompted = True
         if not self.installs:
             self.installs = find_houdini_installs()
-        dlg = HoudiniVersionDialog(self.installs, self.win)
-        if dlg.exec_() == QDialog.Accepted and dlg.selected:
+        selected = pick_houdini(self.installs, self.win)
+        if selected:
             try:
-                launch_houdini(self.repo_root, dlg.selected)
+                launch_houdini(self.repo_root, selected)
                 self.controller.toast.emit("已启动 Houdini，正在等待 Bridge 连接…")
                 self.poll.start()
             except Exception as exc:
