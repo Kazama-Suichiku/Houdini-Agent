@@ -355,6 +355,7 @@ class Controller(QObject):
     updateAvailableChanged = Signal()
     toast = Signal(str)                   # transient message
     prefillComposer = Signal(str)         # text -> 预填输入框并聚焦（库里"+用 Meshy 生成"）
+    requestOpenHoudini = Signal()         # 断开时请求外部协调器弹启动器/重连 Houdini
     openFontDialog = Signal()             # request the font-size slider popup
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
@@ -1673,9 +1674,35 @@ class Controller(QObject):
         self.modelChanged.emit()
         self._save_prefs()
 
+    def _houdini_connected(self):
+        """会话存在且 Bridge 仍可达。独立 exe 下关闭 Houdini 后 _session 可能仍在、
+        但 bridge 已断，故用一次 ping 作为"是否真连着"的可靠信号；进程内会话无 bridge，视为已连。"""
+        s = self._session
+        if not s:
+            return False
+        b = getattr(s, "bridge", None)
+        if b is None:
+            return True
+        try:
+            return b.ping() is not None
+        except Exception:
+            return False
+
+    def _prompt_open_houdini(self, what):
+        """断开时引导用户打开 Houdini：说明情况 + 请求弹启动器（外部 exe 由协调器接住）。"""
+        try:
+            self.toast.emit(self.tr("Houdini 未连接，%s 需要先连接 Houdini，正在打开启动器…") % what)
+        except Exception:
+            pass
+        try:
+            self.requestOpenHoudini.emit()
+        except Exception:
+            pass
+
     def _open_custom_provider(self):
-        if not self._session:
+        if not self._houdini_connected():
             self._revert_provider_from_custom()
+            self._prompt_open_houdini(self.tr("配置自定义 Provider"))
             return
         try:
             cur = QSettings("HoudiniAI", "Assistant")
