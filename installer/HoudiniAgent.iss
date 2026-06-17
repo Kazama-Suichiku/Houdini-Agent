@@ -29,6 +29,7 @@ DisableDirPage=no
 UninstallDisplayIcon={app}\{#AppExe}
 OutputDir=..\dist_installer
 OutputBaseFilename=HoudiniAgent-Setup-{#AppVersion}
+SetupIconFile=..\assets\houdini-agent.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

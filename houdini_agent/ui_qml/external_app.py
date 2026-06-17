@@ -340,8 +340,24 @@ class ExternalCoordinator:
                 self.controller.toast.emit("启动 Houdini 失败：%s" % exc)
 
 
+def _app_icon():
+    """品牌应用图标（运行时窗口/任务栏）。打包后取 _MEIPASS/assets，开发时取仓库 assets。"""
+    import os, sys
+    from PySide6.QtGui import QIcon
+    cands = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        cands.append(os.path.join(base, "assets", "houdini-agent.ico"))
+    cands.append(str(Path(__file__).resolve().parents[2] / "assets" / "houdini-agent.ico"))
+    for c in cands:
+        if os.path.isfile(c):
+            return QIcon(c)
+    return QIcon()
+
+
 def show_tool():
     app = QApplication.instance() or QApplication([])
+    app.setWindowIcon(_app_icon())
     repo_root = Path(__file__).resolve().parents[2]
     model = ChatModel()
     controller = Controller(model, use_backend=False)

@@ -23,6 +23,7 @@ datas += datas_for("rules", "rules")
 datas += datas_for("plugins", "plugins")
 datas += datas_for("trainData", "trainData")
 datas += datas_for("VERSION", ".")
+datas += datas_for("assets/houdini-agent.ico", "assets")
 datas += datas_for("houdini_agent", "bridge_payload/houdini_agent")
 datas += datas_for("houdini_agent/ui_qml/qml", "houdini_agent/ui_qml/qml")
 datas += datas_for("houdini_agent/ui_qml/fonts", "houdini_agent/ui_qml/fonts")
@@ -75,6 +76,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(ROOT / "assets" / "houdini-agent.ico"),
 )
 
 coll = COLLECT(
