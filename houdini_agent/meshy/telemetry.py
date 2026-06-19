@@ -45,9 +45,11 @@ DEFAULT_URL = "https://houdini-agent.com/api/telemetry"
 
 _ENV_URL = ("HAGENT_TELEMETRY_URL", "DCC_AI_TELEMETRY_URL")
 _ENV_OFF = ("HAGENT_TELEMETRY_OFF", "DCC_AI_TELEMETRY_OFF")
+_ENV_SEND_PROMPT = ("HAGENT_TELEMETRY_SEND_PROMPT", "DCC_AI_TELEMETRY_SEND_PROMPT")
 _CFG_URL_KEY = "telemetry_url"
 _CFG_INSTALL_KEY = "telemetry_install_id"
 _CFG_OPTOUT_KEY = "telemetry_optout"
+_CFG_SEND_PROMPT_KEY = "telemetry_send_prompt"   # 默认不上报提示词原文（隐私）
 
 _PROMPT_MAX = 2000          # 提示词最长上报长度（截断，避免超大 payload）
 _BATCH_MAX = 200            # 单次 POST 最多事件数
@@ -97,6 +99,21 @@ def set_optout(optout):
     return ok
 
 
+def send_prompt_enabled():
+    """是否上报提示词原文。默认【关闭】——只统计 credits 用量，不外传用户的提示词内容。
+    需用户/部署方显式开启（env HAGENT_TELEMETRY_SEND_PROMPT=1 或 ini telemetry_send_prompt:1）。"""
+    for var in _ENV_SEND_PROMPT:
+        v = (os.environ.get(var) or "").strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+    cfg, _ = load_config("ai", dcc_type="houdini")
+    if cfg:
+        v = (cfg.get(_CFG_SEND_PROMPT_KEY) or "").strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
 _install_id_cache = [None]
 
 
@@ -122,6 +139,31 @@ def install_id():
 
 _lock = threading.Lock()
 _seen_tasks = set()         # 进程内去重，防止轮询重复入账
+_seen_order = []            # 与 _seen_tasks 配套的插入顺序，用于有界淘汰（避免长跑内存泄漏）
+_SEEN_MAX = 5000
+_write_threads = []         # 挂起的异步落盘线程（供 _wait_writes 在测试/关闭时 join）
+
+
+def _wait_writes(timeout=5.0):
+    """等待挂起的埋点落盘线程完成。供测试同步断言、或进程退出前确保落盘。"""
+    for th in list(_write_threads):
+        try:
+            th.join(timeout)
+        except Exception:
+            pass
+    with _lock:
+        _write_threads[:] = [x for x in _write_threads if x.is_alive()]
+
+
+def _mark_seen_locked(tid):
+    """在持 _lock 时把 tid 记入去重集合，并做有界淘汰。"""
+    if tid in _seen_tasks:
+        return
+    _seen_tasks.add(tid)
+    _seen_order.append(tid)
+    while len(_seen_order) > _SEEN_MAX:
+        old = _seen_order.pop(0)
+        _seen_tasks.discard(old)
 
 
 def _extract_prompt(task):
@@ -138,7 +180,8 @@ def _build_event(kind, task):
         credits = int(credits or 0)
     except Exception:
         credits = 0
-    return {
+    prompt_text = _extract_prompt(task)
+    ev = {
         "event_id": uuid.uuid4().hex,
         "install_id": install_id(),
         "ts": int(time.time()),
@@ -150,8 +193,12 @@ def _build_event(kind, task):
         "mode": task.get("mode"),           # text-to-3d 的 preview/refine
         "status": "SUCCEEDED",
         "credits": credits,
-        "prompt": _extract_prompt(task),
+        "prompt_len": len(prompt_text),     # 始终上报长度（无隐私），便于粗略分析
     }
+    # 提示词原文默认不外传；仅在用户/部署方显式开启时才带上。
+    if send_prompt_enabled():
+        ev["prompt"] = prompt_text
+    return ev
 
 
 def _append_spool(event):
@@ -164,23 +211,45 @@ def _append_spool(event):
 
 
 def record_task(kind, task):
-    """采集一次成功任务的用量。任何异常都吞掉——埋点绝不能影响生成主流程。"""
+    """采集一次成功任务的用量。任何异常都吞掉——埋点绝不能影响生成主流程。
+
+    本函数在 client.wait() 的生成主流程线程里被同步调用，因此只做最廉价的内存
+    去重判断，落盘/上传放到后台线程，避免磁盘 IO 拖慢生成结果返回（#32）。"""
     try:
         if not isinstance(task, dict):
-            return
-        if not is_enabled():
             return
         tid = str(task.get("id") or task.get("task_id") or "")
         if tid:
             with _lock:
                 if tid in _seen_tasks:
                     return
-                _seen_tasks.add(tid)
-        _append_spool(_build_event(kind, task))
-        _ensure_uploader()
+        th = threading.Thread(target=_persist_task, args=(kind, task, tid),
+                              name="meshy-telemetry-write", daemon=True)
+        with _lock:
+            _write_threads.append(th)
+            _write_threads[:] = [x for x in _write_threads if x.is_alive() or x is th]
+        th.start()
     except Exception as e:
         try:
             print("[meshy] telemetry record failed: %s" % e)
+        except Exception:
+            pass
+
+
+def _persist_task(kind, task, tid):
+    """后台线程：判定开关 → 落盘 → 落盘成功后再标记 seen（#30：落盘失败不标记，
+    下次仍可重试，不会永久漏报）→ 唤起上传线程。"""
+    try:
+        if not is_enabled():
+            return
+        _append_spool(_build_event(kind, task))
+        if tid:
+            with _lock:
+                _mark_seen_locked(tid)
+        _ensure_uploader()
+    except Exception as e:
+        try:
+            print("[meshy] telemetry persist failed: %s" % e)
         except Exception:
             pass
 

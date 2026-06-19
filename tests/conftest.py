@@ -71,6 +71,8 @@ def telemetry_mod(monkeypatch):
 
     monkeypatch.setattr(t, "requests", object())     # 真值即可，_post 已被打桩
     t._seen_tasks.clear()
+    t._seen_order.clear()
+    t._write_threads.clear()
     t._install_id_cache[0] = None
     t._uploader[0] = None
     monkeypatch.setattr(t, "_ensure_uploader", lambda: None)

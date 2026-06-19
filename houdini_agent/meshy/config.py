@@ -66,7 +66,9 @@ def set_api_key(key, persist=True):
 
 
 def clear_api_key():
-    """清除已保存的 Meshy API Key（内存环境变量 + 落盘配置）——用于"退出登录"。"""
+    """清除已保存的 Meshy API Key（内存环境变量 + 落盘配置）——用于"退出登录"。
+    返回是否已真正登出（若 key 仍能从某个进程级环境变量解析到，返回 False，
+    让 UI 提示"该 key 来自系统环境变量，需在系统层面移除"）。"""
     for var in _ENV_VARS:
         os.environ.pop(var, None)
     try:
@@ -76,7 +78,7 @@ def clear_api_key():
             save_config("ai", cfg, dcc_type="houdini")
     except Exception:
         pass
-    return True
+    return not has_api_key()
 
 
 def masked_key():

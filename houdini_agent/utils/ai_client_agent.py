@@ -32,6 +32,48 @@ class AIClientAgentMixin:
         'set_node_parameter', 'create_wrangle_node',
     })
     _FAILED_TOOL_REPEAT_LIMIT = 2
+    # 防轮询风暴：连续这么多次用完全相同参数调用同一工具后，复用"重复失败保护"硬性拦截。
+    # 典型场景：模型反复轮询 meshy_task_status 等后台任务进度（S0 录到过连续 36 次）。
+    _CONSECUTIVE_SAME_CALL_LIMIT = 4
+
+    # 多轮引导样板：每轮工具结果后注入，用于 steer 模型的下一条回复。
+    # 这些文字只在 loop 内发给模型，绝不能写入持久化历史（否则会被当作工具真实
+    # 输出训练，并随对话不断膨胀上下文）。见 _extract_new_messages。
+    _GUIDANCE_FAIL = (
+        '\n\n[注意：上述工具调用返回了错误，这是工具调用层面的参数或执行错误，'
+        '不是Houdini节点cooking错误，无需调用check_errors。'
+        '请直接根据错误信息修正参数后重新调用该工具。]'
+    )
+    _GUIDANCE_THINK = (
+        '\n\n[重要：你的下一条回复必须以 <think> 标签开头。'
+        '在标签内分析以上执行结果和当前进度，'
+        '检查 Todo 列表中哪些步骤已完成（用 update_todo 标记为 done），'
+        '确认下一步计划后再继续执行。不要跳过 <think> 标签。]'
+    )
+
+    def _extract_new_messages(self, working_messages, initial_msg_count):
+        """提取本轮新增的消息链用于持久化，剥除 loop 内注入的多轮引导样板。
+
+        working_messages 里的 tool 消息可能被追加了 _GUIDANCE_FAIL / _GUIDANCE_THINK
+        （供模型阅读），但这些不属于工具真实输出，持久化前必须剥除，否则污染历史与
+        导出的训练数据。只对受影响的 tool 消息复制并清洗，其余消息保持原引用。
+        """
+        out = []
+        for msg in working_messages[initial_msg_count:]:
+            if msg.get('role') == 'tool' and isinstance(msg.get('content'), str) \
+                    and (self._GUIDANCE_THINK in msg['content']
+                         or self._GUIDANCE_FAIL in msg['content']):
+                cleaned = dict(msg)
+                cleaned['content'] = (
+                    msg['content']
+                    .replace(self._GUIDANCE_THINK, '')
+                    .replace(self._GUIDANCE_FAIL, '')
+                    .rstrip()
+                )
+                out.append(cleaned)
+            else:
+                out.append(msg)
+        return out
 
     @staticmethod
     def _tool_signature(tool_name: str, arguments: dict) -> str:
@@ -200,7 +242,7 @@ class AIClientAgentMixin:
                     'error': '用户停止了请求',
                     'content': full_content,
                     'final_content': '',
-                    'new_messages': working_messages[initial_msg_count:],
+                    'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -275,7 +317,7 @@ class AIClientAgentMixin:
                         'error': '用户停止了请求',
                         'content': full_content + round_content,
                         'final_content': round_content,
-                        'new_messages': working_messages[initial_msg_count:],
+                        'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
                         'tool_calls_history': tool_calls_history,
                         'call_records': call_records,
                         'iterations': iteration,
@@ -291,7 +333,7 @@ class AIClientAgentMixin:
                         'error': '用户停止了请求',
                         'content': full_content + round_content,
                         'final_content': round_content,
-                        'new_messages': working_messages[initial_msg_count:],
+                        'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
                         'tool_calls_history': tool_calls_history,
                         'call_records': call_records,
                         'iterations': iteration,
@@ -526,7 +568,7 @@ class AIClientAgentMixin:
                     'error': abort_error,
                     'content': full_content,
                     'final_content': '',
-                    'new_messages': working_messages[initial_msg_count:],
+                    'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -573,7 +615,7 @@ class AIClientAgentMixin:
                     'ok': True,
                     'content': full_content,
                     'final_content': round_content,  # 最后一轮的回复（不含中间轮次）
-                    'new_messages': working_messages[initial_msg_count:],  # 原生工具交互链
+                    'new_messages': self._extract_new_messages(working_messages, initial_msg_count),  # 原生工具交互链
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -871,6 +913,21 @@ class AIClientAgentMixin:
                 if dedup_flags[i]:
                     result_content = f"[缓存] 本轮已用相同参数调用过此工具，以下是之前的结果（无需再次调用）:\n{result_content}"
 
+                # ★ 防轮询风暴：连续多次用完全相同参数调用同一工具时，先强力劝阻，
+                #   并把该签名"毒化"进重复失败表——下一次相同调用会被执行前的重复失败
+                #   保护直接拦截（见上方 blocked_flags 分支），从而终止死循环。
+                #   注意：必须放在上面的成功分支 failed_tool_signatures.pop 之后，否则毒化会被清掉。
+                if not blocked_flags[i] and consecutive_same_calls >= self._CONSECUTIVE_SAME_CALL_LIMIT:
+                    result_content = (
+                        "[停止重复调用] 你已连续 %d 次用完全相同的参数调用 `%s`。"
+                        "请勿再用相同参数调用它：若在等待后台任务，它完成后会自动把结果作为"
+                        "新消息发给你，无需轮询；现在请直接结束本轮回复，或改用其他工具/参数。\n\n%s"
+                    ) % (consecutive_same_calls, tool_name, result_content)
+                    failed_tool_signatures[call_signature] = max(
+                        failed_tool_signatures.get(call_signature, 0),
+                        self._FAILED_TOOL_REPEAT_LIMIT,
+                    )
+
                 working_messages.append({
                     'role': 'tool',
                     'tool_call_id': tool_id,
@@ -898,7 +955,7 @@ class AIClientAgentMixin:
                     'ok': True,
                     'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
                     'final_content': f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
-                    'new_messages': working_messages[initial_msg_count:],
+                    'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -913,20 +970,13 @@ class AIClientAgentMixin:
                     _round_failed = True
                     break
 
+            # 注意：这些引导样板只供模型在 loop 内阅读，持久化时会被
+            # _extract_new_messages 剥除，不会进入历史/训练数据。
             if working_messages and working_messages[-1].get('role') == 'tool':
                 if _round_failed:
-                    working_messages[-1]['content'] += (
-                        '\n\n[注意：上述工具调用返回了错误，这是工具调用层面的参数或执行错误，'
-                        '不是Houdini节点cooking错误，无需调用check_errors。'
-                        '请直接根据错误信息修正参数后重新调用该工具。]'
-                    )
+                    working_messages[-1]['content'] += self._GUIDANCE_FAIL
                 if enable_thinking:
-                    working_messages[-1]['content'] += (
-                        '\n\n[重要：你的下一条回复必须以 <think> 标签开头。'
-                        '在标签内分析以上执行结果和当前进度，'
-                        '检查 Todo 列表中哪些步骤已完成（用 update_todo 标记为 done），'
-                        '确认下一步计划后再继续执行。不要跳过 <think> 标签。]'
-                    )
+                    working_messages[-1]['content'] += self._GUIDANCE_THINK
 
             # 保存当前轮次的内容
             full_content += round_content
@@ -973,7 +1023,7 @@ class AIClientAgentMixin:
             'ok': True,
             'content': final_text if final_text.strip() else "(工具调用完成，但未生成回复)",
             'final_content': final_text,
-            'new_messages': working_messages[initial_msg_count:],
+            'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
             'tool_calls_history': tool_calls_history,
             'call_records': call_records,
             'iterations': iteration,

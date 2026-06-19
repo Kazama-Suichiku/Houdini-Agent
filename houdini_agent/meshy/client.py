@@ -32,6 +32,30 @@ from . import config
 _TERMINAL = ("SUCCEEDED", "FAILED", "CANCELED")
 
 
+def _friendly_task_error(status, raw_msg, kind=""):
+    """把 Meshy 返回的晦涩 task_error 映射成可操作的中文提示。
+
+    Meshy 对内容审核失败常常只回一句很泛的 "The input file or parameters could
+    not be processed."，模型/用户无从判断原因。对文生图/图生图这类任务，这条错误
+    绝大多数是提示词或图片被内容审核拒绝（最常见是包含受版权保护的角色/品牌/名人）。
+    给出明确的修正方向，避免模型原样重试或乱猜。
+    """
+    msg = (raw_msg or "").strip()
+    low = msg.lower()
+    # 只对 FAILED 给内容审核猜测；CANCELED（用户/系统取消）不该被说成"被审核拒绝"。
+    if str(status).upper() != "FAILED":
+        return "任务%s: %s" % (status, msg or status)
+    is_image_gen = any(k in (kind or "") for k in ("image", "concept", "text-to-image"))
+    if ("could not be processed" in low or "invalid" in low or "policy" in low
+            or "moderation" in low or "rejected" in low):
+        hint = ("（提示：该错误通常表示提示词或输入图片被内容审核拒绝，"
+                "最常见原因是包含受版权保护的角色/品牌/名人名称（如卡通形象、影视角色等），"
+                "或图片不合规。请改用不含具体 IP 名称的通用描述后重试，不要原样重试。）")
+        if is_image_gen or "could not be processed" in low:
+            return "任务%s: %s %s" % (status, msg or status, hint)
+    return "任务%s: %s" % (status, msg or status)
+
+
 class MeshyError(RuntimeError):
     pass
 
@@ -233,7 +257,13 @@ class MeshyClient:
                         headers=self._headers(), timeout=self.timeout)
         self._raise(r)
         data = r.json()
-        return int(data.get("balance", 0)) if isinstance(data, dict) else 0
+        # -1 表示"无法解析余额"，与真实的 0 余额区分开（调用方/ UI 据此显示"未知"）。
+        if not isinstance(data, dict):
+            return -1
+        try:
+            return int(data.get("balance"))
+        except (TypeError, ValueError):
+            return -1
 
     # ---------- 轮询 ----------
     def wait(self, kind, task_id, on_progress=None, timeout=600, interval=3,
@@ -244,7 +274,8 @@ class MeshyClient:
         last = -1
         while True:
             if should_stop and should_stop():
-                raise MeshyError("已被用户中止")
+                raise MeshyError("已被用户中止（任务可能仍在 Meshy 云端继续运行并计费，"
+                                 "稍后可在资产库中找回已生成的结果）")
             task = self.get_task(kind, task_id)
             status = str(task.get("status", "")).upper()
             prog = int(task.get("progress", 0) or 0)
@@ -257,7 +288,7 @@ class MeshyClient:
             if status in _TERMINAL:
                 if status != "SUCCEEDED":
                     err = (task.get("task_error") or {}).get("message") or status
-                    raise MeshyError("任务%s: %s" % (status, err))
+                    raise MeshyError(_friendly_task_error(status, err, kind))
                 # 用量埋点：所有计费任务都从这里终态返回（埋点绝不影响主流程）
                 try:
                     from . import telemetry
@@ -266,15 +297,30 @@ class MeshyClient:
                     pass
                 return task
             if time.monotonic() > deadline:
-                raise MeshyError("轮询超时（%ds），任务仍未完成" % timeout)
+                raise MeshyError("轮询超时（%ds），任务仍未完成（任务可能仍在 Meshy 云端"
+                                 "继续运行并计费，稍后可在资产库中找回结果）" % timeout)
             time.sleep(interval)
 
     # ---------- 下载 ----------
     def download(self, url, dest_path):
-        r = requests.get(url, timeout=self.timeout, stream=True)
-        self._raise(r)
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                if chunk:
-                    f.write(chunk)
+        """原子下载：先写入 .part 临时文件，完整下载后再 rename 到目标路径。
+        中途失败会删除半截临时文件，绝不在目标路径留下不完整文件——否则后续
+        os.path.isfile() 的缓存探测会把半截文件当成有效缓存、永久复用损坏数据。"""
+        os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+        tmp_path = dest_path + ".part"
+        try:
+            r = requests.get(url, timeout=self.timeout, stream=True)
+            self._raise(r)
+            with open(tmp_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+            os.replace(tmp_path, dest_path)   # 同盘原子替换
+        except BaseException:
+            try:
+                if os.path.isfile(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            raise
         return dest_path

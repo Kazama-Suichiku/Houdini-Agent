@@ -115,8 +115,16 @@ def import_3d_asset(args):
             # fbx / obj / bgeo 等走 File SOP
             imp = geo.createNode("file", "import")
             fp = imp.parm("file")
-        if fp is not None:
-            fp.set(glb_path)
+        if fp is None:
+            # 找不到文件路径参数（不同 Houdini 版本 gltf SOP 参数名可能不同）：
+            # 直接报错，而不是建一个没读到文件的空节点伪装成功。
+            try:
+                geo.destroy()
+            except Exception:
+                pass
+            return _err("无法在导入 SOP 上找到文件路径参数（filename/file），"
+                        "可能是 Houdini 版本的 gltf SOP 参数名不同；未导入。")
+        fp.set(glb_path)
         imp.setDisplayFlag(True)
         imp.setRenderFlag(True)
         try:
@@ -127,15 +135,18 @@ def import_3d_asset(args):
         return _err("导入失败: %s" % e)
 
     mat_path = None
-    if build_material and texture_dir:
+    mat_warn = None
+    if build_material:
+        # 即使没有贴图目录，也建一个（空贴图的）Principled Shader 并指派，
+        # 与 schema "build_material 默认 true 会搭建 Principled Shader" 的描述一致。
         try:
             mat_path = _build_principled(geo, texture_dir)
             mp = geo.parm("shop_materialpath")
             if mp is not None and mat_path:
                 mp.set(mat_path)
         except Exception as e:
-            # 材质失败不致命：几何已导入
-            mat_path = "(材质搭建失败: %s)" % e
+            # 材质失败不致命：几何已导入。用单独的告警字段，不要把错误串当材质路径。
+            mat_warn = str(e)
 
     try:
         geo.setSelected(True, clear_all_selected=True)
@@ -145,6 +156,10 @@ def import_3d_asset(args):
     msg = "已导入: %s" % geo.path()
     if mat_path:
         msg += "\n材质: %s" % mat_path
+        if texture_dir is None:
+            msg += "（未提供贴图目录，材质为空白 Principled Shader）"
+    if mat_warn:
+        msg += "\n注意：材质搭建失败（几何已正常导入）：%s" % mat_warn
     return _ok(msg)
 
 
@@ -210,12 +225,18 @@ def import_rigged_character(args):
         pass
 
     info = ""
+    n_bone = -1
     try:
         kids = subnet.allSubChildren()
         n_bone = sum(1 for n in kids if "bone" in n.type().name().lower())
         info = "（%d 个子节点，含约 %d 根骨骼）" % (len(kids), n_bone)
     except Exception:
         pass
+    if n_bone == 0:
+        # 没有骨骼：这很可能是个静态网格而非绑定角色，别误导用户"可播放动画"。
+        return _ok("已导入: %s %s\n注意：未检测到骨骼，这可能是静态模型而非绑定角色"
+                   "（本工具用于带骨架/蒙皮/动画的 FBX；静态模型建议用 import_3d_asset）。"
+                   % (subnet.path(), info))
     return _ok("已导入绑定角色: %s %s\n如 FBX 含关键帧，可直接在视口播放动画。"
                % (subnet.path(), info))
 
@@ -246,8 +267,23 @@ def export_node_to_glb(args):
     if sop.type().category().name() != "Sop":
         return _err("无法从 %s 解析出可导出的 SOP 几何" % node_path)
 
+    # 几何为空检查：空几何会导出一个合法但空的 glb，下游 retexture 会白烧 credits。
+    try:
+        g = sop.geometry()
+        if g is not None and len(g.iterPrims()) == 0 and len(g.points()) == 0:
+            return _err("节点 %s 的几何为空（无点无面），无法导出有效模型；"
+                        "请检查该节点是否已正确 cook 出几何。" % sop.path())
+    except Exception:
+        pass   # 取不到几何不阻断（可能需要 cook）；交给后续文件检查兜底
+
     safe = "".join(c if (c.isalnum() or c == "_") else "_" for c in node.name()) or "export"
     dest = os.path.join(config.assets_dir(), "export_%s.glb" % safe)
+    # 先删掉同名旧文件：否则本次 cook 失败时，os.path.isfile(dest) 会命中旧文件、误判成功。
+    try:
+        if os.path.isfile(dest):
+            os.remove(dest)
+    except Exception:
+        pass
 
     rop = None
     try:

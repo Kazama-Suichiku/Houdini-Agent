@@ -11,12 +11,21 @@ Rectangle {
     implicitWidth: 420
     implicitHeight: 760
 
-    // user font-scale (⋯ 字号 +/−) drives the Theme singleton
-    Component.onCompleted: if (controller) Theme.scale = controller.fontScale
+    // 外观状态（字号 / 主题 / 强调色 / 字体方案 / 密度）驱动 Theme 单例换肤
+    function applyAppearance() {
+        if (!controller) return
+        Theme.scale = controller.fontScale
+        Theme.mode = controller.appTheme
+        Theme.accentKey = controller.accentKey
+        Theme.typeKey = controller.fontFamilyKey
+        Theme.densityKey = controller.densityKey
+    }
+    Component.onCompleted: applyAppearance()
     Connections {
         target: controller
         ignoreUnknownSignals: true
         function onFontScaleChanged() { if (controller) Theme.scale = controller.fontScale }
+        function onAppearanceChanged() { root.applyAppearance() }
     }
 
     ColumnLayout {
@@ -134,9 +143,13 @@ Rectangle {
     TokenPopup { id: tokenPopup }
     ActionDialog { id: actionDialog }
     ManagementPanel { id: managementPanel }
+    SettingsWindow { id: settingsWindow }
+    TemplateLibrary { id: templateLibrary }
     Connections {
         target: controller
         ignoreUnknownSignals: true
+        function onOpenSettingsDialog() { settingsWindow.open() }
+        function onOpenTemplates() { templateLibrary.open() }
         function onOpenFontDialog() { fontPopup.open() }
         function onOpenTokenDialog() { tokenPopup.st = controller.tokenStats(); tokenPopup.open() }
         function onOpenInfoDialog(title, body) { actionDialog.openInfo(title, body) }

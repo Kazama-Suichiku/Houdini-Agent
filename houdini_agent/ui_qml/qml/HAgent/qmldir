@@ -34,3 +34,9 @@ MeshyCard MeshyCard.qml
 ConceptGalleryCard ConceptGalleryCard.qml
 LibraryContent LibraryContent.qml
 SmartScrollBar SmartScrollBar.qml
+SettingsWindow SettingsWindow.qml
+ManagementContent ManagementContent.qml
+ProviderManager ProviderManager.qml
+TrashIcon TrashIcon.qml
+EmptyState EmptyState.qml
+TemplateLibrary TemplateLibrary.qml

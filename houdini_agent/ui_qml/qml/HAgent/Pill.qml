@@ -11,6 +11,7 @@ Item {
     property bool accent: false
     property bool dashed: false
     property bool uppercase: false
+    property bool elideLabel: false   // 标签随宽度省略号截断（用于可收缩布局）
     signal clicked()
 
     implicitHeight: Math.round(28 * Theme.scale)
@@ -30,14 +31,18 @@ Item {
 
     RowLayout {
         id: row
-        anchors.centerIn: parent
+        anchors.left: parent.left; anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: 11; anchors.rightMargin: 11
         spacing: 5
         Text {
+            Layout.fillWidth: pill.elideLabel
             text: pill.uppercase ? pill.label.toUpperCase() : pill.label
             color: pill.active ? Theme.accent : (pill.accent ? Theme.accent : Theme.textDim)
             font.family: Theme.fontBody
             font.pixelSize: Theme.fSm
             font.letterSpacing: pill.uppercase ? Theme.trackLabel : 0
+            elide: pill.elideLabel ? Text.ElideRight : Text.ElideNone
         }
         Text {
             visible: pill.caret

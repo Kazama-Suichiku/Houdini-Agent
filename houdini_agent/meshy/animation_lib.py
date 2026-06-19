@@ -56,6 +56,16 @@ def id_range():
     return int(r[0]), int(r[1])
 
 
+def verified_max_id():
+    """已核实存在的最大 action_id（0 表示未核实/动作库缺失）。
+    用于"目录里没有但看起来合法"的 id 透传判断——绝不能用 id_range 的名义上限，
+    否则动作库缺失时 0–696 任意整数都会被当合法动作透传、提交后白烧 credits。"""
+    try:
+        return int(_load().get("verified_max_id", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def get_by_id(action_id):
     aid = int(action_id)
     for a in _load().get("actions", []):
@@ -147,16 +157,19 @@ def search(query, limit=5):
     keywords, cat_filter = _expand_query(query)
 
     if not keywords and not cat_filter:
-        # 空查询：给一组通用基础动作作为起点
+        # 空查询：给一组通用基础动作作为起点（大小写/连字符不敏感匹配；
+        # 若硬编码名与库里命名对不上，回退到库里前若干个，保证不返回空）。
         common = ["Idle", "Casual_Walk", "RunFast", "Regular_Jump", "Wave_One_Hand",
                   "Big_Wave_Hello", "Victory_Cheer", "FunnyDancing_01", "Combat_Stance",
                   "Sit_Cross_Legged", "Clapping_Run", "Formal_Bow"]
+        norm = {a.get("name", "").lower().replace("-", "_"): a for a in actions}
         out = []
         for nm in common:
-            for a in actions:
-                if a["name"] == nm:
-                    out.append(dict(a, score=1))
-                    break
+            a = norm.get(nm.lower().replace("-", "_"))
+            if a is not None:
+                out.append(dict(a, score=1))
+        if not out:
+            out = [dict(a, score=1) for a in actions[:limit]]
         return out[:limit]
 
     scored = []
@@ -189,17 +202,22 @@ def resolve(items):
     actions = _load().get("actions", [])
     by_id = {a["id"]: a for a in actions}
     by_name = {a["name"].lower().replace("-", "_"): a for a in actions}
-    lo, hi = id_range()
+    lo, _hi = id_range()
+    vmax = verified_max_id()
 
     resolved, unknown = [], []
     for it in (items or []):
         a = None
-        # 数字 id
+        # 数字 id（注意：bool 是 int 的子类，True/False 会被 int() 当 1/0，需先排除）
+        if isinstance(it, bool):
+            unknown.append(it)
+            continue
         try:
             aid = int(it)
             if aid in by_id:
                 a = by_id[aid]
-            elif lo <= aid <= hi:
+            elif vmax and lo <= aid <= vmax:
+                # 仅当动作库已核实（vmax>0）且落在已核实范围内，才允许目录外透传。
                 a = {"id": aid, "name": "action_%d" % aid, "category": ""}
         except (ValueError, TypeError):
             key = str(it).strip().lower().replace("-", "_").replace(" ", "_")
