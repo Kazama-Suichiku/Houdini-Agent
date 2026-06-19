@@ -40,6 +40,13 @@ Flickable {
         width: view.width - 32
         spacing: 20
 
+        // 空会话起手式（仅在没有任何消息时显示）
+        EmptyState {
+            width: rows.width
+            visible: rep.count === 0
+            height: visible ? implicitHeight : 0
+        }
+
         Repeater {
             id: rep
             model: chatModel

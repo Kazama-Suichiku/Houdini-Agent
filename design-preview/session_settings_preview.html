@@ -1,0 +1,457 @@
+<title>会话管理 + 设置浮窗 预览</title>
+<style>
+  :root{
+    --bg:#0d0d0d; --code:#080808;
+    --surface:rgba(255,255,255,.04); --surface2:rgba(255,255,255,.07);
+    --border:rgba(255,255,255,.12); --borderSoft:rgba(255,255,255,.08);
+    --text:#e7e4db; --bright:#fff; --dim:#bfbbb0; --mute:#969184;
+    --accent:#e8e2d4; --accentSoft:rgba(232,226,212,.10); --accentLine:rgba(232,226,212,.30);
+    --ok:#b8c5a0; --warn:#d4a373; --err:#dd9999;
+    --rad:2px;
+    --serif:"Newsreader",Georgia,"Songti SC",serif;
+    --display:"Fraunces",Georgia,serif;
+    --mono:"Space Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:#161616;color:var(--text);font-family:var(--serif);
+    display:flex;gap:34px;padding:28px;flex-wrap:wrap;align-items:flex-start;
+    justify-content:center;min-height:100%;
+  }
+  .col{display:flex;flex-direction:column;gap:12px}
+  .caption{font-family:var(--mono);font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute)}
+  .hint{font-size:13px;color:var(--dim);max-width:380px;line-height:1.5}
+
+  /* ===== device frame: the 420px Houdini panel ===== */
+  .panel{
+    width:420px;height:720px;background:var(--bg);border:1px solid var(--border);
+    border-radius:6px;overflow:hidden;display:flex;flex-direction:column;position:relative;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);
+  }
+  .hairline{height:1px;background:var(--border);width:100%}
+  .micro{font-family:var(--mono);font-size:10px;letter-spacing:1.6px;text-transform:uppercase}
+
+  /* header */
+  .hdr{height:42px;display:flex;align-items:center;padding:0 12px;gap:8px;flex:0 0 auto}
+  .hdr .brand{font-family:var(--display);font-size:16px;color:var(--bright);flex:1}
+  .iconbtn{width:26px;height:26px;display:grid;place-items:center;border-radius:var(--rad);
+    color:var(--mute);cursor:pointer;border:1px solid transparent}
+  .iconbtn:hover{background:var(--surface);border-color:var(--border);color:var(--text)}
+  .iconbtn svg{width:15px;height:15px}
+
+  /* generic chip / pill (matches Pill.qml) */
+  .pill{height:28px;padding:0 11px;display:inline-flex;align-items:center;gap:5px;border-radius:var(--rad);
+    border:1px solid transparent;color:var(--dim);font-size:12px;cursor:pointer;white-space:nowrap;background:transparent}
+  .pill:hover{background:var(--surface);border-color:var(--border)}
+  .pill.active{background:var(--accentSoft);border-color:var(--accentLine);color:var(--accent)}
+  .pill.up{font-family:var(--mono);letter-spacing:1.6px;text-transform:uppercase;font-size:11px}
+  .pill.dashed{border:1px dashed var(--border)}
+
+  /* ===== SESSION AREA (the part being redesigned) ===== */
+  .sessionArea{flex:0 0 auto;position:relative}
+
+  /* --- Design C: current (broken) + scrollable variant --- */
+  .stripWrap{position:relative;height:36px}
+  .strip{display:flex;align-items:center;gap:4px;height:36px;padding:0 12px;overflow-x:auto;scrollbar-width:thin}
+  .strip::-webkit-scrollbar{height:5px}
+  .strip::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  .stripWrap.broken .strip{overflow-x:hidden}            /* broken: clipped, no scroll */
+  .strip .tab{position:relative}
+  .strip .x{margin-left:2px;color:var(--mute);cursor:pointer;font-size:13px;padding:0 2px}
+  .stripPlus{position:absolute;right:0;top:0;height:36px;display:flex;align-items:center;padding:0 10px 0 16px;
+    background:linear-gradient(90deg,transparent,var(--bg) 40%)}
+  .stripWrap.broken .stripPlus{display:none}              /* broken: + pushed off, hidden */
+
+  /* --- Design A: compact bar + sessions popup --- */
+  .barA{height:38px;display:flex;align-items:center;gap:8px;padding:0 12px}
+  .barA .cur{flex:1;display:flex;align-items:center;gap:6px;cursor:pointer;min-width:0;height:28px;
+    padding:0 8px;border-radius:var(--rad);border:1px solid transparent}
+  .barA .cur:hover{background:var(--surface);border-color:var(--border)}
+  .barA .cur .t{font-family:var(--mono);font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .barA .cur .caret{color:var(--mute);font-size:10px}
+  .barA .count{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:1px}
+
+  /* --- Design B: drawer toggle --- */
+  .barB{height:38px;display:flex;align-items:center;gap:8px;padding:0 12px}
+  .barB .t{flex:1;font-family:var(--mono);font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ===== popup / drawer shared list rows ===== */
+  .srow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--rad);cursor:pointer;position:relative}
+  .srow:hover{background:var(--surface)}
+  .srow.active{background:var(--accentSoft)}
+  .srow .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:0 0 auto;opacity:0}
+  .srow.active .dot{opacity:1}
+  .srow .meta{flex:1;min-width:0}
+  .srow .title{font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow.active .title{color:var(--accent)}
+  .srow .time{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:.5px;margin-top:1px}
+  .trash{width:24px;height:24px;display:grid;place-items:center;border-radius:var(--rad);color:var(--mute);
+    opacity:0;transition:opacity .12s,color .12s,background .12s;flex:0 0 auto}
+  .srow:hover .trash{opacity:1}
+  .trash:hover{background:rgba(221,153,153,.14);color:var(--err)}
+  .trash svg{width:14px;height:14px}
+
+  .popup{position:absolute;left:10px;right:10px;top:40px;z-index:30;background:#121212;border:1px solid var(--border);
+    border-radius:4px;box-shadow:0 18px 44px rgba(0,0,0,.55);overflow:hidden;display:none}
+  .popup.open{display:block;animation:pop .14s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .search{display:flex;align-items:center;gap:7px;padding:9px 11px;border-bottom:1px solid var(--borderSoft)}
+  .search input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:var(--serif);font-size:13px}
+  .search input::placeholder{color:var(--mute)}
+  .search svg{width:13px;height:13px;color:var(--mute)}
+  .listScroll{max-height:300px;overflow-y:auto;padding:5px}
+  .listScroll::-webkit-scrollbar{width:8px}
+  .listScroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  .newRow{display:flex;align-items:center;gap:8px;padding:9px 11px;border-top:1px solid var(--borderSoft);
+    cursor:pointer;color:var(--accent);font-family:var(--mono);font-size:11px;letter-spacing:1.4px;text-transform:uppercase}
+  .newRow:hover{background:var(--accentSoft)}
+  .newRow svg{width:13px;height:13px}
+
+  /* drawer (Design B) */
+  .scrim{position:absolute;inset:0;background:rgba(13,13,15,.55);z-index:40;opacity:0;pointer-events:none;transition:opacity .2s}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .drawer{position:absolute;left:0;top:0;bottom:0;width:280px;background:var(--bg);border-right:1px solid var(--border);
+    z-index:41;transform:translateX(-101%);transition:transform .22s cubic-bezier(.2,.7,.3,1);display:flex;flex-direction:column}
+  .drawer.open{transform:none}
+  .drawer .dh{display:flex;align-items:center;padding:12px;gap:8px}
+  .drawer .dh .t{flex:1;font-family:var(--mono);font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute)}
+
+  /* chat + composer stubs */
+  .chat{flex:1;padding:18px 16px;overflow:hidden;color:var(--mute)}
+  .chat .welcome{font-family:var(--display);font-size:22px;color:var(--bright);margin-bottom:6px}
+  .composer{flex:0 0 auto;margin:10px;border:1px solid var(--border);border-radius:4px;padding:11px 12px;color:var(--mute);font-size:13px}
+
+  /* ===== modal: delete confirm ===== */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;place-items:center;z-index:200}
+  .overlay.open{display:grid}
+  .modal{width:340px;background:#141414;border:1px solid var(--border);border-radius:4px;padding:20px;
+    box-shadow:0 30px 70px rgba(0,0,0,.6)}
+  .modal h3{margin:0 0 8px;font-family:var(--display);font-size:18px;color:var(--bright);font-weight:500}
+  .modal p{margin:0 0 16px;font-size:13.5px;color:var(--dim);line-height:1.55}
+  .modal p b{color:var(--text)}
+  .chk{display:flex;align-items:center;gap:9px;cursor:pointer;margin-bottom:18px;user-select:none}
+  .chk .box{width:16px;height:16px;border:1px solid var(--border);border-radius:var(--rad);display:grid;place-items:center;flex:0 0 auto}
+  .chk.on .box{background:var(--accent);border-color:var(--accent)}
+  .chk .box svg{width:11px;height:11px;color:#0d0d0d;opacity:0}
+  .chk.on .box svg{opacity:1}
+  .chk span{font-size:12.5px;color:var(--mute)}
+  .row-end{display:flex;justify-content:flex-end;gap:8px}
+  .btn{height:32px;padding:0 16px;border-radius:var(--rad);border:1px solid var(--border);background:transparent;
+    color:var(--text);font-family:var(--serif);font-size:13px;cursor:pointer}
+  .btn:hover{background:var(--surface)}
+  .btn.danger{border-color:rgba(221,153,153,.4);color:var(--err)}
+  .btn.danger:hover{background:rgba(221,153,153,.12)}
+  .btn.primary{background:var(--accent);color:#0d0d0d;border-color:var(--accent);font-weight:600}
+
+  /* ===== settings floating window ===== */
+  .setWin{width:760px;height:560px;background:#101010;border:1px solid var(--border);border-radius:6px;overflow:hidden;
+    display:flex;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .setNav{width:208px;border-right:1px solid var(--borderSoft);padding:14px 10px;background:#0c0c0c;display:flex;flex-direction:column;gap:2px}
+  .setNav .grp{font-family:var(--mono);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);padding:12px 10px 6px}
+  .navItem{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--rad);cursor:pointer;color:var(--dim);font-size:13px}
+  .navItem:hover{background:var(--surface)}
+  .navItem.active{background:var(--surface2);color:var(--text)}
+  .navItem svg{width:14px;height:14px;color:var(--mute)}
+  .navItem.active svg{color:var(--accent)}
+  .setBody{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .setTop{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--borderSoft)}
+  .setTop .title{flex:1;font-family:var(--display);font-size:17px;color:var(--bright)}
+  .setScroll{flex:1;overflow-y:auto;padding:18px 22px}
+  .sect{font-family:var(--mono);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);margin:6px 0 12px}
+  .field{display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid var(--borderSoft)}
+  .field .fl{flex:1}
+  .field .fl .name{font-size:14px;color:var(--text)}
+  .field .fl .desc{font-size:12.5px;color:var(--mute);margin-top:3px;line-height:1.5;max-width:380px}
+  .toggle{width:38px;height:21px;border-radius:11px;background:var(--surface2);border:1px solid var(--border);position:relative;cursor:pointer;flex:0 0 auto;margin-top:2px}
+  .toggle .knob{position:absolute;top:1px;left:1px;width:17px;height:17px;border-radius:50%;background:var(--mute);transition:.16s}
+  .toggle.on{background:var(--accentSoft);border-color:var(--accentLine)}
+  .toggle.on .knob{left:18px;background:var(--accent)}
+  .stepper{display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:var(--rad);overflow:hidden}
+  .stepper button{width:30px;height:28px;background:transparent;border:none;color:var(--text);cursor:pointer;font-size:15px}
+  .stepper button:hover{background:var(--surface)}
+  .stepper .val{width:46px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--text)}
+
+  .switcher{display:flex;gap:6px}
+  .switcher button{font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:7px 12px;
+    border:1px solid var(--border);background:transparent;color:var(--dim);border-radius:var(--rad);cursor:pointer}
+  .switcher button.on{background:var(--accentSoft);border-color:var(--accentLine);color:var(--accent)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;
+    color:var(--ok);border:1px solid rgba(184,197,160,.4);border-radius:2px;padding:1px 5px;margin-left:7px;vertical-align:middle}
+</style>
+
+<div class="col">
+  <div class="caption">会话管理 — 切换布局对比</div>
+  <div class="switcher" id="sw">
+    <button data-d="broken">现状(bug)</button>
+    <button data-d="A" class="on">方案A 弹层</button>
+    <button data-d="B">方案B 抽屉</button>
+    <button data-d="C">方案C 横向滚动</button>
+  </div>
+  <div class="hint" id="dhint"></div>
+
+  <div class="panel" id="panel">
+    <div class="hdr">
+      <div class="brand">Houdini Agent</div>
+      <div class="iconbtn" title="设置" onclick="openSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+    </div>
+    <div class="hairline"></div>
+
+    <!-- session area (re-rendered per design) -->
+    <div class="sessionArea" id="sessionArea"></div>
+    <div class="hairline"></div>
+
+    <div class="chat">
+      <div class="welcome">嗨，Dong</div>
+      <div style="font-size:13px">选一个会话，或新建一个开始。下面是占位的聊天区域。</div>
+    </div>
+    <div class="composer">描述一个任务或提出问题…</div>
+
+    <!-- drawer (Design B) -->
+    <div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+    <div class="drawer" id="drawer">
+      <div class="dh"><div class="t">会话</div>
+        <div class="iconbtn" title="新建" onclick="newSession()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></div>
+      </div>
+      <div class="hairline"></div>
+      <div class="listScroll" id="drawerList" style="max-height:none;flex:1"></div>
+    </div>
+  </div>
+</div>
+
+<div class="col">
+  <div class="caption">统一设置浮窗 (仿 Claude，含「删除前确认」开关)</div>
+  <div class="hint">左侧分类导航 + 右侧内容。把现在散落的设置（字号、确认模式、删除确认、规则/插件/记忆、Provider）收进一个浮窗。点上面面板的齿轮，或下面这个常驻预览。「会话」分类里有“删除会话前需确认”开关——在删除弹窗勾选“不再询问”后，可在这里重新打开。</div>
+  <div class="setWin" id="setWinInline"></div>
+</div>
+
+<!-- delete confirm modal -->
+<div class="overlay" id="delOverlay">
+  <div class="modal">
+    <h3>删除会话</h3>
+    <p>确定删除会话 <b id="delName">「Untitled」</b> 吗？此操作无法撤销。</p>
+    <div class="chk" id="dontAsk" onclick="this.classList.toggle('on')">
+      <div class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <span>以后删除不再询问（可在 设置 › 会话 中恢复）</span>
+    </div>
+    <div class="row-end">
+      <button class="btn" onclick="closeDel()">取消</button>
+      <button class="btn danger" onclick="confirmDel()">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- settings as floating modal (opened from panel gear) -->
+<div class="overlay" id="setOverlay">
+  <div class="setWin" id="setWinModal"></div>
+</div>
+
+<script>
+// ---- icons ----
+const ICN = {
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>',
+  caret:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>',
+  menu:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
+};
+
+// ---- mock session data ----
+let sessions = [
+  "重拓扑后法线翻转排查","Karma 渲染噪点优化","VEX 噪声地形生成","流体边界条件设置",
+  "RBD 碎裂约束网络","角色绑定权重导入","Pyro 烟雾色彩渐变","批量导出 Alembic",
+  "材质 AOV 分层输出","新对话","曲线生长动画","点云实例化散布",
+];
+let active = 9;
+let pendingDelete = -1;
+let design = "A";
+let popupOpen = false;
+const times = ["2分钟前","14分钟前","1小时前","昨天","昨天","2天前","3天前","上周","上周","刚刚","上周","2周前"];
+
+const $ = s=>document.querySelector(s);
+const area = $("#sessionArea");
+
+const HINTS = {
+  broken:"现状：横向 RowLayout，会话一多就溢出窗口右侧，最新会话和「+」一起被挤出去——无法点击、无法新建，只能删掉左侧旧会话才腾出空间。",
+  A:"方案A（推荐）：顶栏只显示当前会话名 + 计数，点开弹出可滚动的竖向会话列表，带搜索、新建、hover 删除。最贴合 420px 窄面板，一屏装下任意多会话。",
+  B:"方案B：左侧滑入抽屉（复用资产库抽屉的交互），竖向列表空间更大。适合会话很多时浏览，但需两步操作。",
+  C:"方案C：保留横向条，但改为可横向滚动 + 「+」固定在右端不被挤走。改动最小，但 420px 下仍显拥挤。",
+};
+
+function relabel(){ $("#dhint").textContent = HINTS[design]; }
+
+function renderSessionArea(){
+  popupOpen=false;
+  if(design==="broken" || design==="C"){
+    const broken = design==="broken";
+    area.innerHTML = `
+      <div class="stripWrap ${broken?'broken':''}">
+        <div class="strip" id="strip"></div>
+        <div class="stripPlus"><div class="pill dashed up" onclick="newSession()">+ 新建</div></div>
+      </div>`;
+    const strip = $("#strip");
+    sessions.forEach((s,i)=>{
+      const tab=document.createElement("div"); tab.className="tab";
+      tab.innerHTML = `<span class="pill up ${i===active?'active':''}" onclick="switchTo(${i})">${esc(s)}</span>`+
+        (sessions.length>1?`<span class="x" title="删除" onclick="askDelete(${i},event)">×</span>`:"");
+      tab.style.display="inline-flex"; tab.style.alignItems="center";
+      strip.appendChild(tab);
+    });
+    if(!broken){ // scroll active into view
+      setTimeout(()=>{const a=strip.querySelector(".active"); a&&a.scrollIntoView({inline:"center",block:"nearest"});},0);
+    }
+  } else if(design==="A"){
+    area.innerHTML = `
+      <div class="barA">
+        <div class="cur" onclick="togglePopup(event)">
+          <span class="t">${esc(sessions[active])}</span>
+          <span class="caret">${ICN.caret}</span>
+        </div>
+        <span class="count">${sessions.length} 会话</span>
+        <div class="iconbtn" title="新建会话" onclick="newSession()">${ICN.plus}</div>
+      </div>
+      <div class="popup" id="popup">
+        <div class="search">${ICN.search}<input id="psearch" placeholder="搜索会话…" oninput="renderList('listScroll', this.value)"></div>
+        <div class="listScroll" id="listScroll"></div>
+        <div class="newRow" onclick="newSession()">${ICN.plus} 新建会话</div>
+      </div>`;
+    renderList("listScroll","");
+  } else if(design==="B"){
+    area.innerHTML = `
+      <div class="barB">
+        <div class="iconbtn" title="会话列表" onclick="openDrawer()">${ICN.menu}</div>
+        <span class="t">${esc(sessions[active])}</span>
+        <span class="count" style="font-family:var(--mono);font-size:10px;color:var(--mute)">${sessions.length}</span>
+        <div class="iconbtn" title="新建会话" onclick="newSession()">${ICN.plus}</div>
+      </div>`;
+  }
+}
+
+function renderList(id, q){
+  const box = document.getElementById(id); if(!box) return;
+  q=(q||"").trim().toLowerCase();
+  box.innerHTML="";
+  sessions.forEach((s,i)=>{
+    if(q && !s.toLowerCase().includes(q)) return;
+    const row=document.createElement("div");
+    row.className="srow"+(i===active?" active":"");
+    row.innerHTML=`<span class="dot"></span>
+      <div class="meta"><div class="title">${esc(s)}</div><div class="time">${times[i]||""}</div></div>
+      ${sessions.length>1?`<div class="trash" title="删除" onclick="askDelete(${i},event)">${ICN.trash}</div>`:""}`;
+    row.onclick=()=>switchTo(i);
+    box.appendChild(row);
+  });
+  if(!box.children.length) box.innerHTML=`<div style="padding:16px;color:var(--mute);font-size:12px">没有匹配的会话</div>`;
+}
+
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function switchTo(i){ active=i; popupOpen=false; closeDrawer(); renderSessionArea(); }
+function newSession(){ sessions.push("新对话"); active=sessions.length-1; times.push("刚刚"); popupOpen=false; closeDrawer(); renderSessionArea(); }
+
+function togglePopup(e){ e&&e.stopPropagation(); const p=$("#popup"); if(!p)return; popupOpen=!popupOpen; p.classList.toggle("open",popupOpen); if(popupOpen){renderList("listScroll","");setTimeout(()=>$("#psearch")?.focus(),30);} }
+document.addEventListener("click",()=>{const p=$("#popup"); if(p&&popupOpen){popupOpen=false;p.classList.remove("open");}});
+
+function openDrawer(){ renderList("drawerList",""); $("#drawer").classList.add("open"); $("#scrim").classList.add("open"); }
+function closeDrawer(){ $("#drawer")?.classList.remove("open"); $("#scrim")?.classList.remove("open"); }
+
+// delete flow (respects "don't ask again")
+let askBeforeDelete = true;
+function askDelete(i,e){ e&&e.stopPropagation();
+  if(!askBeforeDelete){ doDelete(i); return; }
+  pendingDelete=i; $("#delName").textContent="「"+sessions[i]+"」"; $("#dontAsk").classList.remove("on"); $("#delOverlay").classList.add("open");
+}
+function closeDel(){ $("#delOverlay").classList.remove("open"); pendingDelete=-1; }
+function confirmDel(){
+  if($("#dontAsk").classList.contains("on")){ askBeforeDelete=false; syncSettingsToggles(); }
+  doDelete(pendingDelete); closeDel();
+}
+function doDelete(i){ if(i<0||i>=sessions.length)return;
+  sessions.splice(i,1); times.splice(i,1);
+  if(active>=sessions.length) active=sessions.length-1; else if(i<active) active--;
+  renderSessionArea(); renderList("drawerList",""); renderList("listScroll","");
+}
+
+// ---- design switcher ----
+$("#sw").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return;
+  design=b.dataset.d; [...$("#sw").children].forEach(x=>x.classList.toggle("on",x===b)); relabel(); renderSessionArea(); });
+
+// ============ SETTINGS WINDOW ============
+const SET_NAV = [
+  {grp:"设置"},
+  {id:"general",name:"常规",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>'},
+  {id:"appearance",name:"外观与字号",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h16M7 16l5-12 5 12M9 11h6"/></svg>'},
+  {id:"sessions",name:"会话",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'},
+  {id:"model",name:"模型与 Provider",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>'},
+  {grp:"扩展"},
+  {id:"rules",name:"规则",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'},
+  {id:"plugins",name:"插件",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16v10H4z"/><path d="M8 7V4M16 7V4"/></svg>'},
+  {id:"memory",name:"记忆",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5 2 7v3h10v-3c0-2 2-4 2-7a7 7 0 0 0-7-7z"/></svg>'},
+  {id:"about",name:"关于",icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>'},
+];
+let setActive="sessions";
+let prefs = { confirmTools:false, askDelete:true, fontVal:100, highContrast:false, autoScroll:true, telemetry:true };
+
+function buildSettings(host){
+  host.innerHTML = `
+    <div class="setNav" id="setNav"></div>
+    <div class="setBody">
+      <div class="setTop"><div class="title" id="setTitle"></div>
+        <div class="iconbtn" onclick="closeSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg></div>
+      </div>
+      <div class="setScroll" id="setScroll"></div>
+    </div>`;
+  const nav=host.querySelector("#setNav");
+  SET_NAV.forEach(it=>{
+    if(it.grp){ const g=document.createElement("div"); g.className="grp"; g.textContent=it.grp; nav.appendChild(g); return; }
+    const el=document.createElement("div"); el.className="navItem"+(it.id===setActive?" active":"");
+    el.innerHTML=`${it.icon}<span>${it.name}</span>`; el.onclick=()=>{setActive=it.id; buildSettings(host);};
+    nav.appendChild(el);
+  });
+  host.querySelector("#setTitle").textContent = SET_NAV.find(x=>x.id===setActive).name;
+  host.querySelector("#setScroll").innerHTML = SET_CONTENT[setActive]();
+}
+
+function toggleHtml(key,on){ return `<div class="toggle ${on?'on':''}" onclick="flip('${key}',this)"><div class="knob"></div></div>`; }
+function field(name,desc,control){ return `<div class="field"><div class="fl"><div class="name">${name}</div><div class="desc">${desc}</div></div>${control}</div>`; }
+
+const SET_CONTENT = {
+  general:()=>`<div class="sect">通用</div>`+
+    field("流式输出自动滚动","生成时自动滚到底部。",toggleHtml('autoScroll',prefs.autoScroll))+
+    field("匿名用量统计","仅统计 Meshy 任务用量，不含提示词原文。",toggleHtml('telemetry',prefs.telemetry)),
+  appearance:()=>`<div class="sect">外观与字号</div>`+
+    field("界面字号","调整整个面板的字号缩放（对应 ⋯ 菜单的字号 +/−）。",
+      `<div class="stepper"><button onclick="fontStep(-10)">−</button><div class="val" id="fv">${prefs.fontVal}%</div><button onclick="fontStep(10)">+</button></div>`)+
+    field("高对比深色","更接近纯黑的背景。",toggleHtml('highContrast',prefs.highContrast)),
+  sessions:()=>`<div class="sect">会话</div>`+
+    field("删除会话前需确认 <span class='tag'>本次新增</span>","关闭后删除会话不再弹确认框。在删除弹窗里勾选“不再询问”会自动关掉这里——随时可重新打开。",
+      `<div class="toggle ${prefs.askDelete?'on':''}" id="askDelToggle" onclick="flipAskDelete(this)"><div class="knob"></div></div>`)+
+    field("每步操作需批准（确认模式）","执行会修改场景/计费的工具前逐个弹确认卡。",toggleHtml('confirmTools',prefs.confirmTools)),
+  model:()=>`<div class="sect">模型与 Provider</div>`+
+    field("当前 Provider","在内置 / 自定义 OpenAI 兼容端点间切换。",`<div class="pill up active" style="cursor:default">CUSTOM</div>`)+
+    field("API Key","管理已保存的密钥。",`<button class="btn" style="height:28px;padding:0 12px">管理…</button>`)+
+    field("Meshy 账号","3D 生成所用的 Meshy API Key 与余额。",`<button class="btn" style="height:28px;padding:0 12px">查看余额</button>`),
+  rules:()=>`<div class="sect">规则</div><div class="desc" style="font-size:13px;color:var(--dim);line-height:1.6">把现有「规则编辑器」嵌进这里：左列规则清单 + 右侧编辑区。（此处为占位）</div>`,
+  plugins:()=>`<div class="sect">插件</div><div class="desc" style="font-size:13px;color:var(--dim);line-height:1.6">把现有「插件管理」嵌进这里：已安装插件、启用开关、来源。（此处为占位）</div>`,
+  memory:()=>`<div class="sect">记忆</div><div class="desc" style="font-size:13px;color:var(--dim);line-height:1.6">把现有「记忆管理」嵌进这里：记忆条目清单与增删。（此处为占位）</div>`,
+  about:()=>`<div class="sect">关于</div>`+
+    field("版本","Houdini Agent","<div class='pill up' style='cursor:default'>2.0.8</div>")+
+    field("检查更新","与 GitHub 最新发布比对。",`<button class="btn" style="height:28px;padding:0 12px">检查更新</button>`),
+};
+
+function flip(key,el){ prefs[key]=!prefs[key]; el.classList.toggle("on",prefs[key]); }
+function flipAskDelete(el){ prefs.askDelete=!prefs.askDelete; askBeforeDelete=prefs.askDelete; el.classList.toggle("on",prefs.askDelete); }
+function syncSettingsToggles(){ prefs.askDelete=askBeforeDelete; const t=document.getElementById("askDelToggle"); if(t)t.classList.toggle("on",prefs.askDelete); }
+function fontStep(d){ prefs.fontVal=Math.max(70,Math.min(160,prefs.fontVal+d)); const v=document.getElementById("fv"); if(v)v.textContent=prefs.fontVal+"%"; }
+
+function openSettings(){ buildSettings($("#setWinModal")); $("#setOverlay").classList.add("open"); }
+function closeSettings(){ $("#setOverlay").classList.remove("open"); }
+$("#setOverlay").addEventListener("click",e=>{ if(e.target.id==="setOverlay") closeSettings(); });
+
+// init
+relabel(); renderSessionArea(); buildSettings($("#setWinInline"));
+</script>

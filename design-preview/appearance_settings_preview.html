@@ -1,0 +1,322 @@
+<title>外观系统 · Houdini Agent</title>
+<style>
+  :root{
+    --bg:#0d0d0d; --code:#080808; --panel:#101010; --page:#000;
+    --surface:rgba(255,255,255,.04); --surface2:rgba(255,255,255,.07);
+    --border:rgba(255,255,255,.12); --borderSoft:rgba(255,255,255,.08);
+    --text:#e7e4db; --bright:#fff; --dim:#bfbbb0; --mute:#969184;
+    --accent:#e8e2d4; --ink:#e8e2d4; --soft:rgba(232,226,212,.10); --line:rgba(232,226,212,.30);
+    --ok:#b8c5a0; --warn:#d4a373;
+    --synBase:#c9b896; --synStr:#bc9b7a; --synCom:#5e5b54;
+    --fD:Georgia,'Times New Roman',serif; --fB:Georgia,'Times New Roman',serif;
+    --fM:'Space Mono','SFMono-Regular',Consolas,monospace;
+    --gap:14px; --pad:14px; --row:1.58; --rad:2px; --k:1;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--page);color:var(--text);font-family:var(--fB);
+    display:flex;flex-direction:column;min-height:100%;
+    -webkit-font-smoothing:antialiased;transition:background .3s ease;
+  }
+  .masthead{
+    display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    padding:20px 26px 15px;border-bottom:1px solid var(--borderSoft);
+  }
+  .masthead .lockup{display:flex;align-items:baseline;gap:12px}
+  .masthead h1{font-family:var(--fD);font-weight:500;font-size:21px;color:var(--bright);letter-spacing:.2px}
+  .masthead .eyebrow{font-family:var(--fM);font-size:10px;letter-spacing:2.2px;text-transform:uppercase;color:var(--mute)}
+  .masthead .thesis{font-family:var(--fB);font-size:12.5px;color:var(--mute);max-width:440px;line-height:1.5}
+
+  .stage{flex:1;display:flex;min-height:0;flex-wrap:wrap}
+
+  /* ===================== LEFT — live app ===================== */
+  .app{
+    flex:1 1 460px;min-width:320px;min-height:560px;display:flex;flex-direction:column;
+    background:var(--bg);border-right:1px solid var(--borderSoft);transition:background .3s ease;
+  }
+  .ah{display:flex;align-items:center;gap:10px;padding:calc(var(--pad)*.9) var(--pad);border-bottom:1px solid var(--borderSoft)}
+  .dia{color:var(--ink);font-size:13px}
+  .ah .nm{font-family:var(--fD);font-size:16px;color:var(--bright);font-weight:500;flex:1}
+  .tag{font-family:var(--fM);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);border:1px solid var(--border);border-radius:var(--rad);padding:3px 8px}
+  .more{color:var(--mute);font-family:var(--fM);font-size:15px;padding:0 4px;cursor:default}
+
+  .sbar{display:flex;align-items:center;gap:10px;padding:8px var(--pad);border-bottom:1px solid var(--borderSoft);background:var(--surface)}
+  .sbar .cur{font-family:var(--fM);font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);flex:1}
+  .sbar .cnt{font-family:var(--fM);font-size:10px;color:var(--mute)}
+  .sbar .plus{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:var(--rad);color:var(--ink);font-family:var(--fM)}
+
+  .feed{flex:1;overflow:auto;padding:calc(var(--pad)*1.3) var(--pad);display:flex;flex-direction:column;gap:var(--gap)}
+  .m{max-width:92%}
+  .who{font-family:var(--fM);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);margin-bottom:6px}
+  .m.u{align-self:flex-end;text-align:right}
+  .m.u .bub{display:inline-block;text-align:left;border:1px solid var(--line);background:var(--soft);color:var(--text);border-radius:var(--rad);padding:calc(var(--pad)*.6) calc(var(--pad)*.85);line-height:var(--row);font-size:14px}
+  .prose{line-height:var(--row);font-size:14px;color:var(--text)}
+  .prose b{color:var(--bright);font-weight:600}
+
+  .card{margin-top:11px;border:1px solid var(--borderSoft);border-radius:var(--rad);overflow:hidden}
+  .card .ct{display:flex;align-items:center;gap:8px;padding:calc(var(--pad)*.55) calc(var(--pad)*.75);background:var(--surface);font-family:var(--fM);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute)}
+  .plan ol{margin:0;padding:calc(var(--pad)*.7) calc(var(--pad)*.9) calc(var(--pad)*.7) calc(var(--pad)*2);counter-reset:s}
+  .plan li{list-style:none;position:relative;font-size:13px;line-height:1.7;color:var(--dim)}
+  .plan li::before{counter-increment:s;content:counter(s,decimal-leading-zero);position:absolute;left:-26px;font-family:var(--fM);font-size:10px;color:var(--ink);top:3px}
+
+  .code{background:var(--code);border:1px solid var(--borderSoft);border-radius:var(--rad);padding:calc(var(--pad)*.75);font-family:var(--fM);font-size:12px;color:var(--synBase);line-height:1.55;white-space:pre;overflow:auto;margin-top:11px}
+  .code .kw{color:var(--ink)} .code .str{color:var(--synStr)} .code .com{color:var(--synCom)}
+
+  .exec{margin-top:11px;display:flex;align-items:center;gap:8px;padding:calc(var(--pad)*.55) calc(var(--pad)*.7);border:1px solid var(--borderSoft);border-radius:var(--rad);font-family:var(--fM);font-size:11px;color:var(--dim)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+
+  .confirm{margin-top:11px;border:1px solid var(--line);border-radius:var(--rad);padding:calc(var(--pad)*.8)}
+  .confirm .q{font-size:13px;color:var(--text);line-height:1.6}
+  .confirm .btns{display:flex;gap:8px;margin-top:11px}
+  .b{cursor:pointer;border-radius:var(--rad);padding:6px 14px;font-family:var(--fM);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;border:1px solid var(--border);color:var(--dim);background:transparent}
+  .b.go{border-color:var(--line);background:var(--soft);color:var(--ink)}
+
+  .status{display:flex;align-items:center;gap:8px;padding:0 var(--pad);height:22px;border-top:1px solid var(--borderSoft)}
+  .status .pulse{width:6px;height:6px;border-radius:50%;background:var(--ink);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .status .st{font-family:var(--fM);font-size:11px;color:var(--dim);flex:1}
+  .status .ctx{font-family:var(--fM);font-size:10px;color:var(--mute)}
+
+  .composer{border-top:1px solid var(--borderSoft);padding:var(--pad);display:flex;gap:10px;align-items:center}
+  .composer .field{flex:1;border:1px solid var(--border);border-radius:var(--rad);padding:calc(var(--pad)*.65) calc(var(--pad)*.8);color:var(--mute);font-family:var(--fB);font-size:14px}
+  .send{border:1px solid var(--line);background:var(--soft);color:var(--ink);font-family:var(--fM);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;padding:calc(var(--pad)*.65) calc(var(--pad)*.95);border-radius:var(--rad)}
+
+  /* ===================== RIGHT — controls + specimen ===================== */
+  .side{flex:1 1 360px;min-width:300px;max-width:430px;background:var(--panel);display:flex;flex-direction:column;transition:background .3s ease}
+  .sh{display:flex;align-items:baseline;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--borderSoft)}
+  .sh .t{font-family:var(--fD);font-size:16px;color:var(--bright);font-weight:500}
+  .sh .s{font-family:var(--fM);font-size:10px;color:var(--mute);letter-spacing:1.5px}
+  .sbody{flex:1;overflow:auto;padding:8px 18px 22px}
+  .lab{font-family:var(--fM);font-size:10px;letter-spacing:1.8px;text-transform:uppercase;color:var(--mute);margin:18px 0 9px;padding-bottom:6px;border-bottom:1px solid var(--borderSoft);display:flex;justify-content:space-between;align-items:baseline}
+  .lab:first-child{margin-top:4px}
+  .lab .hint{font-family:var(--fB);font-size:10px;color:var(--mute);letter-spacing:0;text-transform:none}
+  .desc{font-family:var(--fB);font-size:11px;color:var(--mute);margin:0 0 9px;line-height:1.45}
+  .opts{display:flex;flex-wrap:wrap;gap:7px}
+  .opt{cursor:pointer;border:1px solid var(--border);border-radius:var(--rad);padding:7px 11px;font-family:var(--fB);font-size:13px;color:var(--dim);background:transparent;transition:all .15s;display:flex;align-items:center;gap:8px}
+  .opt:hover{background:var(--surface)}
+  .opt.on{background:var(--surface2);border-color:var(--line);color:var(--bright)}
+  .sw{width:13px;height:13px;border-radius:50%;border:1px solid var(--border);flex:none}
+  .opt.on .sw{box-shadow:0 0 0 2px var(--soft)}
+  .sq{width:13px;height:13px;border-radius:1px;border:1px solid var(--border);flex:none}
+
+  .step{display:inline-flex;border:1px solid var(--border);border-radius:var(--rad);overflow:hidden}
+  .step button{width:34px;height:30px;background:transparent;border:none;color:var(--text);font-size:16px;cursor:pointer;font-family:var(--fM)}
+  .step button:hover{background:var(--surface)}
+  .step .v{width:54px;display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);border-right:1px solid var(--border);font-family:var(--fM);font-size:13px;color:var(--text)}
+
+  /* specimen */
+  .spec{margin-top:22px;border:1px solid var(--borderSoft);border-radius:var(--rad);padding:14px;background:var(--surface)}
+  .spec .specL{font-family:var(--fM);font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--mute);margin-bottom:11px}
+  .spec .disp{font-family:var(--fD);font-size:24px;color:var(--bright);line-height:1.1}
+  .spec .bodysmp{font-family:var(--fB);font-size:14px;color:var(--text);margin-top:7px;line-height:1.5}
+  .spec .monosmp{font-family:var(--fM);font-size:11px;color:var(--dim);margin-top:7px;letter-spacing:.5px}
+  .scale{display:flex;gap:6px;flex-wrap:wrap;margin-top:13px}
+  .scale .sz{font-family:var(--fM);color:var(--mute);border:1px solid var(--borderSoft);border-radius:1px;padding:2px 6px}
+  .toks{display:flex;gap:5px;margin-top:14px;flex-wrap:wrap}
+  .tok{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .tok i{width:26px;height:18px;border-radius:1px;border:1px solid var(--borderSoft);display:block}
+  .tok span{font-family:var(--fM);font-size:8px;color:var(--mute);letter-spacing:.5px}
+
+  .foot{border-top:1px solid var(--borderSoft);padding:12px 18px;display:flex;gap:10px;align-items:center}
+  .foot .n{flex:1;font-family:var(--fM);font-size:10px;color:var(--mute);line-height:1.5}
+  .reset{cursor:pointer;border:1px solid var(--border);border-radius:var(--rad);padding:8px 13px;font-family:var(--fB);font-size:13px;color:var(--dim);background:transparent}
+  .reset:hover{background:var(--surface)}
+
+  @media(max-width:780px){
+    .stage{flex-direction:column}
+    .app{border-right:none;border-bottom:1px solid var(--borderSoft)}
+    .side{max-width:none}
+  }
+</style>
+
+<div class="masthead">
+  <div class="lockup">
+    <span class="eyebrow">外观系统</span>
+    <h1>Mono Editorial</h1>
+  </div>
+  <p class="thesis">不是改皮肤，是把同一套设计语言开放出几个可调维度。改右侧任意一项，左侧整个 App 与下方标本带实时跟随。</p>
+</div>
+
+<div class="stage">
+  <!-- ===== LIVE APP ===== -->
+  <div class="app" id="app">
+    <div class="ah">
+      <span class="dia">&#9671;</span>
+      <span class="nm">Houdini Agent</span>
+      <span class="tag">Opus 4.8</span>
+      <span class="more">&middot;&middot;&middot;</span>
+    </div>
+    <div class="sbar">
+      <span class="cur">场景搭建 / 区域光</span>
+      <span class="cnt">3 个会话</span>
+      <span class="plus">+</span>
+    </div>
+    <div class="feed">
+      <div class="m u"><div class="who">你</div>
+        <div class="bub">在原点放一个 pig head，加一盏区域光朝向它，然后渲一帧看看。</div>
+      </div>
+      <div class="m"><div class="who">Houdini Agent</div>
+        <div class="prose">好的，分三步走。我会先建几何，再加灯并对位，最后起一次 Karma 渲染。</div>
+        <div class="card plan">
+          <div class="ct">执行计划</div>
+          <ol>
+            <li>在 /obj 下创建 pig head 几何</li>
+            <li>新建区域光并朝向几何中心</li>
+            <li>提交 Karma 渲染，输出单帧</li>
+          </ol>
+        </div>
+        <div class="code"><span class="com"># /obj 下创建节点</span>
+<span class="kw">geo</span> = hou.node(<span class="str">"/obj"</span>).createNode(<span class="str">"geo"</span>, <span class="str">"pig"</span>)
+geo.createNode(<span class="str">"testgeometry_pighead"</span>)
+<span class="kw">light</span> = hou.node(<span class="str">"/obj"</span>).createNode(<span class="str">"hlight"</span>, <span class="str">"key"</span>)</div>
+        <div class="exec"><span class="dot"></span> create_node &middot; /obj/pig &middot; 完成</div>
+        <div class="confirm">
+          <div class="q">即将提交渲染，预计消耗约 12 秒 GPU 时间。继续吗？</div>
+          <div class="btns"><span class="b go">继续</span><span class="b">取消</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="pulse"></span><span class="st">Generating…</span><span class="ctx">上下文 18% &middot; 36k / 200k</span></div>
+    <div class="composer">
+      <div class="field">描述要搭的场景，或贴一张参考图…</div>
+      <span class="send">发送</span>
+    </div>
+  </div>
+
+  <!-- ===== CONTROLS ===== -->
+  <div class="side">
+    <div class="sh"><span class="t">外观与字号</span><span class="s">APPEARANCE</span></div>
+    <div class="sbody">
+
+      <div class="lab">主题<span class="hint">深色三档 + 日光</span></div>
+      <div class="desc">同一族色板的不同明暗。日光是浅色，会整体翻面并自动加深强调色。</div>
+      <div class="opts" id="oTheme"></div>
+
+      <div class="lab">强调色</div>
+      <div class="desc">用于选中态、指示点、用户气泡与按钮描边。浅色主题下会取其加深版以保证可读。</div>
+      <div class="opts" id="oAccent"></div>
+
+      <div class="lab">字体方案</div>
+      <div class="desc">标题 / 正文 / 等宽三件套的整体气质。</div>
+      <div class="opts" id="oType"></div>
+
+      <div class="lab">界面密度</div>
+      <div class="desc">只动间距与行高，不动字号。</div>
+      <div class="opts" id="oDens"></div>
+
+      <div class="lab">界面字号</div>
+      <div class="desc">整体百分比缩放（现有功能）。与密度正交，可叠加。</div>
+      <div class="step">
+        <button onclick="bump(-10)">&minus;</button><div class="v" id="vScale">100%</div><button onclick="bump(10)">+</button>
+      </div>
+
+      <!-- design-system specimen -->
+      <div class="spec">
+        <div class="specL">当前主题 · 设计标本</div>
+        <div class="disp">Houdini Agent</div>
+        <div class="bodysmp">在场景里放一个 pig head，加一盏区域光。</div>
+        <div class="monosmp">CREATE_NODE &middot; /OBJ/PIG &middot; 12.4MS</div>
+        <div class="scale" id="scale"></div>
+        <div class="toks" id="toks"></div>
+      </div>
+
+    </div>
+    <div class="foot">
+      <div class="n">预览，不写入设置。<br>方案确认后落到 Theme.qml。</div>
+      <button class="reset" onclick="reset()">重置默认</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  var THEMES=[
+    {id:'noir',name:'极夜',light:false,sw:'#0d0d0d',
+     bg:'#0d0d0d',code:'#080808',panel:'#101010',page:'#000000',
+     surface:'rgba(255,255,255,.04)',surface2:'rgba(255,255,255,.07)',border:'rgba(255,255,255,.12)',borderSoft:'rgba(255,255,255,.08)',
+     text:'#e7e4db',bright:'#ffffff',dim:'#bfbbb0',mute:'#969184',
+     synBase:'#c9b896',synStr:'#bc9b7a',synCom:'#5e5b54'},
+    {id:'graph',name:'石墨',light:false,sw:'#1b1b1b',
+     bg:'#161616',code:'#0e0e0e',panel:'#1c1c1c',page:'#0a0a0a',
+     surface:'rgba(255,255,255,.05)',surface2:'rgba(255,255,255,.085)',border:'rgba(255,255,255,.13)',borderSoft:'rgba(255,255,255,.085)',
+     text:'#e7e4db',bright:'#ffffff',dim:'#bfbbb0',mute:'#969184',
+     synBase:'#c9b896',synStr:'#bc9b7a',synCom:'#5e5b54'},
+    {id:'midn',name:'午夜蓝',light:false,sw:'#0c0e14',
+     bg:'#0c0e13',code:'#07090d',panel:'#10131a',page:'#06070b',
+     surface:'rgba(255,255,255,.045)',surface2:'rgba(255,255,255,.075)',border:'rgba(255,255,255,.12)',borderSoft:'rgba(255,255,255,.08)',
+     text:'#e3e4e2',bright:'#ffffff',dim:'#b8bcc4',mute:'#888d98',
+     synBase:'#c9b896',synStr:'#bc9b7a',synCom:'#5e5b54'},
+    {id:'day',name:'日光',light:true,sw:'#e6e1d6',
+     bg:'#e6e1d6',code:'#dcd6c7',panel:'#ddd8cc',page:'#d3cdbe',
+     surface:'rgba(40,32,18,.045)',surface2:'rgba(40,32,18,.08)',border:'rgba(40,32,18,.18)',borderSoft:'rgba(40,32,18,.10)',
+     text:'#2a2620',bright:'#14110a',dim:'#524c40',mute:'#857d6c',
+     synBase:'#5b4f37',synStr:'#8a583a',synCom:'#9c9483'},
+  ];
+  var ACCENTS=[
+    {id:'warm', name:'暖米', c:'#e8e2d4'},
+    {id:'steel',name:'冷钢', c:'#aec4d6'},
+    {id:'cela', name:'青瓷', c:'#aecdb8'},
+    {id:'clay', name:'暖砂', c:'#e0b48c'},
+    {id:'gray', name:'中性', c:'#cfccc4'},
+  ];
+  var TYPES=[
+    {id:'editorial',name:'编辑体',d:"Georgia,'Times New Roman',serif",b:"Georgia,'Times New Roman',serif",m:"'Space Mono',Consolas,monospace"},
+    {id:'modern',name:'现代无衬线',d:"'Segoe UI',system-ui,sans-serif",b:"'Segoe UI',system-ui,sans-serif",m:"'Space Mono',Consolas,monospace"},
+    {id:'mono',name:'全等宽',d:"'Space Mono',Consolas,monospace",b:"'Space Mono',Consolas,monospace",m:"'Space Mono',Consolas,monospace"},
+  ];
+  var DENS=[{id:'compact',name:'紧凑',gap:9,pad:11,row:1.44},{id:'normal',name:'标准',gap:14,pad:14,row:1.58},{id:'roomy',name:'宽松',gap:20,pad:18,row:1.74}];
+  var SIZES=[10,11,12,13,14,16,18];
+  var s={theme:'noir',accent:'warm',type:'editorial',dens:'normal',scale:100};
+
+  function rgb(h){return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
+  function rgba(h,a){var c=rgb(h);return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')';}
+  function darken(h,f){var c=rgb(h).map(function(v){return Math.round(v*f)});return 'rgb('+c[0]+','+c[1]+','+c[2]+')';}
+
+  function apply(){
+    var r=document.documentElement.style;
+    var th=THEMES.filter(function(x){return x.id===s.theme})[0];
+    ['bg','code','panel','page','surface','surface2','border','borderSoft','text','bright','dim','mute','synBase','synStr','synCom']
+      .forEach(function(key){r.setProperty('--'+key,th[key]);});
+
+    var a=ACCENTS.filter(function(x){return x.id===s.accent})[0];
+    var ink=th.light?darken(a.c,.58):a.c;
+    r.setProperty('--accent',a.c);
+    r.setProperty('--ink',ink);
+    r.setProperty('--soft',rgba(th.light?ink:a.c, th.light?.13:.10));
+    r.setProperty('--line',rgba(th.light?ink:a.c, th.light?.42:.30));
+
+    var ty=TYPES.filter(function(x){return x.id===s.type})[0];
+    r.setProperty('--fD',ty.d);r.setProperty('--fB',ty.b);r.setProperty('--fM',ty.m);
+
+    var d=DENS.filter(function(x){return x.id===s.dens})[0];
+    var k=s.scale/100;
+    r.setProperty('--gap',(d.gap*k)+'px');r.setProperty('--pad',(d.pad*k)+'px');r.setProperty('--row',d.row);r.setProperty('--k',k);
+    document.getElementById('vScale').textContent=s.scale+'%';
+    paint();
+  }
+  function chip(o,key,kind){
+    var on=s[key]===o.id,mark='';
+    if(kind==='accent')mark='<span class="sw" style="background:'+o.c+'"></span>';
+    if(kind==='theme')mark='<span class="sq" style="background:'+o.sw+'"></span>';
+    return '<button class="opt'+(on?' on':'')+'" onclick="pick(\''+key+'\',\''+o.id+'\')">'+mark+o.name+'</button>';
+  }
+  function fill(id,arr,key,kind){document.getElementById(id).innerHTML=arr.map(function(o){return chip(o,key,kind)}).join('');}
+  function paint(){
+    fill('oTheme',THEMES,'theme','theme');fill('oAccent',ACCENTS,'accent','accent');
+    fill('oType',TYPES,'type');fill('oDens',DENS,'dens');
+    var k=s.scale/100;
+    document.getElementById('scale').innerHTML=SIZES.map(function(n){
+      return '<span class="sz" style="font-size:'+Math.round(n*k)+'px">'+n+'</span>';
+    }).join('');
+    var th=THEMES.filter(function(x){return x.id===s.theme})[0];
+    var ink=document.documentElement.style.getPropertyValue('--ink');
+    var toks=[['底','--bg'],['面','--surface2'],['描','--border'],['正文','--text'],['次','--dim'],['弱','--mute']];
+    var html=toks.map(function(t){return '<span class="tok"><i style="background:var('+t[1]+')"></i><span>'+t[0]+'</span></span>';}).join('');
+    html+='<span class="tok"><i style="background:'+ink+'"></i><span>强调</span></span>';
+    document.getElementById('toks').innerHTML=html;
+  }
+  function pick(key,id){s[key]=id;apply();}
+  function bump(d){s.scale=Math.max(80,Math.min(150,s.scale+d));apply();}
+  function reset(){s={theme:'noir',accent:'warm',type:'editorial',dens:'normal',scale:100};apply();}
+  apply();
+</script>

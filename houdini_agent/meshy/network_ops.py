@@ -21,6 +21,40 @@ from .client import MeshyClient, MeshyError
 
 _TEX_KEYS = ("base_color", "normal", "roughness", "metallic", "emission")
 
+_PROMPT_MAX = 600          # Meshy 提示词长度上限
+_POLY_MIN, _POLY_MAX = 100, 300000
+_VALID_TOPOLOGY = ("triangle", "quad")
+
+
+def _clip_prompt(p):
+    """规整提示词：strip + 截断到 600 字符（超长 Meshy 会直接拒绝）。"""
+    p = (p or "").strip()
+    return p[:_PROMPT_MAX] if len(p) > _PROMPT_MAX else p
+
+
+def _clamp_poly(v, default=30000):
+    """把 target_polycount 钳到 [100, 300000]；非数字回退默认。"""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return default
+    return max(_POLY_MIN, min(n, _POLY_MAX))
+
+
+def _norm_topology(v, default="triangle"):
+    v = str(v or "").strip().lower()
+    return v if v in _VALID_TOPOLOGY else default
+
+
+def _safe_call(fn, *a):
+    """调用可选回调，吞掉其异常——回调（多为 UI）出错绝不能拖垮已成功的生成任务。"""
+    if not fn:
+        return
+    try:
+        fn(*a)
+    except Exception:
+        pass
+
 
 def _is_url(s):
     return isinstance(s, str) and s.lower().startswith(("http://", "https://"))
@@ -68,19 +102,32 @@ def _download_assets(client, task, task_id):
     model_urls = task.get("model_urls") or {}
     glb_url = model_urls.get("glb")
     if glb_url:
-        out["glb"] = client.download(glb_url, os.path.join(dest, "model.glb"))
+        try:
+            out["glb"] = client.download(glb_url, os.path.join(dest, "model.glb"))
+        except Exception as e:
+            # 任务已 SUCCEEDED（credits 已消耗），但本地下载失败。明确告知用户，
+            # 而不是笼统报"生成失败"——结果其实在云端，可稍后从资产库重新拉取。
+            raise MeshyError(
+                "模型已在云端生成成功（credits 已消耗，任务号 %s），但下载到本地失败：%s。"
+                "可稍后在资产库中重新拉取该资产。" % (task_id, e))
 
     tex_list = task.get("texture_urls") or []
     if tex_list:
         tex = tex_list[0] or {}
+        if len(tex_list) > 1:
+            out["extra_texture_sets"] = len(tex_list) - 1   # 仅下首套；记录还有几套备查
         tex_dir = os.path.join(dest, "textures")
         os.makedirs(tex_dir, exist_ok=True)
         for key in _TEX_KEYS:
             url = tex.get(key)
             if url:
                 ext = os.path.splitext(url.split("?")[0])[1] or ".png"
-                path = client.download(url, os.path.join(tex_dir, key + ext))
-                out["textures"][key] = path
+                try:
+                    path = client.download(url, os.path.join(tex_dir, key + ext))
+                    out["textures"][key] = path
+                except Exception as e:
+                    # 贴图下载失败不致命（几何已拿到）：跳过该贴图，记录到 data 供上层提示。
+                    out.setdefault("texture_errors", []).append("%s: %s" % (key, e))
         if out["textures"]:
             out["texture_dir"] = tex_dir
 
@@ -102,10 +149,19 @@ def _summary(verb, data):
         lines.append("本地 glb: %s" % glb)
     if tex:
         lines.append("贴图目录: %s" % tex)
+    if data.get("texture_errors"):
+        lines.append("注意：部分贴图下载失败（%s），材质可能不完整。"
+                     % "; ".join(data["texture_errors"]))
+    if data.get("note"):
+        lines.append(data["note"])
     if credits is not None:
         lines.append("消耗 credits: %s" % credits)
-    lines.append("下一步：调用 import_3d_asset(glb_path=\"%s\"%s) 导入 Houdini。"
-                 % (glb or "", (", texture_dir=\"%s\"" % tex) if tex else ""))
+    if glb:
+        lines.append("下一步：调用 import_3d_asset(glb_path=\"%s\"%s) 导入 Houdini。"
+                     % (glb, (", texture_dir=\"%s\"" % tex) if tex else ""))
+    else:
+        # 没有 glb 就别给空路径的导入指令，避免模型拿空字符串去调 import_3d_asset。
+        lines.append("注意：本次未获得可导入的 glb 文件，暂时无法 import_3d_asset。")
     return "\n".join(lines)
 
 
@@ -113,8 +169,9 @@ def _ok(result_text, data):
     return {"success": True, "result": result_text, "error": "", "data": data}
 
 
-def _err(msg):
-    return {"success": False, "result": "", "error": str(msg)}
+def _err(msg, data=None):
+    # 统一契约：失败也带 result/data 键，调用方无须分支判空（避免 KeyError）。
+    return {"success": False, "result": "", "error": str(msg), "data": data or {}}
 
 
 # ---------------- 各工具 ----------------
@@ -122,11 +179,11 @@ def _err(msg):
 # 单次"产出一个资产"的核心（返回 data，失败抛 MeshyError）——可被单任务与并行复用。
 
 def _produce_text_to_3d(client, kwargs, should_stop, on_progress=None):
-    prompt = (kwargs.get("prompt") or "").strip()
+    prompt = _clip_prompt(kwargs.get("prompt"))
     if not prompt:
         raise MeshyError("缺少 prompt")
-    topo = kwargs.get("topology", "triangle")
-    poly = int(kwargs.get("target_polycount", 30000) or 30000)
+    topo = _norm_topology(kwargs.get("topology"), "triangle")
+    poly = _clamp_poly(kwargs.get("target_polycount"))
     enable_pbr = bool(kwargs.get("enable_pbr", True))
     preview_id = client.create_text_to_3d_preview(prompt, topology=topo,
                                                   target_polycount=poly)
@@ -145,8 +202,8 @@ def _produce_image_to_3d(client, kwargs, should_stop, on_progress=None):
     if not image:
         raise MeshyError("缺少 image")
     image_arg = _image_to_arg(image)
-    topo = kwargs.get("topology", "triangle")
-    poly = int(kwargs.get("target_polycount", 30000) or 30000)
+    topo = _norm_topology(kwargs.get("topology"), "triangle")
+    poly = _clamp_poly(kwargs.get("target_polycount"))
     enable_pbr = bool(kwargs.get("enable_pbr", True))
     task_id = client.create_image_to_3d(image_arg, enable_pbr=enable_pbr,
                                         topology=topo, target_polycount=poly)
@@ -160,7 +217,7 @@ def _produce_retexture(client, kwargs, should_stop, on_progress=None):
     model_path = kwargs.get("model_path")
     if not model_path:
         raise MeshyError("缺少 model_path")
-    text_prompt = kwargs.get("text_prompt")
+    text_prompt = _clip_prompt(kwargs.get("text_prompt")) or None
     image = kwargs.get("image")
     if not text_prompt and not image:
         raise MeshyError("retexture 需要 text_prompt 或 image 之一")
@@ -173,7 +230,11 @@ def _produce_retexture(client, kwargs, should_stop, on_progress=None):
     task = client.wait("retexture", task_id,
                        on_progress=lambda p, s: on_progress and on_progress("重打材质", p, s),
                        should_stop=should_stop)
-    return _download_assets(client, task, task_id)
+    data = _download_assets(client, task, task_id)
+    if text_prompt and image:
+        # 官方约定 image_style_url 优先，text_prompt 被忽略——明确告知，避免用户误以为两者都生效。
+        data["note"] = "（同时提供了 image 和 text_prompt：本次以参考图为准，text_prompt 已忽略）"
+    return data
 
 
 def _produce_remesh(client, kwargs, should_stop, on_progress=None):
@@ -182,8 +243,8 @@ def _produce_remesh(client, kwargs, should_stop, on_progress=None):
         raise MeshyError("缺少 model_path")
     model_arg = _model_to_arg(model_path)
     task_id = client.create_remesh(
-        model_url=model_arg, topology=kwargs.get("topology", "quad"),
-        target_polycount=int(kwargs.get("target_polycount", 30000) or 30000))
+        model_url=model_arg, topology=_norm_topology(kwargs.get("topology"), "quad"),
+        target_polycount=_clamp_poly(kwargs.get("target_polycount")))
     task = client.wait("remesh", task_id,
                        on_progress=lambda p, s: on_progress and on_progress("重拓扑", p, s),
                        should_stop=should_stop)
@@ -271,12 +332,17 @@ def _run_rig(client, kwargs, on_progress, should_stop):
 
 def run_animations(rig_task_id, actions, on_progress=None, should_stop=None):
     """对一个已绑定角色并行套多个动作。actions=动作 id/名字列表。
-    返回 (clips, unknown)；clips 每个含 fbx/action_id/action_name；全失败抛 MeshyError。"""
+    返回 (clips, unknown, errors, dropped)；clips 每个含 fbx/action_id/action_name；
+    dropped 是因单次上限（10 个）被截掉的动作；全失败抛 MeshyError。"""
     from . import animation_lib
     resolved, unknown = animation_lib.resolve(actions)
     if not resolved:
         raise MeshyError("没有可识别的动作（无法解析：%s）" % (unknown or actions))
-    resolved = resolved[:10]   # 官方上限：一次最多 10 个 clip
+    dropped = []
+    if len(resolved) > 10:
+        # 官方上限：一次最多 10 个 clip。超出的明确回报给调用方，不静默丢弃。
+        dropped = [a.get("name") or a.get("id") for a in resolved[10:]]
+        resolved = resolved[:10]
     client = MeshyClient()
     total = len(resolved)
     results = [None] * total
@@ -289,7 +355,7 @@ def run_animations(rig_task_id, actions, on_progress=None, should_stop=None):
             with lock:
                 avg = sum(prog) // total
                 done = sum(1 for p in prog if p >= 100)
-            on_progress("套动作", avg, "%d/%d" % (done, total))
+            _safe_call(on_progress, "套动作", avg, "%d/%d" % (done, total))
 
     def one(k, a):
         def wp(p, s):
@@ -321,7 +387,7 @@ def run_animations(rig_task_id, actions, on_progress=None, should_stop=None):
     out = [r for r in results if r]
     if not out:
         raise MeshyError("动作生成全部失败：" + (errors[0] if errors else "未知原因"))
-    return out, unknown
+    return out, unknown, errors, dropped
 
 
 def _run_animate(client, kwargs, on_progress, should_stop):
@@ -331,14 +397,21 @@ def _run_animate(client, kwargs, on_progress, should_stop):
     actions = kwargs.get("actions") or []
     if not actions:
         return _err("meshy_animate 需要 actions（动作 id 或名字的列表）")
-    clips, unknown = run_animations(rig_task_id, actions,
-                                    on_progress=on_progress, should_stop=should_stop)
+    clips, unknown, errors, dropped = run_animations(rig_task_id, actions,
+                                            on_progress=on_progress, should_stop=should_stop)
     lines = ["套动作完成，共 %d 个：" % len(clips)]
     for c in clips:
         lines.append("- %s (action_id %s): %s"
                      % (c.get("action_name"), c.get("action_id"), c.get("fbx") or "(无 FBX)"))
     if unknown:
         lines.append("未能识别、已跳过：%s" % unknown)
+    if dropped:
+        # 单次最多 10 个动作；超出的没生成，明确告知用户而非静默丢弃。
+        lines.append("注意：一次最多套 10 个动作，以下未处理（如需可分批再发）：%s" % dropped)
+    if errors:
+        # 部分动作生成失败（可能已消耗 credits）——明确告知，别让失败静默消失。
+        lines.append("注意：有 %d 个动作生成失败（可能已消耗 credits）：%s"
+                     % (len(errors), "; ".join(str(e)[:80] for e in errors)))
     total_credits = sum(int(c.get("consumed_credits") or 0) for c in clips)
     if total_credits:
         lines.append("合计消耗 credits: %d" % total_credits)
@@ -386,6 +459,10 @@ def _run_single(tool_name, client, kwargs, on_progress, should_stop):
 
 def _run_balance(client, kwargs, on_progress, should_stop):
     bal = client.balance()
+    # balance() 解析失败返回 -1（与真实 0 余额区分）。别把 -1 当数字播报给模型，
+    # 否则它会告诉用户"余额 -1"。
+    if bal is None or bal < 0:
+        return _ok("Meshy 余额暂时无法获取（可稍后重试）。", {"balance": -1})
     return _ok("Meshy 剩余 credits: %d" % bal, {"balance": bal})
 
 
@@ -398,6 +475,10 @@ def _run_dispatch(tool_name, client, kwargs, on_progress, should_stop):
         return _run_animate(client, kwargs, on_progress, should_stop)
     if tool_name in _PRODUCERS:
         return _run_single(tool_name, client, kwargs, on_progress, should_stop)
+    if tool_name in ("meshy_text_to_image", "meshy_image_to_image", "meshy_concept_to_3d"):
+        # 这些是人在环交互工具（带画廊/多选），必须经 UI 控制器编排，不能走无 UI 的 run_network。
+        return _err("%s 是交互式工具（需要画廊 UI），不能通过 run_network 直接执行；"
+                    "请在应用内通过控制器调用。" % tool_name)
     return _err("未知的 Meshy 网络工具: %s" % tool_name)
 
 
@@ -407,9 +488,10 @@ MAX_PARALLEL = 4
 
 
 def run_network_parallel(tool_name, kwargs, count, on_item=None,
-                         on_progress=None, should_stop=None):
+                         on_progress=None, should_stop=None, errors_out=None):
     """并行运行 count 个同类生成任务（同参数不同种子）。
-    on_item(index, data) 每个完成时回调；返回 [data]，全失败抛 MeshyError。"""
+    on_item(index, data) 每个完成时回调；返回 [data]，全失败抛 MeshyError。
+    errors_out（可选 list）：把部分失败的错误信息回填给调用方，便于向用户汇报。"""
     if tool_name not in _PRODUCERS:
         raise MeshyError("该工具不支持并行: %s" % tool_name)
     producer = _PRODUCERS[tool_name][0]
@@ -424,13 +506,8 @@ def run_network_parallel(tool_name, kwargs, count, on_item=None,
         data = producer(client, kwargs, should_stop)
         with lock:
             completed[0] += 1
-            if on_item:
-                try:
-                    on_item(i, data)
-                except Exception:
-                    pass
-            if on_progress:
-                on_progress(completed[0] * 100 // count, completed[0], count)
+            _safe_call(on_item, i, data)
+            _safe_call(on_progress, completed[0] * 100 // count, completed[0], count)
         return data
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=count) as ex:
@@ -443,6 +520,8 @@ def run_network_parallel(tool_name, kwargs, count, on_item=None,
                 errors.append(str(e))
                 print("[meshy] parallel %s failed: %s" % (tool_name, e))
     out = [r for r in results if r]
+    if errors_out is not None:
+        errors_out.extend(errors)
     if not out:
         raise MeshyError("并行生成全部失败：" + (errors[0] if errors else "可能是 key/额度/网络问题"))
     return out
@@ -507,14 +586,9 @@ def generate_concepts(prompts, ai_model="nano-banana", aspect_ratio="1:1",
         res = {"index": i, "task_id": tid, "image": path, "prompt": prompts[i]}
         with lock:
             completed[0] += 1
-            if on_image:
-                try:
-                    on_image(res)
-                except Exception:
-                    pass
-            if on_progress:
-                on_progress("生成概念图", completed[0] * 100 // total,
-                            "%d/%d" % (completed[0], total))
+            _safe_call(on_image, res)
+            _safe_call(on_progress, "生成概念图", completed[0] * 100 // total,
+                       "%d/%d" % (completed[0], total))
         return res
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=total) as ex:
@@ -533,9 +607,17 @@ def generate_concepts(prompts, ai_model="nano-banana", aspect_ratio="1:1",
 
 
 def concepts_to_3d(concepts, enable_pbr=True, topology="triangle",
-                   target_polycount=30000, on_progress=None, should_stop=None):
-    """对选中的概念图并行做 image-to-3d（用 input_task_id 原生串接，免重传）。
-    返回 [data]，每个含 glb/texture_dir/concept_index；全失败抛 MeshyError。"""
+                   target_polycount=30000, on_progress=None, should_stop=None,
+                   errors_out=None):
+    """对选中的概念图并行做 image-to-3d（每张 3D 都会消耗 credits）。
+    返回 [data]，每个含 glb/texture_dir/concept_index；全失败抛 MeshyError。
+    errors_out（可选 list）：回填部分失败信息。"""
+    concepts = list(concepts or [])
+    if len(concepts) > MAX_PARALLEL:
+        # 上限保护：每张概念图→3D 都计费，绝不能因异常输入提交几十上百个任务。
+        concepts = concepts[:MAX_PARALLEL]
+    topology = _norm_topology(topology, "triangle")
+    target_polycount = _clamp_poly(target_polycount)
     client = MeshyClient()
     total = max(1, len(concepts))
     results = [None] * total
@@ -550,7 +632,7 @@ def concepts_to_3d(concepts, enable_pbr=True, topology="triangle",
             with lock:
                 avg = sum(prog) // total
                 done = sum(1 for p in prog if p >= 100)
-            on_progress("生成 3D", avg, "%d/%d" % (done, total))
+            _safe_call(on_progress, "生成 3D", avg, "%d/%d" % (done, total))
 
     def one(k, c):
         def wp(p, s):
@@ -559,7 +641,16 @@ def concepts_to_3d(concepts, enable_pbr=True, topology="triangle",
             report()
         # 用已下载的概念图(base64)做 image-to-3d —— 比 input_task_id 跨产品串接更稳
         img = c.get("image")
-        image_arg = _image_to_arg(img) if img else None
+        image_arg = None
+        if img:
+            try:
+                image_arg = _image_to_arg(img)
+            except Exception as ie:
+                # 本地概念图丢失/不可读：不直接判这张失败，回退用云端 task_id 串接；
+                # 两者都没有才放弃。
+                if not c.get("task_id"):
+                    raise
+                print("[meshy] 概念图本地文件不可用，回退到 input_task_id：%s" % ie)
         tid = client.create_image_to_3d(
             image=image_arg,
             input_task_id=(None if image_arg else c.get("task_id")),
@@ -584,6 +675,8 @@ def concepts_to_3d(concepts, enable_pbr=True, topology="triangle",
                 errors.append(str(e))
                 print("[meshy] concept->3d failed:", e)
     out = [r for r in results if r]
+    if errors_out is not None:
+        errors_out.extend(errors)
     if not out:
         raise MeshyError("选中概念图的 3D 生成全部失败：" + (errors[0] if errors else "未知原因"))
     return out
@@ -668,14 +761,18 @@ def list_library(kinds=None, page_num=1, page_size=40, should_stop=None):
     client = MeshyClient()
     kinds = kinds or LIBRARY_KINDS
     items = []
+    errors = []
+    attempted = 0
     for kind in kinds:
         if should_stop and should_stop():
             break
         if kind not in config.ENDPOINTS:
             continue
+        attempted += 1
         try:
             tasks = client.list_tasks(kind, page_num=page_num, page_size=page_size)
         except Exception as e:
+            errors.append("%s: %s" % (kind, e))
             print("[meshy] list %s failed: %s" % (kind, e))
             continue
         for t in tasks:
@@ -683,6 +780,9 @@ def list_library(kinds=None, page_num=1, page_size=40, should_stop=None):
                 items.append(_normalize_task(kind, t))
             except Exception as e:
                 print("[meshy] normalize task failed: %s" % e)
+    # 每个能力都拉取失败、且一条都没拿到 → 上抛，让 UI 显示"加载失败"而非误以为"库为空"。
+    if attempted and not items and len(errors) == attempted:
+        raise MeshyError("资产库加载失败：" + "; ".join(errors)[:300])
     items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
     return items
 

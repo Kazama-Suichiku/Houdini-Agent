@@ -5,10 +5,27 @@
 """
 
 import json
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+
+# 运行时 agent loop 会把"多轮思考引导/失败提示"直接拼进 tool 消息正文（见
+# ai_client_agent.py），这些样板不属于工具真实输出，导出前必须剥除，否则会污染训练数据。
+_INJECTED_BLOCK_PATTERNS = [
+    re.compile(r"\n*\[重要：你的下一条回复必须以 <think>.*?\]\s*$", re.DOTALL),
+    re.compile(r"\n*\[注意：上述工具调用返回了错误.*?\]\s*", re.DOTALL),
+]
+
+
+def _strip_injected_guidance(text: str) -> str:
+    """剥除 agent loop 注入到 tool 消息正文里的思考/失败引导样板。"""
+    if not text:
+        return text
+    for pat in _INJECTED_BLOCK_PATTERNS:
+        text = pat.sub("", text)
+    return text.strip()
 
 
 class ChatTrainingExporter:
@@ -212,11 +229,32 @@ class ChatTrainingExporter:
         
         # 添加当前对话
         messages.extend(current)
-        
+
+        # 保证 system 之后第一条是 user：上下文窗口可能从某一轮中段被截断，
+        # 导致样本以 assistant/tool 开头（既破坏 system→user→assistant 结构，
+        # 又会让下面的配对校验把孤儿 tool 结果伪造成占位调用）。先丢弃这段前缀。
+        messages = self._strip_to_first_user(messages)
+        if messages is None:
+            return None
+
         # 验证工具调用配对
         messages = self._validate_tool_calls(messages)
-        
+
         return {"messages": messages}
+
+    @staticmethod
+    def _strip_to_first_user(messages: List[Dict]) -> Optional[List[Dict]]:
+        """丢弃 system 之后、第一条 user 之前的所有消息（不成对的上下文残头）。
+
+        messages[0] 恒为 system。若其后找不到任何 user 消息，返回 None（无效样本）。
+        """
+        if not messages:
+            return None
+        system_msg = messages[0]
+        for idx in range(1, len(messages)):
+            if messages[idx].get("role") == "user":
+                return [system_msg] + messages[idx:]
+        return None
     
     def _clean_message(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """清理消息格式"""
@@ -284,20 +322,21 @@ class ChatTrainingExporter:
         新格式: {"role": "tool", "tool_call_id": "xxx", "content": "..."}
         """
         content = self._extract_text_content(msg.get("content", ""))
+        content = _strip_injected_guidance(content)
         tool_call_id = msg.get("tool_call_id")
         name = msg.get("name", "")
-        
+
         if not content:
             return None
-        
+
         # 如果没有 tool_call_id，生成一个
         if not tool_call_id:
             tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
-        
+
         return {
             "role": "tool",
             "tool_call_id": tool_call_id,
-            "content": content[:500]  # 限制长度
+            "content": content[:2000]  # 限制长度，避免误截工具结果
         }
     
     def _validate_tool_calls(self, messages: List[Dict]) -> List[Dict]:
@@ -326,13 +365,17 @@ class ChatTrainingExporter:
                     result.append(msg)
                     del pending_tool_calls[tc_id]
                 else:
-                    # 没有对应的 tool_calls，创建一个
-                    # 从内容中提取工具名
+                    # 没有对应的 tool_calls，创建一个占位调用。
+                    # 注意：不能用 content.split(":")[0] 当函数名——工具结果常以中文短语
+                    # 开头（如"已截取视口快照: ..."），那样会把结果首句当成函数名写进训练数据。
+                    # 只有当冒号前缀是合法的 ASCII 标识符时才采用，否则用统一占位名。
                     content = msg.get("content", "")
-                    tool_name = "execute_tool"
+                    tool_name = "unknown_tool"
                     if ":" in content:
-                        tool_name = content.split(":")[0].strip()
-                    
+                        candidate = content.split(":", 1)[0].strip()
+                        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", candidate):
+                            tool_name = candidate
+
                     # 添加 assistant 消息
                     new_tc_id = f"call_{uuid.uuid4().hex[:12]}"
                     assistant_msg = {

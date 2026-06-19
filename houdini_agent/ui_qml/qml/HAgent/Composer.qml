@@ -276,7 +276,7 @@ Rectangle {
         x: 0; y: -height - 4; width: inputRow.width
         padding: 6
         closePolicy: Popup.NoAutoClose
-        background: Rectangle { color: "#161616"; border.color: Theme.border; border.width: 1; radius: Theme.radSm }
+        background: Rectangle { color: Theme.panel; border.color: Theme.border; border.width: 1; radius: Theme.radSm }
         contentItem: ListView {
             implicitHeight: Math.min(contentHeight, 180)
             clip: true
@@ -309,7 +309,7 @@ Rectangle {
         height: parent ? parent.height * 0.9 : 420
         modal: true
         closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
-        background: Rectangle { color: "#000000ee"; border.color: Theme.border; border.width: 1 }
+        background: Rectangle { color: Theme.panel; border.color: Theme.border; border.width: 1 }
         contentItem: Image {
             source: fullImg.src; fillMode: Image.PreserveAspectFit
             MouseArea { anchors.fill: parent; onClicked: fullImg.close() }

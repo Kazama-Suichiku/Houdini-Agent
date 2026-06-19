@@ -1,0 +1,299 @@
+<title>起手式与模板库 · Houdini Agent</title>
+<style>
+  :root{
+    --bg:#0d0d0d; --code:#080808; --panel:#101010;
+    --surface:rgba(255,255,255,.04); --surface2:rgba(255,255,255,.07);
+    --border:rgba(255,255,255,.12); --borderSoft:rgba(255,255,255,.08);
+    --text:#e7e4db; --bright:#fff; --dim:#bfbbb0; --mute:#969184;
+    --accent:#e8e2d4; --soft:rgba(232,226,212,.10); --line:rgba(232,226,212,.30);
+    --meshy:#c5f955; --meshyHover:#a8e328; --meshyInk:#0e0e0e; --meshySoft:rgba(197,249,85,.12); --meshyLine:rgba(197,249,85,.38);
+    --fD:Georgia,'Times New Roman',serif; --fB:Georgia,'Times New Roman',serif;
+    --fM:'Space Mono','SFMono-Regular',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#000;color:var(--text);font-family:var(--fB);display:flex;flex-direction:column;min-height:100%;-webkit-font-smoothing:antialiased}
+  .mast{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:18px 26px 14px;border-bottom:1px solid var(--borderSoft)}
+  .mast .lk{display:flex;align-items:baseline;gap:12px}
+  .mast .eb{font-family:var(--fM);font-size:10px;letter-spacing:2.2px;text-transform:uppercase;color:var(--mute)}
+  .mast h1{font-family:var(--fD);font-weight:500;font-size:20px;color:var(--bright)}
+  .mast p{font-family:var(--fB);font-size:12.5px;color:var(--mute);max-width:430px;line-height:1.5}
+  .toggle{display:flex;border:1px solid var(--border);border-radius:2px;overflow:hidden}
+  .toggle button{background:transparent;border:none;color:var(--mute);font-family:var(--fM);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;padding:7px 13px;cursor:pointer}
+  .toggle button.on{background:var(--surface2);color:var(--bright)}
+
+  .frame{flex:1;display:flex;justify-content:center;min-height:0;padding:18px;background:#000}
+  .app{width:100%;max-width:780px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--borderSoft);border-radius:3px;min-height:580px;overflow:hidden}
+  .ah{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--borderSoft)}
+  .dia{color:var(--accent);font-size:13px}
+  .ah .nm{font-family:var(--fD);font-size:16px;color:var(--bright);flex:1}
+  .tag{font-family:var(--fM);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);border:1px solid var(--border);border-radius:2px;padding:3px 8px}
+
+  .body{flex:1;overflow:auto}
+  .hidden{display:none}
+
+  /* ---- empty state ---- */
+  .empty{padding:24px 22px 12px}
+  .greet{font-family:var(--fD);font-size:22px;color:var(--bright);line-height:1.25}
+  .sub{font-family:var(--fB);font-size:13px;color:var(--mute);margin-top:7px;line-height:1.5}
+
+  /* featured Meshy block */
+  .feat{margin-top:22px;border:1px solid var(--meshyLine);border-radius:3px;padding:16px;background:linear-gradient(180deg,var(--meshySoft),transparent)}
+  .feat .fh{display:flex;align-items:baseline;gap:10px;margin-bottom:13px}
+  .feat .fh .b{font-family:var(--fM);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--meshy)}
+  .feat .fh .d{font-family:var(--fB);font-size:11px;color:var(--mute)}
+  .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:9px}
+  .mcard{text-align:left;cursor:pointer;border:1px solid var(--border);border-radius:2px;padding:13px;background:rgba(0,0,0,.25);transition:all .15s;display:flex;flex-direction:column;gap:7px}
+  .mcard:hover{border-color:var(--meshyLine);background:rgba(197,249,85,.05)}
+  .mcard .note,.lrow .note{font-family:var(--fM);font-size:9.5px;color:var(--mute);margin-top:5px}
+  .mcard .note::before,.lrow .note::before{content:'! ';color:var(--meshy)}
+  .mcard .ty{font-family:var(--fM);font-size:9px;letter-spacing:1.4px;text-transform:uppercase;color:var(--meshy)}
+  .mcard .tt{font-family:var(--fB);font-size:14.5px;color:var(--text)}
+  .mcard .pv{font-family:var(--fM);font-size:10.5px;color:var(--mute);line-height:1.5}
+  .mcard .pv em{color:var(--accent);font-style:normal}
+  .postnote{margin-top:12px;font-family:var(--fM);font-size:10px;color:var(--mute);line-height:1.5}
+  .postnote a{color:var(--meshy);cursor:pointer;text-decoration:none;border-bottom:1px solid var(--meshyLine)}
+
+  /* secondary Houdini block */
+  .sec{margin-top:22px}
+  .sec .sl{font-family:var(--fM);font-size:10px;letter-spacing:1.8px;text-transform:uppercase;color:var(--mute);padding-bottom:7px;border-bottom:1px solid var(--borderSoft);margin-bottom:11px;display:flex;justify-content:space-between;align-items:baseline}
+  .sec .sl .x{font-family:var(--fB);font-size:10px;letter-spacing:0;text-transform:none;color:var(--mute)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{cursor:pointer;border:1px solid var(--border);border-radius:2px;padding:7px 11px;background:transparent;font-family:var(--fB);font-size:13px;color:var(--dim);transition:all .15s}
+  .chip:hover{background:var(--surface);border-color:var(--line)}
+  .chip .cc{font-family:var(--fM);font-size:9px;color:var(--mute);margin-right:6px;letter-spacing:1px}
+
+  .seeall{margin:20px 0 4px;text-align:center}
+  .seeall button{background:transparent;border:1px solid var(--border);border-radius:2px;color:var(--dim);font-family:var(--fM);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;padding:9px 16px;cursor:pointer}
+  .seeall button:hover{background:var(--surface)}
+
+  /* ---- library ---- */
+  .lib{display:flex;height:100%;min-height:0}
+  .libnav{width:150px;flex:none;border-right:1px solid var(--borderSoft);padding:14px 0;overflow:auto}
+  .navrow{padding:8px 16px;font-family:var(--fB);font-size:13px;color:var(--dim);cursor:pointer;border-left:2px solid transparent;display:flex;justify-content:space-between;align-items:center}
+  .navrow:hover{background:var(--surface)}
+  .navrow.on{color:var(--bright);border-left-color:var(--accent);background:var(--surface2)}
+  .navrow.meshy.on{border-left-color:var(--meshy)}
+  .navrow .c{font-family:var(--fM);font-size:9px;color:var(--mute)}
+  .navrow.meshy .t{color:var(--meshy)}
+  .navrow.sep{margin-top:8px;border-top:1px solid var(--borderSoft);padding-top:13px}
+  .libmain{flex:1;overflow:auto;padding:16px 18px}
+  .libhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px}
+  .libhead .lhleft{display:flex;align-items:center;gap:14px}
+  .libhead .h{font-family:var(--fD);font-size:17px;color:var(--bright)}
+  .back{background:transparent;border:none;color:var(--mute);font-family:var(--fM);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;cursor:pointer;padding:4px 0}
+  .back:hover{color:var(--accent)}
+  .newbtn{background:transparent;border:1px solid var(--line);border-radius:2px;color:var(--accent);font-family:var(--fM);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;padding:7px 12px;cursor:pointer}
+  .lrow{border:1px solid var(--borderSoft);border-radius:2px;padding:13px 14px;margin-bottom:9px;display:flex;align-items:flex-start;gap:12px}
+  .lrow .info{flex:1}
+  .lrow .ty{font-family:var(--fM);font-size:9px;letter-spacing:1.4px;text-transform:uppercase;color:var(--meshy);margin-bottom:4px}
+  .lrow .lt{font-family:var(--fB);font-size:14px;color:var(--text)}
+  .lrow .lp{font-family:var(--fM);font-size:10.5px;color:var(--mute);line-height:1.5;margin-top:5px}
+  .lrow .lp em{color:var(--accent);font-style:normal}
+  .lrow .ins{flex:none;background:var(--soft);border:1px solid var(--line);border-radius:2px;color:var(--accent);font-family:var(--fM);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;padding:6px 11px;cursor:pointer;align-self:center}
+  .lrow .ins.meshy{background:var(--meshy);border-color:var(--meshy);color:var(--meshyInk);font-weight:700}
+  .lrow .ins.meshy:hover{background:var(--meshyHover);border-color:var(--meshyHover)}
+  .lrow .del{flex:none;background:transparent;border:1px solid var(--border);border-radius:2px;color:var(--mute);font-family:var(--fM);font-size:10px;padding:6px 9px;cursor:pointer;align-self:center}
+
+  .form{border:1px solid var(--line);border-radius:2px;padding:15px;margin-bottom:12px;background:var(--surface)}
+  .form .fl{font-family:var(--fM);font-size:9px;letter-spacing:1.6px;text-transform:uppercase;color:var(--mute);margin:0 0 6px}
+  .form input,.form textarea{width:100%;background:var(--code);border:1px solid var(--border);border-radius:2px;color:var(--text);font-family:var(--fB);font-size:13px;padding:8px 10px;margin-bottom:12px;resize:vertical}
+  .form textarea{font-family:var(--fM);font-size:12px;line-height:1.6;min-height:64px}
+  .form .tip{font-family:var(--fM);font-size:10px;color:var(--mute);margin:-8px 0 12px;line-height:1.5}
+  .form .tip code{color:var(--accent)}
+  .form .acts{display:flex;gap:8px;justify-content:flex-end}
+  .form .save{background:var(--soft);border:1px solid var(--line);color:var(--accent)}
+  .form button{border:1px solid var(--border);border-radius:2px;background:transparent;color:var(--dim);font-family:var(--fM);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;padding:8px 14px;cursor:pointer}
+
+  /* ---- composer ---- */
+  .composer{border-top:1px solid var(--borderSoft);padding:13px 16px}
+  .cwrap{border:1px solid var(--border);border-radius:2px;padding:11px 12px;min-height:46px;display:flex;align-items:center;gap:10px}
+  .cwrap.empty-ph .ctext::before{content:'描述你想生成或搭建的东西，或点上面的起手式…';color:var(--mute)}
+  .ctext{flex:1;font-family:var(--fB);font-size:14px;color:var(--text);line-height:1.7}
+  .ctext .var{display:inline-block;background:var(--soft);border:1px solid var(--line);border-radius:2px;color:var(--accent);font-family:var(--fM);font-size:12px;padding:1px 7px;margin:0 2px;cursor:text;outline:none;min-width:28px}
+  .ctext .var:focus{border-color:var(--accent);background:var(--surface2)}
+  .send{flex:none;border:1px solid var(--line);background:var(--soft);color:var(--accent);font-family:var(--fM);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;padding:9px 14px;border-radius:2px;cursor:pointer}
+  .hint{font-family:var(--fM);font-size:10px;color:var(--mute);margin-top:8px;text-align:center}
+  .hint b{color:var(--dim)}
+</style>
+
+<div class="mast">
+  <div class="lk"><span class="eb">新会话</span><h1>起手式</h1></div>
+  <p>几条点一下就能用的起手式，Meshy 生成排在最前。点开填进输入框，改改<em style="color:var(--accent);font-style:normal">填空格</em>就发。</p>
+  <div class="toggle">
+    <button id="tgEmpty" class="on" onclick="show('empty')">空状态</button>
+    <button id="tgLib" onclick="show('lib')">模板库</button>
+  </div>
+</div>
+
+<div class="frame">
+  <div class="app">
+    <div class="ah"><span class="dia">&#9671;</span><span class="nm">Houdini Agent</span><span class="tag">新会话</span></div>
+
+    <!-- ===== EMPTY STATE ===== -->
+    <div class="body" id="viewEmpty">
+      <div class="empty">
+        <div class="greet">先出一个模型，再接着做。</div>
+        <div class="sub">点下面的起手式填进输入框，参数改完直接发；也可以不用，自己输入。</div>
+
+        <div class="feat">
+          <div class="fh"><span class="b">Meshy &middot; 3D 生成</span><span class="d">从文字、图片或概念图生成，直接进场景</span></div>
+          <div class="mgrid" id="meshyGrid"></div>
+          <div class="postnote" id="postNote"></div>
+        </div>
+
+        <div class="sec">
+          <div class="sl">Houdini 程序化<span class="x">有了模型，用 Houdini 接着做</span></div>
+          <div class="chips" id="houChips"></div>
+        </div>
+
+        <div class="seeall"><button onclick="show('lib')">浏览全部模板 &rarr;</button></div>
+      </div>
+    </div>
+
+    <!-- ===== LIBRARY ===== -->
+    <div class="body hidden" id="viewLib">
+      <div class="lib">
+        <div class="libnav" id="libNav"></div>
+        <div class="libmain">
+          <div class="libhead">
+            <div class="lhleft"><button class="back" onclick="show('empty')">&larr; 返回对话</button><span class="h" id="libTitle">Meshy</span></div>
+            <button class="newbtn" onclick="toggleForm()">+ 新建模板</button>
+          </div>
+          <div class="form hidden" id="newForm">
+            <div class="fl">名称</div><input id="fName" placeholder="例如：我的破碎参数">
+            <div class="fl">分类</div><input id="fCat" placeholder="例如：建模">
+            <div class="fl">内容</div><textarea id="fBody" placeholder="比如：生成一个 {{物体:宝箱}}，{{风格:写实}}风格，导进场景。"></textarea>
+            <div class="tip">想留个能改的空，就写 <code>{{名称:默认值}}</code>，插入时点一下就能改。</div>
+            <div class="acts"><button onclick="toggleForm()">取消</button><button class="save" onclick="saveTpl()">保存到我的模板</button></div>
+          </div>
+          <div id="libRows"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== COMPOSER ===== -->
+    <div class="composer">
+      <div class="cwrap empty-ph" id="cwrap">
+        <div class="ctext" id="ctext"></div>
+        <span class="send">发送</span>
+      </div>
+      <div class="hint" id="hint"><b>Tab</b> 跳到下一个填空格 &middot; 改完直接发送</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Meshy is the headliner. scratch:true = doable from an empty session;
+  // scratch:false = needs an existing model (post-processing) → library only, not pushed on empty state.
+  // Copy: written like an artist typing, not an AI instruction. No "用 Meshy", no "/obj" boilerplate;
+  // constraints live in `note`, not in the prompt sent to the agent.
+  var MESHY=[
+    {ty:'文生 3D',   t:'文字出模型',  scratch:true,  b:'生成一个 {{物体:中世纪宝箱}}，{{风格:写实}}风格，做好导进场景。'},
+    {ty:'图生 3D',   t:'照参考图建模', scratch:true,  b:'照这张参考图做个模型，导进场景。', note:'记得先贴一张参考图'},
+    {ty:'概念 → 3D', t:'先看概念图再选', scratch:true, b:'先出几张 {{物体:石窟雕像}} 的概念图，我挑一张再转 3D。'},
+    {ty:'批量 · 变体',t:'一次出几版挑',  scratch:true,  b:'{{物体:宝箱}} 出 4 个款式，我挑一个导进来。'},
+    {ty:'余额',      t:'还够做几个',   scratch:true,  b:'查下 Meshy 余额，还够生成几个模型？'},
+    {ty:'贴图',      t:'重做贴图',     scratch:false, b:'给选中的模型重做贴图，{{风格:做旧金属}}。', note:'需要场景里已有模型'},
+    {ty:'重拓扑',    t:'减面 / 转四边', scratch:false, b:'把选中模型重拓扑到 {{面数:1万}} 面上下，走四边面。', note:'需要场景里已有模型'},
+    {ty:'绑定 · 动画',t:'人形绑骨',    scratch:false, b:'给这个人形绑骨，套一个 {{动作:行走}} 循环。', note:'仅限有贴图的双足人形'},
+  ];
+  // Houdini procedural — secondary, lighter. Only reliable SOP / setup tasks
+  // (no sim caching, no render — those exceed the 120s exec cap or lack tooling).
+  var HOU=[
+    {cat:'建模', t:'程序化楼梯', b:'做一段程序化楼梯，{{台阶:12}} 阶，总高 {{高度:3米}}。'},
+    {cat:'布局', t:'地面散布',   b:'地面上撒 {{数量:200}} 个 {{对象:石头}}，旋转和大小都打乱。'},
+    {cat:'布局', t:'复制到点',   b:'把选中的物体复制到 {{行列:10x10}} 网格的点上，带点随机。'},
+    {cat:'优化', t:'减面',       b:'把选中的几何减面，减到 {{目标:一半}} 左右。'},
+    {cat:'灯光', t:'三点光',     b:'搭一个三点光，主光、补光、轮廓光，都对着原点。'},
+  ];
+  var MINE=[{t:'看看场景', b:'扫一遍 /obj，告诉我现在场景里有什么，建议下一步。'}];
+
+  function esc(x){return x.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function preview(b){return esc(b).replace(/\{\{([^:}]+):?([^}]*)\}\}/g,function(_,n,d){return '<em>'+esc(d||n)+'</em>';});}
+  function editable(b){return esc(b).replace(/\{\{([^:}]+):?([^}]*)\}\}/g,function(_,n,d){return '<span class="var" contenteditable="true" data-name="'+esc(n)+'">'+esc(d||n)+'</span>';});}
+
+  function renderEmpty(){
+    // featured grid: only from-scratch workflows (an empty session has no model yet)
+    var feat=MESHY.map(function(x,i){return {x:x,i:i};}).filter(function(o){return o.x.scratch;});
+    document.getElementById('meshyGrid').innerHTML=feat.map(function(o){var x=o.x;
+      var note=x.note?'<span class="note">'+esc(x.note)+'</span>':'';
+      return '<button class="mcard" onclick="loadM('+o.i+')"><span class="ty">'+esc(x.ty)+'</span><span class="tt">'+esc(x.t)+'</span><span class="pv">'+preview(x.b)+'</span>'+note+'</button>';
+    }).join('');
+    // post-processing workflows need an existing model → point to the library
+    var post=MESHY.filter(function(x){return !x.scratch;}).map(function(x){return x.t.replace(/（.*）/,'');});
+    document.getElementById('postNote').innerHTML='有了模型，还能：'+post.join(' &middot; ')+' &mdash; 都在 <a onclick="show(\'lib\')">模板库</a> 里。';
+    document.getElementById('houChips').innerHTML=HOU.map(function(x,i){
+      return '<button class="chip" onclick="loadH('+i+')"><span class="cc">'+esc(x.cat)+'</span>'+esc(x.t)+'</button>';
+    }).join('');
+  }
+
+  // library
+  var CATS=['Meshy','建模','布局','优化','灯光'];
+  var curCat='Meshy';
+  function rowsFor(c){
+    if(c==='Meshy') return MESHY.map(function(x,i){return {ty:x.ty,t:x.t,b:x.b,note:x.note,src:'M',i:i};});
+    if(c==='我的模板') return MINE.map(function(x,i){return {t:x.t,b:x.b,src:'MINE',i:i};});
+    return HOU.filter(function(x){return x.cat===c}).map(function(x){return {t:x.t,b:x.b,src:'H',i:HOU.indexOf(x)};});
+  }
+  function renderNav(){
+    var nav=document.getElementById('libNav');
+    var html=CATS.map(function(c){
+      var n=rowsFor(c).length, meshy=(c==='Meshy');
+      return '<div class="navrow'+(meshy?' meshy':'')+(c===curCat?' on':'')+'" onclick="selCat(\''+c+'\')"><span class="t">'+c+'</span><span class="c">'+n+'</span></div>';
+    }).join('');
+    html+='<div class="navrow sep'+(curCat==='我的模板'?' on':'')+'" onclick="selCat(\'我的模板\')"><span class="t">我的模板</span><span class="c">'+MINE.length+'</span></div>';
+    nav.innerHTML=html;
+  }
+  function renderRows(){
+    document.getElementById('libTitle').textContent=curCat;
+    var arr=rowsFor(curCat);
+    document.getElementById('libRows').innerHTML=arr.map(function(r){
+      var ty=r.ty?'<div class="ty">'+esc(r.ty)+'</div>':'';
+      var note=r.note?'<div class="note">'+esc(r.note)+'</div>':'';
+      var del=(r.src==='MINE')?'<button class="del" onclick="delMine('+r.i+')">删除</button>':'';
+      return '<div class="lrow"><div class="info">'+ty+'<div class="lt">'+esc(r.t)+'</div><div class="lp">'+preview(r.b)+'</div>'+note+'</div>'+
+        '<button class="ins'+(r.src==='M'?' meshy':'')+'" onclick="load(\''+r.src+'\','+r.i+')">插入</button>'+del+'</div>';
+    }).join('') || '<div style="font-family:var(--fM);font-size:11px;color:var(--mute)">还没有模板。点右上「新建模板」。</div>';
+  }
+  function selCat(c){curCat=c;renderNav();renderRows();}
+
+  function fill(b){
+    var ct=document.getElementById('ctext');
+    ct.innerHTML=editable(b);
+    document.getElementById('cwrap').classList.remove('empty-ph');
+    document.getElementById('hint').innerHTML='<b>点填空格</b>改成你要的值 &middot; 改完直接发送';
+    show('empty');
+    var first=ct.querySelector('.var'); if(first){first.focus();document.getSelection().selectAllChildren(first);}
+  }
+  function loadM(i){fill(MESHY[i].b);}
+  function loadH(i){fill(HOU[i].b);}
+  function load(src,i){fill(src==='M'?MESHY[i].b:src==='MINE'?MINE[i].b:HOU[i].b);}
+
+  function show(v){
+    document.getElementById('viewEmpty').classList.toggle('hidden',v!=='empty');
+    document.getElementById('viewLib').classList.toggle('hidden',v!=='lib');
+    document.getElementById('tgEmpty').classList.toggle('on',v==='empty');
+    document.getElementById('tgLib').classList.toggle('on',v==='lib');
+    if(v==='lib'){renderNav();renderRows();}
+  }
+  function toggleForm(){document.getElementById('newForm').classList.toggle('hidden');}
+  function saveTpl(){
+    var n=document.getElementById('fName').value.trim()||'未命名模板';
+    var b=document.getElementById('fBody').value.trim()||'…';
+    MINE.push({t:n,b:b});
+    document.getElementById('fName').value='';document.getElementById('fCat').value='';document.getElementById('fBody').value='';
+    toggleForm();curCat='我的模板';renderNav();renderRows();
+  }
+  function delMine(i){MINE.splice(i,1);renderRows();renderNav();}
+
+  document.getElementById('ctext').addEventListener('keydown',function(e){
+    if(e.key==='Tab'){e.preventDefault();
+      var vars=[].slice.call(this.querySelectorAll('.var'));
+      var idx=vars.indexOf(document.activeElement);
+      var nx=vars[(idx+1)%vars.length]; if(nx){nx.focus();document.getSelection().selectAllChildren(nx);}
+    }
+  });
+
+  renderEmpty();
+</script>

@@ -41,3 +41,7 @@ Thumbs.db
 
 # Local workspace marker (not for git)
 .workspace
+
+# 运行时用户数据 / 构建日志（不入库）
+config/templates.json
+build_*.log

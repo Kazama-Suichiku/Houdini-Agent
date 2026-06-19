@@ -16,6 +16,7 @@ import base64
 import copy
 import json
 import os
+import re
 import queue
 import shutil
 import sys
@@ -216,7 +217,80 @@ UI_EN = {
     "Token 结构": "Token mix", "缓存效率": "Cache efficiency", "本轮统计": "Session stats",
     "开": "On", "关": "Off",
     "（可多选）": "(multi-select)", "已复制": "Copied",
-    "删除": "Delete", "打开插件目录": "Open plugins folder", "未命名": "Untitled",
+    "删除": "Delete", "打开插件目录": "Open plugins folder",
+    # 设置浮窗 + 会话管理（方案A）
+    "设置…": "Settings…", "设置": "Settings", "常规": "General", "扩展": "Extensions",
+    "外观与字号": "Appearance & font", "会话": "Sessions", "模型与 Provider": "Model & Provider",
+    "规则": "Rules", "插件": "Plugins", "记忆": "Memory", "关于": "About",
+    "搜索会话…": "Search sessions…", "没有匹配的会话": "No matching sessions",
+    "删除会话": "Delete session", "此操作无法撤销。": "This can't be undone.",
+    "确定删除会话": "Delete session", "吗？": "?",
+    "以后删除不再询问（可在 设置 › 会话 中恢复）":
+        "Don't ask again (re-enable in Settings › Sessions)",
+    "删除会话前需确认": "Confirm before deleting a session",
+    "关闭后删除会话不再弹确认框。在删除弹窗里勾选「不再询问」会自动关掉这里——随时可重新打开。":
+        "When off, deleting a session won't prompt. Ticking \"don't ask again\" turns this off — re-enable anytime.",
+    "每步操作需批准（确认模式）": "Approve each step (confirm mode)",
+    "执行会修改场景或计费的工具前逐个弹确认卡。":
+        "Prompt before each tool that changes the scene or spends credits.",
+    "界面字号": "Interface font size",
+    "调整整个面板的字号缩放。": "Scale the whole panel's font size.",
+    "当前 Provider": "Current provider", "管理…": "Manage…", "查看余额": "Balance",
+    "Meshy 账号": "Meshy account", "版本": "Version", "流式输出自动滚动": "Auto-scroll while streaming",
+    "把现有面板嵌进这里。": "The existing panel will be embedded here.",
+    "打开": "Open", "会话管理": "Sessions",
+    "行为": "Behavior", "显示思考过程": "Show thinking",
+    "在回答里显示模型的思考过程（<think> 内容）。": "Show the model's reasoning (<think>) in replies.",
+    "执行修改场景的工具后实时重算（cook）。关闭可在批量操作时提速。":
+        "Cook the scene live after scene-changing tools. Turn off to speed up batch ops.",
+    "让助手跨会话记住你的偏好与项目信息。可在「记忆」分区查看与删除。":
+        "Let the assistant remember your preferences and project info across chats. View & delete in the Memory section.",
+    # 内嵌的规则/插件/记忆面板里用到的文案
+    "编辑": "Edit", "浏览": "Browse", "选择用户技能目录": "Choose user skill folder",
+    "用户技能目录未设置，仅使用内置技能": "No user skill folder set — built-in skills only",
+    "插件设置": "Plugin settings", "这个插件没有可配置项": "This plugin has no configurable options",
+    # 多供应商管理（模型设置）
+    "管理自定义模型供应商，配置后可在聊天时选择使用。":
+        "Manage custom model providers; once configured they can be picked in chat.",
+    "内置供应商": "Built-in providers", "自定义供应商": "Custom providers",
+    "添加供应商": "Add provider", "添加模型供应商": "Add model provider",
+    "配置一个自定义 API 端点和它的模型。": "Configure a custom API endpoint and its models.",
+    "名称": "Name", "API 格式": "API format", "模型列表": "Models",
+    "添加模型": "Add model", "上下文窗口": "Context window", "图片": "Vision",
+    "使用": "Use", "当前": "Active", "保存": "Save", "模型名": "Model name",
+    "还没有自定义供应商": "No custom providers yet",
+    "请填写名称": "Please enter a name", "请填写有效的 Base URL": "Enter a valid Base URL",
+    "请至少添加一个模型": "Add at least one model", "无效数据": "Invalid data", "已保存": "Saved",
+    # 外观系统
+    "主题": "Theme", "强调色": "Accent", "字体方案": "Typeface", "界面密度": "Density",
+    "深色三档，外加日光（浅色）。选日光会整体翻成浅色，强调色自动加深保证可读。":
+        "Three dark tones plus Daylight (light). Daylight flips everything light and darkens the accent so it stays readable.",
+    "选中态、指示点、用户气泡与按钮描边的颜色。":
+        "Color for selection, dots, your message bubble and button outlines.",
+    "标题 / 正文 / 等宽三件套的整体气质。": "The display / body / mono pairing for the whole UI.",
+    "间距与行高的松紧，不改字号。": "How tight the spacing and line height feel — font size unchanged.",
+    "极夜": "Noir", "石墨": "Graphite", "午夜蓝": "Midnight", "日光": "Daylight",
+    "暖米": "Warm", "冷钢": "Steel", "青瓷": "Celadon", "暖砂": "Clay", "中性": "Neutral",
+    "编辑体": "Editorial", "现代": "Modern", "等宽": "Mono",
+    "紧凑": "Compact", "标准": "Standard", "宽松": "Roomy",
+    # 起手式 / 模板库
+    "起手式": "Starters", "先出一个模型，再接着做。": "Start with a model, then build on it.",
+    "点下面的起手式填进输入框，参数改完直接发；也可以不用，自己输入。":
+        "Tap a starter to drop it in the input, tweak the blanks, and send — or just type your own.",
+    "Meshy · 3D 生成": "Meshy · 3D generation",
+    "从文字、图片或概念图生成，直接进场景": "From text, an image or a concept — straight into the scene",
+    "Houdini 程序化": "Houdini procedural", "有了模型，用 Houdini 接着做": "Got a model? Build on it in Houdini",
+    "有了模型，还能：": "With a model, you can also: ", "都在": "all in", "模板库里": "the library",
+    "浏览全部模板": "Browse all templates", "模板库": "Templates", "返回对话": "Back to chat",
+    "新建模板": "New template", "插入": "Insert", "我的模板": "My templates",
+    "内容": "Content", "分类": "Category",
+    "想留个能改的空，就写 {{名称:默认值}}，插入时点一下就能改。":
+        "Leave an editable blank with {{name:default}} — you can change it after inserting.",
+    "比如：生成一个 {{物体:宝箱}}，{{风格:写实}}风格，导进场景。":
+        "e.g. Generate a {{object:chest}}, {{style:realistic}} style, into the scene.",
+    "例如：我的破碎参数": "e.g. My fracture settings", "例如：建模": "e.g. Modeling",
+    "请填写模板内容": "Please add some content", "未命名模板": "Untitled template",
+    "内容格式有误": "Malformed payload", "还没有模板，点右上「新建模板」。": "No templates yet — use New template.",
 }
 
 
@@ -335,6 +409,61 @@ def _to_html(text):
     return h.replace("\n", "<br>")
 
 
+# ============================================================
+# 起手式 / 模板库 内置模板（中英两份；{{名称:默认值}} 为可改填空格）
+#   scratch=True  : 空会话可直接用（从零生成）
+#   scratch=False : 需场景里已有模型（后处理），只进模板库不上空会话
+# 能力边界：只放 Agent 能可靠执行的（无模拟缓存 / 无渲染——见 memory）。
+# ============================================================
+_TPL_MESHY = [
+    {"sc": True, "ty_zh": "文生 3D", "ty_en": "Text → 3D", "t_zh": "文字出模型", "t_en": "From a prompt",
+     "b_zh": "生成一个 {{物体:中世纪宝箱}}，{{风格:写实}}风格，做好导进场景。",
+     "b_en": "Generate a {{object:medieval chest}}, {{style:realistic}} style, then bring it into the scene."},
+    {"sc": True, "ty_zh": "图生 3D", "ty_en": "Image → 3D", "t_zh": "照参考图建模", "t_en": "From a reference",
+     "note_zh": "记得先贴一张参考图", "note_en": "Attach a reference image first",
+     "b_zh": "照这张参考图做个模型，导进场景。",
+     "b_en": "Build a model from this reference image and bring it into the scene."},
+    {"sc": True, "ty_zh": "概念 → 3D", "ty_en": "Concept → 3D", "t_zh": "先看概念图再选", "t_en": "Concept first, then pick",
+     "b_zh": "先出几张 {{物体:石窟雕像}} 的概念图，我挑一张再转 3D。",
+     "b_en": "Sketch a few concept images of a {{object:grotto statue}}, I'll pick one to turn into 3D."},
+    {"sc": True, "ty_zh": "批量 · 变体", "ty_en": "Batch · variants", "t_zh": "一次出几版挑", "t_en": "A few to choose from",
+     "b_zh": "{{物体:宝箱}} 出 4 个款式，我挑一个导进来。",
+     "b_en": "Make 4 variants of a {{object:chest}} so I can pick one to import."},
+    {"sc": True, "ty_zh": "余额", "ty_en": "Balance", "t_zh": "还够做几个", "t_en": "How much is left",
+     "b_zh": "查下 Meshy 余额，还够生成几个模型？",
+     "b_en": "Check my Meshy balance — how many models can I still generate?"},
+    {"sc": False, "ty_zh": "贴图", "ty_en": "Texture", "t_zh": "重做贴图", "t_en": "Re-texture",
+     "note_zh": "需要场景里已有模型", "note_en": "Needs a model already in the scene",
+     "b_zh": "给选中的模型重做贴图，{{风格:做旧金属}}。",
+     "b_en": "Re-texture the selected model, {{style:weathered metal}}."},
+    {"sc": False, "ty_zh": "重拓扑", "ty_en": "Remesh", "t_zh": "减面 / 转四边", "t_en": "Reduce / to quads",
+     "note_zh": "需要场景里已有模型", "note_en": "Needs a model already in the scene",
+     "b_zh": "把选中模型重拓扑到 {{面数:1万}} 面上下，走四边面。",
+     "b_en": "Remesh the selected model to around {{faces:10k}} faces, quad-dominant."},
+    {"sc": False, "ty_zh": "绑定 · 动画", "ty_en": "Rig · animate", "t_zh": "人形绑骨", "t_en": "Rig a humanoid",
+     "note_zh": "仅限有贴图的双足人形", "note_en": "Textured bipedal humanoids only",
+     "b_zh": "给这个人形绑骨，套一个 {{动作:行走}} 循环。",
+     "b_en": "Rig this humanoid and apply a {{action:walk}} loop."},
+]
+_TPL_HOU = [
+    {"cat_zh": "建模", "cat_en": "Modeling", "t_zh": "程序化楼梯", "t_en": "Procedural stairs",
+     "b_zh": "做一段程序化楼梯，{{台阶:12}} 阶，总高 {{高度:3米}}。",
+     "b_en": "Build a procedural staircase, {{steps:12}} steps, {{height:3m}} tall."},
+    {"cat_zh": "布局", "cat_en": "Layout", "t_zh": "地面散布", "t_en": "Scatter on ground",
+     "b_zh": "地面上撒 {{数量:200}} 个 {{对象:石头}}，旋转和大小都打乱。",
+     "b_en": "Scatter {{count:200}} {{object:rocks}} on the ground, randomize rotation and scale."},
+    {"cat_zh": "布局", "cat_en": "Layout", "t_zh": "复制到点", "t_en": "Copy to points",
+     "b_zh": "把选中的物体复制到 {{行列:10x10}} 网格的点上，带点随机。",
+     "b_en": "Copy the selected object onto a {{grid:10x10}} grid of points, with some randomness."},
+    {"cat_zh": "优化", "cat_en": "Optimize", "t_zh": "减面", "t_en": "Polyreduce",
+     "b_zh": "把选中的几何减面，减到 {{目标:一半}} 左右。",
+     "b_en": "Polyreduce the selected geometry to about {{target:half}}."},
+    {"cat_zh": "灯光", "cat_en": "Lighting", "t_zh": "三点光", "t_en": "Three-point light",
+     "b_zh": "搭一个三点光，主光、补光、轮廓光，都对着原点。",
+     "b_en": "Set up a three-point light rig — key, fill, rim — all aimed at the origin."},
+]
+
+
 class Controller(QObject):
     providerChanged = Signal()
     modelChanged = Signal()
@@ -347,6 +476,12 @@ class Controller(QObject):
     imagesChanged = Signal()
     fontScaleChanged = Signal()
     langChanged = Signal()
+    askDeleteSessionChanged = Signal()
+    cookRealtimeChanged = Signal()
+    customProvidersChanged = Signal()
+    appearanceChanged = Signal()
+    templatesChanged = Signal()
+    openTemplates = Signal()              # 打开模板库浮层
     _sigConfirm = Signal(str, str, str)   # cid, tool_name, arg_preview
     _sigAskQ = Signal(str, str)           # qid, questions_json
     _sigResolveCard = Signal(str, str)    # cid/qid, new_state  (decided UI)
@@ -377,6 +512,7 @@ class Controller(QObject):
     openRulesDialog = Signal()
     openPluginsDialog = Signal()
     openMemoryDialog = Signal()
+    openSettingsDialog = Signal()         # request the unified settings window
 
     # worker -> main thread (queued)
     _sigThink = Signal(str)
@@ -405,13 +541,23 @@ class Controller(QObject):
         self._model = model
         self._provider = "duojie"
         self._model_name = "claude-opus-4-6-max"
+        # 自定义供应商列表（每个含 name/base_url/api_key/anthropic/models[]，
+        # 每个模型带 name/context/vision）。激活键形如 "custom:<id>"。
+        self._custom_providers = []
         self._mode = "Agent"
         self._show_thinking = True
         self._confirm_mode = False
         self._memory_enabled = False
+        self._ask_delete_session = True   # 删除会话前弹确认（可在设置里关）
         self._cook_realtime = True
         self._cook_suspended = False     # set when a cook is interrupted/too slow (per run)
         self._font_scale = 1.0
+        # 外观（主题/强调色/字体方案/密度）——驱动 Theme.qml 换肤
+        self._app_theme = "noir"          # noir | graphite | midnight | day
+        self._accent_key = "warm"         # warm | steel | celadon | clay | neutral
+        self._font_family_key = "editorial"  # editorial | modern | mono
+        self._density_key = "normal"      # compact | normal | roomy
+        self._my_templates = []           # 用户自存模板（templates.json）
         self._scene_path = "/obj"
         self._scene_sel = "no selection"
         self._running = False
@@ -451,7 +597,9 @@ class Controller(QObject):
         except Exception:
             self._lang = "zh"
 
+        self._load_custom_providers()
         self._load_prefs()
+        self._load_my_templates()
 
         # Meshy 用量埋点：app 进程启动后台上传线程，补传上次遗留的 spool
         try:
@@ -471,15 +619,17 @@ class Controller(QObject):
                 print("[controller] backend unavailable, using simulated replies:", e)
                 self._session = None
 
-        # re-apply persisted custom-provider config; avoid a stranded 'custom' state
+        # re-apply persisted custom-provider config; avoid a stranded provider state
         self._load_custom()
-        if self._provider == "custom":
-            if MODEL_MAP.get("custom"):
-                if self._model_name not in MODEL_MAP["custom"]:
-                    self._model_name = MODEL_MAP["custom"][0]
-            else:
+        if self._is_custom_key(self._provider):
+            p = self._custom_provider(self._provider)
+            names = self._provider_model_names(self._provider)
+            if p is None or not names:
+                # 该自定义供应商已被删除/无模型：回退到内置默认
                 self._provider = "duojie"
                 self._model_name = MODEL_MAP["duojie"][0]
+            elif self._model_name not in names:
+                self._model_name = names[0]
 
         # tool-exec marshalling
         self._tool_q = queue.Queue()
@@ -638,29 +788,39 @@ class Controller(QObject):
     def _load_prefs(self):
         try:
             s = QSettings("HoudiniAI", "Assistant")
-            p = s.value("last_provider", "")
+            p = str(s.value("last_provider", "") or "")
             m = s.value("last_model", "")
-            if p == "custom":
-                cm = str(s.value("custom_model", "") or "")
-                cu = str(s.value("custom_url", "") or "")
-                if cm and cu and not self._is_placeholder_custom_url(cu):
-                    MODEL_MAP["custom"] = [cm]
-                    CONTEXT_LIMITS[cm] = self._to_int(s.value("custom_context_limit", 128000), 128000)
-            if p in MODEL_MAP:
+            # 自定义供应商（custom:<id>）或内置 provider 都允许作为上次选择
+            if (self._is_custom_key(p) and self._custom_provider(p)) or p in MODEL_MAP:
                 self._provider = p
-            if m and m in MODEL_MAP.get(self._provider, []):
+            names = self._provider_model_names(self._provider)
+            if m and m in names:
                 self._model_name = m
-            elif self._provider == "custom" and MODEL_MAP.get("custom"):
-                self._model_name = MODEL_MAP["custom"][0]
+            elif names:
+                self._model_name = names[0]
             # persisted toggles / settings (same class of bug as custom)
             self._show_thinking = self._qbool(s.value("use_think", True), True)
             self._confirm_mode = self._qbool(s.value("confirm_mode", False), False)
             self._memory_enabled = self._qbool(s.value("memory_enabled", False), False)
+            self._ask_delete_session = self._qbool(s.value("ask_delete_session", True), True)
             self._cook_realtime = self._qbool(s.value("cook_realtime", True), True)
             try:
                 self._font_scale = float(s.value("font_scale", 1.0))
             except Exception:
                 pass
+            # 外观（带白名单校验，挡掉脏值）
+            t = str(s.value("app_theme", "noir") or "noir")
+            if t in ("noir", "graphite", "midnight", "day"):
+                self._app_theme = t
+            a = str(s.value("accent_key", "warm") or "warm")
+            if a in ("warm", "steel", "celadon", "clay", "neutral"):
+                self._accent_key = a
+            f = str(s.value("font_family_key", "editorial") or "editorial")
+            if f in ("editorial", "modern", "mono"):
+                self._font_family_key = f
+            d = str(s.value("density_key", "normal") or "normal")
+            if d in ("compact", "normal", "roomy"):
+                self._density_key = d
         except Exception:
             pass
 
@@ -673,19 +833,17 @@ class Controller(QObject):
             pass
 
     def _current_model_supports_vision(self):
-        if self._provider == "custom":
-            try:
-                v = QSettings("HoudiniAI", "Assistant").value("custom_supports_vision", False)
-                return self._qbool(v, False)
-            except Exception:
-                return False
-        return self._model_name in VISION_MODELS
+        return self._active_model_vision()
 
     # ---- properties ----
     def _get_provider(self): return self._provider
     provider = Property(str, _get_provider, notify=providerChanged)
 
-    def _get_provider_label(self): return PROVIDER_LABELS.get(self._provider, self._provider)
+    def _get_provider_label(self):
+        p = self._custom_provider(self._provider)
+        if p is not None:
+            return p.get("name", "Custom")
+        return PROVIDER_LABELS.get(self._provider, self._provider)
     providerLabel = Property(str, _get_provider_label, notify=providerChanged)
 
     def _get_model(self): return self._model_name
@@ -700,6 +858,20 @@ class Controller(QObject):
     def _get_confirm(self): return self._confirm_mode
     confirmMode = Property(bool, _get_confirm, notify=confirmModeChanged)
 
+    def _get_ask_delete(self): return self._ask_delete_session
+    askDeleteSession = Property(bool, _get_ask_delete, notify=askDeleteSessionChanged)
+
+    def _get_cook_realtime(self): return self._cook_realtime
+    cookRealtime = Property(bool, _get_cook_realtime, notify=cookRealtimeChanged)
+
+    def _get_app_version(self):
+        try:
+            from houdini_agent.utils.updater import get_local_version
+            return get_local_version()
+        except Exception:
+            return ""
+    appVersion = Property(str, _get_app_version, constant=True)
+
     def _get_memory(self): return self._memory_enabled
     memoryEnabled = Property(bool, _get_memory, notify=memoryChanged)
 
@@ -708,6 +880,19 @@ class Controller(QObject):
 
     def _get_font_scale(self): return self._font_scale
     fontScale = Property(float, _get_font_scale, notify=fontScaleChanged)
+
+    # ---- appearance ----
+    def _get_app_theme(self): return self._app_theme
+    appTheme = Property(str, _get_app_theme, notify=appearanceChanged)
+
+    def _get_accent_key(self): return self._accent_key
+    accentKey = Property(str, _get_accent_key, notify=appearanceChanged)
+
+    def _get_font_family_key(self): return self._font_family_key
+    fontFamilyKey = Property(str, _get_font_family_key, notify=appearanceChanged)
+
+    def _get_density_key(self): return self._density_key
+    densityKey = Property(str, _get_density_key, notify=appearanceChanged)
 
     def _get_lang(self): return self._lang
     lang = Property(str, _get_lang, notify=langChanged)
@@ -753,12 +938,20 @@ class Controller(QObject):
     # ---- menu data for QML ----
     @Slot(result="QVariantList")
     def providerItems(self):
-        return [{"label": PROVIDER_LABELS.get(k, k), "val": k, "checked": k == self._provider}
-                for k in MODEL_MAP.keys()]
+        # 内置 provider（不含已废弃的单一 "custom"）+ 自定义供应商
+        items = [{"label": PROVIDER_LABELS.get(k, k), "val": k, "checked": k == self._provider}
+                 for k in MODEL_MAP.keys() if k != "custom"]
+        if self._custom_providers:
+            items.append({"sep": True})
+            for p in self._custom_providers:
+                key = "custom:" + p.get("id", "")
+                items.append({"label": p.get("name", "Custom"), "val": key,
+                              "checked": key == self._provider})
+        return items
 
     @Slot(result="QVariantList")
     def modelItems(self):
-        models = MODEL_MAP.get(self._provider, [])
+        models = self._provider_model_names(self._provider)
         return [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
 
     # ---- slots from QML ----
@@ -767,18 +960,23 @@ class Controller(QObject):
         if self._running:
             self.toast.emit("当前正在运行，模型切换将在本轮结束后再操作")
             return False
-        if v not in MODEL_MAP or v == self._provider:
+        is_custom = self._is_custom_key(v)
+        if v == self._provider:
+            return False
+        if not is_custom and v not in MODEL_MAP:
+            return False
+        if is_custom and self._custom_provider(v) is None:
             return False
         self._provider = v
-        models = MODEL_MAP[v]
+        models = self._provider_model_names(v)
         if self._model_name not in models and models:
             self._model_name = models[0]
             self.modelChanged.emit()
+        if is_custom:
+            self._apply_custom_provider(self._custom_provider(v))
         self.providerChanged.emit()
+        self.tokensChanged.emit()
         self._save_prefs()
-        # Custom needs a one-time config; prompt if not set up yet
-        if v == "custom" and not MODEL_MAP.get("custom"):
-            self._open_custom_provider()
         return True
 
     @Slot(str, result=bool)
@@ -792,6 +990,103 @@ class Controller(QObject):
             self._save_prefs()
             return True
         return False
+
+    # ---- 自定义供应商管理（设置页「模型与 Provider」用） ----
+    @Slot(result="QVariantList")
+    def customProviderItems(self):
+        out = []
+        for p in self._custom_providers:
+            pid = p.get("id", "")
+            out.append({
+                "id": pid, "name": p.get("name", ""),
+                "base_url": p.get("base_url", ""), "api_key": p.get("api_key", ""),
+                "anthropic": bool(p.get("anthropic")),
+                "models": [{"name": m.get("name", ""),
+                            "context": self._to_int(m.get("context"), 128000) or 128000,
+                            "vision": bool(m.get("vision"))} for m in (p.get("models") or [])],
+                "active": self._provider == ("custom:" + pid),
+                "configured": bool(p.get("base_url")) and bool(p.get("models")),
+            })
+        return out
+
+    @Slot(result="QVariantList")
+    def builtinProviderItems(self):
+        out = []
+        for k in MODEL_MAP.keys():
+            if k == "custom":
+                continue
+            out.append({"key": k, "name": PROVIDER_LABELS.get(k, k),
+                        "active": self._provider == k, "models": list(MODEL_MAP.get(k, []))})
+        return out
+
+    @Slot(str, result="QVariantMap")
+    def saveCustomProvider(self, payload_json):
+        try:
+            d = json.loads(payload_json) if payload_json else {}
+        except Exception:
+            return {"ok": False, "error": self.tr("无效数据")}
+        name = (d.get("name") or "").strip()
+        url = (d.get("base_url") or "").strip()
+        if not name:
+            return {"ok": False, "error": self.tr("请填写名称")}
+        if not url or self._is_placeholder_custom_url(url):
+            return {"ok": False, "error": self.tr("请填写有效的 Base URL")}
+        models = []
+        for m in (d.get("models") or []):
+            nm = (m.get("name") or "").strip()
+            if not nm:
+                continue
+            models.append({"name": nm,
+                           "context": self._to_int(m.get("context"), 128000) or 128000,
+                           "vision": bool(m.get("vision"))})
+        if not models:
+            return {"ok": False, "error": self.tr("请至少添加一个模型")}
+        pid = (d.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        entry = {"id": pid, "name": name, "base_url": url,
+                 "api_key": (d.get("api_key") or "").strip(),
+                 "anthropic": bool(d.get("anthropic")), "models": models}
+        found = False
+        for i, p in enumerate(self._custom_providers):
+            if p.get("id") == pid:
+                self._custom_providers[i] = entry
+                found = True
+                break
+        if not found:
+            self._custom_providers.append(entry)
+        self._save_custom_providers()
+        if self._provider == ("custom:" + pid):
+            self._apply_custom_provider(entry)
+            names = [m["name"] for m in models]
+            if self._model_name not in names:
+                self._model_name = names[0]
+                self.modelChanged.emit()
+            self.providerChanged.emit()
+            self.tokensChanged.emit()
+        self.customProvidersChanged.emit()
+        return {"ok": True, "id": pid}
+
+    @Slot(str)
+    def deleteCustomProvider(self, pid):
+        pid = (pid or "").strip()
+        self._custom_providers = [p for p in self._custom_providers if p.get("id") != pid]
+        self._save_custom_providers()
+        if self._provider == ("custom:" + pid):
+            self._revert_provider_from_custom()
+        self.customProvidersChanged.emit()
+
+    @Slot(str, str)
+    def selectProviderModel(self, provider_key, model_name):
+        if provider_key and provider_key != self._provider:
+            self.setProvider(provider_key)
+        if model_name and model_name != self._model_name:
+            self.setModel(model_name)
+
+    @Slot(str)
+    def openProviderApiKey(self, provider):
+        try:
+            self.openApiKeyDialog.emit(provider or self._provider)
+        except Exception as e:
+            print("[controller] open provider api key failed:", e)
 
     @Slot(bool)
     def setThink(self, on):
@@ -820,10 +1115,151 @@ class Controller(QObject):
             self._set_pref("font_scale", v)
             self.fontScaleChanged.emit()
 
+    @Slot(str)
+    def setAppTheme(self, v):
+        v = str(v or "")
+        if v in ("noir", "graphite", "midnight", "day") and v != self._app_theme:
+            self._app_theme = v
+            self._set_pref("app_theme", v)
+            self.appearanceChanged.emit()
+
+    @Slot(str)
+    def setAccentKey(self, v):
+        v = str(v or "")
+        if v in ("warm", "steel", "celadon", "clay", "neutral") and v != self._accent_key:
+            self._accent_key = v
+            self._set_pref("accent_key", v)
+            self.appearanceChanged.emit()
+
+    @Slot(str)
+    def setFontFamilyKey(self, v):
+        v = str(v or "")
+        if v in ("editorial", "modern", "mono") and v != self._font_family_key:
+            self._font_family_key = v
+            self._set_pref("font_family_key", v)
+            self.appearanceChanged.emit()
+
+    @Slot(str)
+    def setDensityKey(self, v):
+        v = str(v or "")
+        if v in ("compact", "normal", "roomy") and v != self._density_key:
+            self._density_key = v
+            self._set_pref("density_key", v)
+            self.appearanceChanged.emit()
+
+    # ---- 起手式 / 模板库 ----
+    def _tpl_config_path(self):
+        try:
+            from shared.common_utils import get_config_dir
+            return os.path.join(str(get_config_dir()), "templates.json")
+        except Exception:
+            return os.path.join(os.path.dirname(__file__), "templates.json")
+
+    def _load_my_templates(self):
+        try:
+            p = self._tpl_config_path()
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._my_templates = [x for x in data
+                                          if isinstance(x, dict) and x.get("body")]
+        except Exception:
+            self._my_templates = []
+
+    def _save_my_templates(self):
+        try:
+            p = self._tpl_config_path()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(self._my_templates, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _tpl_loc(self, row):
+        """把一条内置模板按当前语言取出（ty/cat/t/body/note）。"""
+        en = self._lang == "en"
+        sfx = "_en" if en else "_zh"
+        def pick(k):
+            return row.get(k + sfx) or row.get(k + "_zh", "")
+        return {"ty": pick("ty"), "cat": pick("cat"), "t": pick("t"),
+                "body": pick("b"), "note": pick("note"), "scratch": bool(row.get("sc"))}
+
+    @Slot(result=str)
+    def starterMeshy(self):
+        """空会话主推：可从零开始的 Meshy 起手式。"""
+        return json.dumps([self._tpl_loc(r) for r in _TPL_MESHY if r.get("sc")],
+                          ensure_ascii=False)
+
+    @Slot(result=str)
+    def starterHou(self):
+        """空会话配角：可靠的 Houdini 程序化起手式。"""
+        return json.dumps([self._tpl_loc(r) for r in _TPL_HOU], ensure_ascii=False)
+
+    @Slot(result=str)
+    def templateLibrary(self):
+        """模板库全量数据：Meshy(全)/Houdini(全)/我的模板。"""
+        meshy = [self._tpl_loc(r) for r in _TPL_MESHY]
+        hou = [self._tpl_loc(r) for r in _TPL_HOU]
+        mine = [{"id": x.get("id", ""), "t": x.get("name", ""), "body": x.get("body", "")}
+                for x in self._my_templates]
+        return json.dumps({"meshy": meshy, "hou": hou, "mine": mine}, ensure_ascii=False)
+
+    def _tpl_plain(self, body):
+        """把 {{名称:默认值}} 渲染成纯文本（取默认值；没默认值就取名称）。"""
+        return re.sub(r"\{\{([^:}]+):?([^}]*)\}\}",
+                      lambda m: (m.group(2) or m.group(1)), str(body or ""))
+
+    @Slot()
+    def openTemplateLibrary(self):
+        self.openTemplates.emit()
+
+    @Slot(str)
+    def insertTemplate(self, body):
+        """把模板填进输入框（占位符取默认值），复用 prefillComposer。"""
+        try:
+            self.prefillComposer.emit(self._tpl_plain(body))
+        except Exception:
+            pass
+
+    @Slot(str, result=str)
+    def saveTemplate(self, payload_json):
+        """新增/更新「我的模板」。payload: {name, body, id?}。返回 {ok, id} 或 {ok:false, error}。"""
+        try:
+            p = json.loads(payload_json or "{}")
+        except Exception:
+            return json.dumps({"ok": False, "error": self.tr("内容格式有误")})
+        name = str(p.get("name", "")).strip()
+        body = str(p.get("body", "")).strip()
+        if not body:
+            return json.dumps({"ok": False, "error": self.tr("请填写模板内容")})
+        if not name:
+            name = self.tr("未命名模板")
+        tid = str(p.get("id", "")).strip() or uuid.uuid4().hex[:8]
+        row = {"id": tid, "name": name, "body": body}
+        for i, x in enumerate(self._my_templates):
+            if x.get("id") == tid:
+                self._my_templates[i] = row
+                break
+        else:
+            self._my_templates.append(row)
+        self._save_my_templates()
+        self.templatesChanged.emit()
+        return json.dumps({"ok": True, "id": tid})
+
+    @Slot(str)
+    def deleteTemplate(self, tid):
+        tid = str(tid or "")
+        n = len(self._my_templates)
+        self._my_templates = [x for x in self._my_templates if x.get("id") != tid]
+        if len(self._my_templates) != n:
+            self._save_my_templates()
+            self.templatesChanged.emit()
+
     # ---- multi-session ----
     def _add_session(self, title=None):
         self._sessions.append({"id": uuid.uuid4().hex[:8], "title": title or "新对话",
-                               "rows": [], "history": [],
+                               "rows": [], "history": [], "updated": time.time(),
                                "provider": self._provider, "model": self._model_name})
 
     def _serialize_rows(self):
@@ -846,6 +1282,7 @@ class Controller(QObject):
         s["history"] = copy.deepcopy(self._session.history) if self._session else []
         s["provider"] = self._provider
         s["model"] = self._model_name
+        s["updated"] = time.time()
 
     @staticmethod
     def _sanitize_rows(rows):
@@ -861,6 +1298,8 @@ class Controller(QObject):
                     b["state"] = "answered"
 
     def _load_active(self):
+        # 切换/新建会话时清掉上一会话残留的附带图片，避免它泄漏到新会话的图生图里。
+        self._last_attached_images = []
         s = self._sessions[self._active]
         rows = copy.deepcopy(s.get("rows", []))
         self._sanitize_rows(rows)
@@ -870,14 +1309,16 @@ class Controller(QObject):
                 it["payload"] = {"bm": BlockModel(blocks)}
         self._model.load(rows)
         p, m = s.get("provider"), s.get("model")
-        if p == "custom":
-            self._load_custom()
-        if p in MODEL_MAP and (not m or m in MODEL_MAP.get(p, [])):
+        p_ok = (self._is_custom_key(p) and self._custom_provider(p) is not None) or (p in MODEL_MAP)
+        names = self._provider_model_names(p) if p_ok else []
+        if p_ok and (not m or m in names):
             changed_p = p != self._provider
             changed_m = bool(m and m != self._model_name)
             self._provider = p
             if m:
                 self._model_name = m
+            if self._is_custom_key(p):
+                self._apply_custom_provider(self._custom_provider(p))
             if changed_p:
                 self.providerChanged.emit()
             if changed_m:
@@ -893,7 +1334,8 @@ class Controller(QObject):
     @Slot(result="QVariantList")
     def sessionItems(self):
         return [{"title": (self.tr(s["title"]) if s["title"] == "新对话" else s["title"]),
-                 "active": (i == self._active)}
+                 "active": (i == self._active),
+                 "time": self._rel_time(s.get("updated"))}
                 for i, s in enumerate(self._sessions)]
 
     @Slot(int)
@@ -921,6 +1363,46 @@ class Controller(QObject):
         self.sessionsChanged.emit()
         self._save_all()
 
+    @Slot(bool)
+    def setAskDeleteSession(self, on):
+        on = bool(on)
+        if on != self._ask_delete_session:
+            self._ask_delete_session = on
+            self._set_pref("ask_delete_session", on)
+            self.askDeleteSessionChanged.emit()
+
+    @Slot(int)
+    def deleteSession(self, idx):
+        """删除一个会话（不再弹内置确认——确认由 QML 侧的删除弹窗负责）。"""
+        if self._running:
+            self.toast.emit(self.tr("当前正在运行，不能关闭会话"))
+            return
+        if idx < 0 or idx >= len(self._sessions) or len(self._sessions) <= 1:
+            return
+        self._close_session_now(idx)
+
+    def _rel_time(self, ts):
+        """把 epoch 秒转成简短的相对时间标签（随语言切换中/英）。"""
+        try:
+            d = time.time() - float(ts)
+        except (TypeError, ValueError):
+            return ""
+        if d < 0:
+            d = 0
+        zh = self._lang != "en"
+        if d < 60:
+            return "刚刚" if zh else "just now"
+        if d < 3600:
+            n = int(d // 60)
+            return ("%d 分钟前" % n) if zh else ("%dm ago" % n)
+        if d < 86400:
+            n = int(d // 3600)
+            return ("%d 小时前" % n) if zh else ("%dh ago" % n)
+        days = int(d // 86400)
+        if days < 7:
+            return ("%d 天前" % days) if zh else ("%dd ago" % days)
+        return ("%d 周前" % (days // 7)) if zh else ("%dw ago" % (days // 7))
+
     @Slot()
     def clearChat(self):
         if self._running:
@@ -941,36 +1423,26 @@ class Controller(QObject):
 
     @Slot(result="QVariantList")
     def overflowItems(self):
+        # ⋯ 菜单只保留「一次性动作」+「设置…」入口；所有配置/开关/管理器已迁到设置浮窗，
+        # 不在此重复出现（迁移 = 移过去，不是复制）。
         t = self.tr
         return [
-            {"label": "API Key…", "val": "apikey"},
-            {"label": "Meshy API Key…", "val": "meshy_key"},
+            {"label": t("设置…"), "val": "settings"},
+            {"sep": True},
             {"label": self.tr("Meshy 资产库"), "val": "library"},
-            {"label": t("自定义 Provider…"), "val": "custom_cfg"},
             {"label": t("导出对话"), "val": "export"},
             {"label": t("Token 分析"), "val": "tokens"},
             {"label": t("压缩上下文"), "val": "optimize"},
             {"label": t("缓存位置"), "val": "cache"},
-            {"sep": True},
-            {"label": t("检查更新"), "val": "update"},
-            {"label": t("字号…"), "val": "font"},
-            {"sep": True},
-            {"label": t("规则编辑器"), "val": "rules"},
-            {"label": t("插件管理"), "val": "plugins"},
-            {"label": t("记忆管理"), "val": "memory_mgr"},
-            {"sep": True},
-            {"label": t("执行前确认"), "val": "confirm", "checked": self._confirm_mode},
-            {"label": t("长期记忆"), "val": "memory", "checked": self._memory_enabled},
-            {"label": t("实时 Cook"), "val": "cook", "checked": self._cook_realtime},
-            {"sep": True},
-            {"label": "语言 / Language: " + ("中文" if self._lang == "zh" else "English"), "val": "lang_toggle"},
             {"sep": True},
             {"label": t("清空对话"), "val": "clear"},
         ]
 
     @Slot(str)
     def menuAction(self, action):
-        if action == "clear":
+        if action == "settings":
+            self.openSettingsDialog.emit()
+        elif action == "clear":
             self.clearChat()
         elif action == "confirm":
             self._confirm_mode = not self._confirm_mode
@@ -985,6 +1457,7 @@ class Controller(QObject):
         elif action == "cook":
             self._cook_realtime = not self._cook_realtime
             self._set_pref("cook_realtime", self._cook_realtime)
+            self.cookRealtimeChanged.emit()
             self.toast.emit(self.tr("实时 Cook") + (" ON" if self._cook_realtime else " OFF"))
         elif action == "font":
             self.openFontDialog.emit()
@@ -1403,7 +1876,10 @@ class Controller(QObject):
             return
         try:
             from houdini_agent.utils.training_data_exporter import export_chat_training_data
-            path = export_chat_training_data(hist)
+            # 用会话真实的系统提示导出（带 thinking 版本，与历史里注入的 <think> 引导一致）；
+            # 取不到时传 None，由导出器回退到默认提示。
+            sys_prompt = getattr(self._session, "_sys_think", None) if self._session else None
+            path = export_chat_training_data(hist, system_prompt=sys_prompt)
             self._info("导出对话", "已导出到：\n%s" % path)
         except Exception as e:
             self._info("导出对话", "导出失败：%s" % e)
@@ -1647,25 +2123,106 @@ class Controller(QObject):
         elif cmd == "/new":
             self.newSession()
 
-    def _load_custom(self):
-        """Re-apply persisted custom-provider config to the client on startup."""
+    # ---- 多自定义供应商：数据模型 / 持久化 / 运行时应用 ----
+    @staticmethod
+    def _is_custom_key(key):
+        return bool(key) and isinstance(key, str) and key.startswith("custom:")
+
+    def _custom_provider(self, key):
+        """按激活键 'custom:<id>' 取得供应商 dict；非自定义或未找到返回 None。"""
+        if not self._is_custom_key(key):
+            return None
+        pid = key[len("custom:"):]
+        for p in self._custom_providers:
+            if p.get("id") == pid:
+                return p
+        return None
+
+    def _provider_model_names(self, key):
+        p = self._custom_provider(key)
+        if p is not None:
+            return [m.get("name") for m in (p.get("models") or []) if m.get("name")]
+        return MODEL_MAP.get(key, [])
+
+    def _model_meta(self, key, model):
+        p = self._custom_provider(key)
+        if p is not None:
+            for m in (p.get("models") or []):
+                if m.get("name") == model:
+                    return m
+        return None
+
+    def _active_model_context(self):
+        meta = self._model_meta(self._provider, self._model_name)
+        if meta is not None:
+            return self._to_int(meta.get("context"), 128000) or 128000
+        return CONTEXT_LIMITS.get(self._model_name, 128000)
+
+    def _active_model_vision(self):
+        meta = self._model_meta(self._provider, self._model_name)
+        if meta is not None:
+            return bool(meta.get("vision"))
+        return self._model_name in VISION_MODELS
+
+    def _apply_custom_provider(self, p):
+        """把某自定义供应商的 url/key/协议应用到 client（被选中或运行前调用）。"""
+        if not (self._session and p):
+            return
         try:
-            s = QSettings("HoudiniAI", "Assistant")
-            url = s.value("custom_url", "")
-            model = s.value("custom_model", "")
-            if url and model:
-                if self._is_placeholder_custom_url(str(url)):
-                    print("[controller] ignoring placeholder custom provider URL:", url)
-                    return
-                ctx = self._to_int(s.value("custom_context_limit", 128000), 128000)
-                MODEL_MAP["custom"] = [model]
-                CONTEXT_LIMITS[model] = ctx
-                if self._session:
-                    key = s.value("custom_key", "")
-                    proto = str(s.value("custom_proto", "openai")) == "anthropic"
-                    self._session.client.set_custom_provider(url, key, True, proto)
+            self._session.client.set_custom_provider(
+                str(p.get("base_url", "")), str(p.get("api_key", "")),
+                True, bool(p.get("anthropic")))
         except Exception as e:
-            print("[controller] load custom failed:", e)
+            print("[controller] apply custom provider failed:", e)
+
+    def _save_custom_providers(self):
+        try:
+            QSettings("HoudiniAI", "Assistant").setValue(
+                "custom_providers", json.dumps(self._custom_providers, ensure_ascii=False))
+        except Exception as e:
+            print("[controller] save custom providers failed:", e)
+
+    def _load_custom_providers(self):
+        """从 QSettings 读取自定义供应商列表；空且存在旧版单一 custom 配置时自动迁移。"""
+        s = QSettings("HoudiniAI", "Assistant")
+        out = []
+        try:
+            raw = s.value("custom_providers", "")
+            if raw:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(data, list):
+                    for p in data:
+                        if isinstance(p, dict) and p.get("id") and p.get("base_url"):
+                            p.setdefault("name", p.get("id"))
+                            p.setdefault("api_key", "")
+                            p.setdefault("anthropic", False)
+                            p.setdefault("models", [])
+                            out.append(p)
+        except Exception as e:
+            print("[controller] load custom providers failed:", e)
+        # 旧版单一 custom 迁移成一个供应商条目，老用户不丢配置
+        if not out:
+            url = str(s.value("custom_url", "") or "")
+            model = str(s.value("custom_model", "") or "")
+            if url and model and not self._is_placeholder_custom_url(url):
+                ctx = self._to_int(s.value("custom_context_limit", 128000), 128000)
+                pid = uuid.uuid4().hex[:8]
+                out.append({
+                    "id": pid, "name": model, "base_url": url,
+                    "api_key": str(s.value("custom_key", "") or ""),
+                    "anthropic": str(s.value("custom_proto", "openai")) == "anthropic",
+                    "models": [{"name": model, "context": ctx,
+                                "vision": self._qbool(s.value("custom_supports_vision", False), False)}],
+                })
+                if str(s.value("last_provider", "")) == "custom":
+                    s.setValue("last_provider", "custom:" + pid)
+        self._custom_providers = out
+
+    def _load_custom(self):
+        """会话建立/切换后，如果当前激活的是某自定义供应商，把它的配置应用到 client。"""
+        p = self._custom_provider(self._provider)
+        if p is not None:
+            self._apply_custom_provider(p)
 
     @staticmethod
     def _is_placeholder_custom_url(url):
@@ -1713,7 +2270,13 @@ class Controller(QObject):
             pass
 
     def _open_custom_provider(self):
-        if not self._houdini_connected():
+        # 配置自定义 LLM Provider 只需要一个承载 client 配置的后端会话即可，
+        # 与 Houdini 场景/Bridge 是否连通【无关】。此前用 _houdini_connected()
+        # （依赖一次 Bridge ping）做门禁：Houdini 明明已连接、仅 ping 抖动/时机不对时
+        # 会被误判为"未连接"，把用户错误地引去重开 Houdini。改为只看后端会话是否存在——
+        # 会话在（哪怕 bridge 暂时不可达），配置都能写入 client，下次即生效。
+        if self._session is None:
+            # 独立模式下后端会话随 Bridge 建立；确实没有可承载配置的后端时才引导连接。
             self._revert_provider_from_custom()
             self._prompt_open_houdini(self.tr("配置自定义 Provider"))
             return
@@ -2011,9 +2574,16 @@ class Controller(QObject):
             self._simulate(user_text)
             return
         supports_vision = self._current_model_supports_vision()
+        # 自定义供应商：跑之前把它的 url/key/协议应用到 client，并以 "custom" 走运行路由
+        prov_arg = self._provider
+        if self._is_custom_key(self._provider):
+            self._apply_custom_provider(self._custom_provider(self._provider))
+            prov_arg = "custom"
+        ctx_limit = self._active_model_context()
         threading.Thread(
             target=self._worker,
-            args=(user_text, self._model_name, self._provider, self._mode, tools, max_iter, images, supports_vision),
+            args=(user_text, self._model_name, prov_arg, self._mode, tools, max_iter,
+                  images, supports_vision, ctx_limit),
             daemon=True,
         ).start()
 
@@ -2067,6 +2637,11 @@ class Controller(QObject):
     def _watchdog_tick(self):
         if not self._running:
             return
+        # 人在环等待中（画廊挑选 / 确认卡 / ask_question）：是在等用户操作，不是卡死，
+        # 别弹"无进展，可点 Stop"误导用户。
+        if getattr(self, "_interactive", None):
+            self._last_activity = time.monotonic()
+            return
         idle = time.monotonic() - self._last_activity
         if idle > 45 and not self._watchdog_warned:
             self._watchdog_warned = True
@@ -2076,7 +2651,8 @@ class Controller(QObject):
             self.toast.emit("Plan 执行长时间无进展，已请求停止。")
 
     # ---- worker thread ----
-    def _worker(self, text, model, provider, mode, tools, max_iter, images=None, supports_vision=False):
+    def _worker(self, text, model, provider, mode, tools, max_iter, images=None,
+                supports_vision=False, context_limit=None):
         def cb_content(t):
             self._last_activity = time.monotonic()
             vis, thk = self._split(t)
@@ -2134,7 +2710,7 @@ class Controller(QObject):
                  "on_tool_call": cb_tool_call, "on_tool_result": cb_tool_result,
                  "on_tool_args_delta": cb_args_delta,
                  "on_iteration_start": lambda i: self._sigStatus.emit("generating")},
-                context_limit=CONTEXT_LIMITS.get(model, 128000),
+                context_limit=(context_limit if context_limit else CONTEXT_LIMITS.get(model, 128000)),
                 enable_thinking=True,
                 supports_vision=supports_vision,
                 tools=tools, max_iter=max_iter,
@@ -2196,6 +2772,18 @@ class Controller(QObject):
                 return _meshy.search_animations(kwargs)
             except Exception as e:
                 return {"success": False, "error": "动作库检索失败: %s" % e}
+        # Meshy 非交互网络工具：同轮去重命中时直接返回旧结果，且【放在确认门之前】——
+        # 否则会让用户为一个其实只返回缓存、不会真正生成/扣费的重复调用再确认一次。
+        if (tool_name in MESHY_NETWORK_TOOLS and _meshy is not None
+                and tool_name not in MESHY_INTERACTIVE_TOOLS):
+            try:
+                _sig = tool_name + "|" + json.dumps(kwargs, sort_keys=True, default=str)
+            except Exception:
+                _sig = tool_name
+            _cache = getattr(self, "_meshy_turn_cache", None)
+            if _cache is not None and _sig in _cache:
+                print("[meshy] 同轮去重（确认前）：跳过重复调用 %s" % tool_name)
+                return _cache[_sig]
         # per-tool approval (confirm mode)
         if self._confirm_mode and tool_name in CONFIRM_TOOLS:
             if not self._await_confirm(tool_name, kwargs):
@@ -2204,15 +2792,21 @@ class Controller(QObject):
         if tool_name in MESHY_NETWORK_TOOLS and _meshy is not None:
             # 同一轮内重复的生成调用去重：防止模型/中转站把同一调用发两次
             # 导致重复弹画廊、重复生成、重复扣费。
+            # 注意：交互工具（带画廊的文生图/图生图/概念图）【不去重】——
+            #   ① 每次都是独立的人在环操作，命中缓存会返回上一批旧结果、不再弹新画廊；
+            #   ② 图生图的参考图来自 _last_attached_images（不在 kwargs 里），
+            #      相同 kwargs 但换了附图会被误判为重复 → 用错图。
+            #   交互工具靠画廊本身（需用户点选才计费）防误触，无需此处去重。
+            is_interactive = tool_name in MESHY_INTERACTIVE_TOOLS
             try:
                 sig = tool_name + "|" + json.dumps(kwargs, sort_keys=True, default=str)
             except Exception:
                 sig = tool_name
             cache = getattr(self, "_meshy_turn_cache", None)
-            if cache is not None and sig in cache:
+            if cache is not None and not is_interactive and sig in cache:
                 print("[meshy] 同轮去重：跳过重复调用 %s" % tool_name)
                 return cache[sig]
-            if tool_name in MESHY_INTERACTIVE_TOOLS:
+            if is_interactive:
                 mode = "concept" if tool_name == "meshy_concept_to_3d" else "image"
                 res = self._run_meshy_concept(kwargs, mode=mode, tool_name=tool_name)
             else:
@@ -2221,8 +2815,8 @@ class Controller(QObject):
                     res = self._run_meshy_batch(tool_name, kwargs, cnt)
                 else:
                     res = self._run_meshy_network(tool_name, kwargs)
-            # 只缓存成功结果：取消/失败不缓存，便于用户重试
-            if cache is not None and isinstance(res, dict) and res.get("success"):
+            # 只缓存成功结果：取消/失败不缓存，便于用户重试；交互工具不缓存。
+            if cache is not None and not is_interactive and isinstance(res, dict) and res.get("success"):
                 cache[sig] = res
             # 生成成功后若资产库开着，自动刷新（新模型已落到 Meshy 云端）
             if (isinstance(res, dict) and res.get("success")
@@ -2355,8 +2949,9 @@ class Controller(QObject):
                 self._last_activity = time.monotonic()
                 return {"success": True, "error": "",
                         "result": ("已将【%s】转入后台运行（任务号 %s）。你现在可以继续做"
-                                   "别的事；该任务完成后，我会把结果自动作为新消息发给你。"
-                                   "期间如需确认进度可调用 meshy_task_status。"
+                                   "别的事；该任务完成后，结果会自动作为新消息发给你——"
+                                   "无需轮询 meshy_task_status，请直接结束本轮或处理其他事项，"
+                                   "只在用户主动追问进度时才查询。"
                                    % (label, op[:8])),
                         "data": {"background": True, "op": op}}
 
@@ -2452,7 +3047,13 @@ class Controller(QObject):
         items = list(self._meshy_bg.values())
         if op:
             op = str(op)
-            items = [t for t in items if t.get("op", "").startswith(op) or t.get("op") == op]
+
+            def _match(t_op):
+                # 完整 token 精确匹配；只有 hex 任务号（agent 拿 op[:8] 查）才按前缀匹配，
+                # 且要求前缀长度>=8，避免短数字 token "batch1" 误命中 "batch10"。
+                return t_op == op or (len(op) >= 8 and t_op.startswith(op))
+
+            items = [t for t in items if _match(t.get("op", ""))]
             if not items:
                 return {"success": True, "error": "",
                         "result": "没找到任务 %s（可能已完成并已把结果发给你了）。" % op}
@@ -2478,9 +3079,13 @@ class Controller(QObject):
         maxp = getattr(_meshy, "MAX_PARALLEL", 4)
         prompt = (kwargs.get("prompt") or "").strip()
         prompts_in = kwargs.get("prompts")
+        prompt_drop = 0
         if isinstance(prompts_in, (list, tuple)) and any(str(p).strip() for p in prompts_in):
             # 多个不同提示词，各并行出一张
-            prompt_list = [str(p).strip() for p in prompts_in if str(p).strip()][:maxp]
+            clean = [str(p).strip() for p in prompts_in if str(p).strip()]
+            if len(clean) > maxp:
+                prompt_drop = len(clean) - maxp   # 超出单次上限的提示词，明确告知而非静默丢
+            prompt_list = clean[:maxp]
         elif prompt:
             # 单一提示词的 count 个变体
             cnt = max(1, min(int(kwargs.get("count", 2) or 2), maxp))
@@ -2500,12 +3105,18 @@ class Controller(QObject):
             single = kwargs.get("image")
             refs_in = [single] if single else []
         base_refs = [r for r in refs_in if r] or None
-        # 图生图：用户附带的图就是要编辑的对象，优先用它——即使模型自己瞎填/编造了
-        # 一个 image 路径或 URL（实测模型常编一个不存在的 URL）。只有在完全没有附图时，
-        # 才采用模型显式给的 image（比如让它编辑之前生成的某张概念图的本地路径）。
+        # 图生图参考图优先级：
+        #  1) 模型显式给的、确实存在的本地文件——这正是画廊"二次编辑选中概念图"指令里
+        #     回传的真实概念图路径，必须优先，绝不能被会话里更早的旧附图覆盖（否则
+        #     用户一旦本会话传过任意图，之后所有概念图二次编辑都会去改那张旧图）。
+        #  2) 否则用用户本会话附带的图（模型常编造不存在的 URL/路径，附图更可信）。
+        #  3) 否则用模型给的 URL/data URI 原样。
         if tool_name == "meshy_image_to_image":
+            model_local = [r for r in (base_refs or []) if os.path.isfile(str(r))]
             attached = list(getattr(self, "_last_attached_images", []) or [])
-            if attached:
+            if model_local:
+                base_refs = model_local[:5]
+            elif attached:
                 base_refs = attached[:5]
             if base_refs is None:
                 return {"success": False,
@@ -2577,6 +3188,9 @@ class Controller(QObject):
                     editing = bool(gen_refs or gen_per_refs)
                     note0 = (("图生图编辑中 · %d 张…" % gen_count) if editing
                              else ("并行生成 %d 张图片…" % gen_count))
+                    if prompt_drop:
+                        note0 += "（单次最多 %d 张，已略去多余的 %d 个提示词）" % (maxp, prompt_drop)
+                        prompt_drop = 0   # 只提示一次
                     # render N empty slots up-front so parallel generation is visible
                     show(phase="gen", prompt=card_prompt, count=gen_count, progress=0,
                          images=[], selected=[], note=note0)
@@ -2628,10 +3242,23 @@ class Controller(QObject):
 
                 show(phase="pick", prompt=card_prompt, count=len(concepts),
                      images=imgs(concepts), selected=[], progress=100, note="")
-                try:
-                    decision = q.get(timeout=1800)
-                except queue.Empty:
-                    decision = {"action": "cancel"}
+                # 分段等待用户选择：每 0.3s 检查一次停止/转后台请求，最长 1800s。
+                # 否则一次性 q.get(1800) 阻塞期间用户点 Stop 完全没反应（要等满 30 分钟）。
+                decision = None
+                _waited = 0.0
+                while decision is None:
+                    if should_stop():
+                        show(phase="cancelled", note="已停止")
+                        return {"success": False, "error": "stopped"}
+                    if bg_evt.is_set():
+                        decision = {"action": "cancel"}
+                        break
+                    try:
+                        decision = q.get(timeout=0.3)
+                    except queue.Empty:
+                        _waited += 0.3
+                        if _waited >= 1800:
+                            decision = {"action": "cancel"}
                 action = (decision or {}).get("action")
 
                 if action == "set_model":
@@ -2708,9 +3335,25 @@ class Controller(QObject):
                     return {"success": False, "error": "用户取消了图片选择"}
 
                 sel = [int(i) for i in (decision.get("selected") or [])]
-                chosen = [c for c in concepts if c["index"] in sel] or concepts[:1]
+                chosen = [c for c in concepts if c["index"] in sel]
+                if not chosen:
+                    # 未选中任何图就点"做成 3D"：不默认拿第一张去计费（每个都烧 credits），
+                    # 回到选择态提示用户先选，避免无感知扣费。
+                    show(phase="pick", prompt=card_prompt, count=len(concepts),
+                         images=imgs(concepts),
+                         note="请先选中要做成 3D 的图片（每个都会消耗 credits），再点生成")
+                    continue
+                sel_count = len(chosen)
+                dropped_n = 0
+                if sel_count > maxp:
+                    # 单次最多并行 maxp 个 image-to-3d；超出的不静默丢弃，明确告知。
+                    dropped_n = sel_count - maxp
+                    chosen = chosen[:maxp]
+                note3d = "生成 %d 个 3D 模型中…" % len(chosen)
+                if dropped_n:
+                    note3d += "（单次最多 %d 个，另 %d 张本次未处理）" % (maxp, dropped_n)
                 show(phase="making3d", prompt=card_prompt, images=imgs(concepts),
-                     selected=sel, progress=0, note="生成 %d 个 3D 模型中…" % len(chosen))
+                     selected=sel, progress=0, note=note3d)
 
                 _PROC_NOTE = (
                     "【流程说明 · 概念图→3D 已完成】用户在画廊里选中了图片，并选择把它们"
@@ -2718,11 +3361,20 @@ class Controller(QObject):
                     "（不是概念图）。请直接用 import_3d_asset 导入，"
                     "【不要再重新生成概念图，也不要重做 2D 图】。\n")
 
+                m3errs = []
+
                 def _models_summary(results):
                     out = ["3D 生成完成，共 %d 个模型：" % len(results)]
                     for r in results:
                         g = r.get("glb"); td = r.get("texture_dir")
                         out.append("- glb: %s%s" % (g, (" · texture_dir: %s" % td) if td else ""))
+                    if dropped_n:
+                        out.append("注意：你选了 %d 张，但单次最多并行 %d 个 image-to-3d，"
+                                   "其余 %d 张本次未生成；如需补做请对它们再次发起 meshy_image_to_3d。"
+                                   % (sel_count, maxp, dropped_n))
+                    if m3errs:
+                        out.append("注意：有 %d 张图的 3D 生成失败（可能已消耗 credits）：%s"
+                                   % (len(m3errs), "; ".join(str(e)[:80] for e in m3errs)))
                     out.append("请对每个 glb 调用 import_3d_asset 导入 Houdini。")
                     return "\n".join(out)
 
@@ -2742,7 +3394,7 @@ class Controller(QObject):
                         on_progress=lambda s, p, st: show(phase="making3d", progress=p,
                                                           note="%s %s" % (s, st),
                                                           images=imgs(concepts), selected=sel),
-                        should_stop=should_stop),
+                        should_stop=should_stop, errors_out=m3errs),
                     deliver_3d_bg)
                 if status == "bg":
                     # 冻结卡片为"已转入后台"终态
@@ -2776,16 +3428,25 @@ class Controller(QObject):
         """Parallel multi-generation for a batch-capable Meshy tool (count>1):
         generate N variants concurrently, fill gallery slots as each finishes,
         then show the result thumbnails. Returns all GLBs for the agent to import.
-        Non-interactive (no pick step) — reuses the gallery card via _sigConcept."""
+        Non-interactive (no pick step) — reuses the gallery card via _sigConcept.
+        可「转入后台」：长时间的 count>1 批量生成不再独占 agent 线程。"""
         count = max(1, min(int(count or 1), getattr(_meshy, "MAX_PARALLEL", 4)))
         self._int_seq += 1
         token = "batch%d" % self._int_seq
         labels = {"meshy_text_to_3d": "文生3D", "meshy_image_to_3d": "图生3D",
                   "meshy_retexture": "重打材质", "meshy_remesh": "重拓扑"}
         title = "%s ×%d" % (labels.get(tool_name, tool_name), count)
+        label = labels.get(tool_name, tool_name)
+
+        bg_evt = threading.Event()
+        self._meshy_bg_requests[token] = bg_evt
+        self._meshy_bg[token] = {"op": token, "tool": tool_name, "label": label,
+                                 "stage": "生成", "progress": 0, "status": "IN_PROGRESS",
+                                 "done": False, "ok": None, "summary": ""}
 
         def show(**fields):
-            payload = {"token": token, "mode": "batch", "title": title}
+            payload = {"token": token, "mode": "batch", "title": title,
+                       "backgroundable": True}
             payload.update(fields)
             try:
                 self._sigConcept.emit(json.dumps(payload, default=str))
@@ -2793,13 +3454,15 @@ class Controller(QObject):
                 pass
 
         def should_stop():
+            if bg_evt.is_set():
+                return False     # 已转后台：不随 agent 停止/新一轮而中断
             try:
                 return bool(self._session and self._session.client.is_stop_requested())
             except Exception:
                 return False
 
         show(phase="gen", count=count, images=[], progress=0,
-             note="并行生成 %d 个…" % count)
+             note="并行生成 %d 个…（可转入后台）" % count)
         done = []
 
         def on_item(i, data):
@@ -2808,26 +3471,56 @@ class Controller(QObject):
                  progress=len(done) * 100 // count,
                  note="%d/%d 完成" % (len(done), count))
 
-        try:
-            results = _meshy.run_network_parallel(
-                tool_name, kwargs, count, on_item=on_item, should_stop=should_stop)
-        except Exception as e:
-            show(phase="cancelled", note="失败: %s" % e)
-            return {"success": False, "error": "并行生成失败: %s" % e}
+        def _summary(results, errors):
+            lines = ["并行生成完成，共 %d 个%s："
+                     % (len(results), ("（请求 %d 个）" % count) if len(results) < count else "")]
+            for r in results:
+                g = r.get("glb")
+                t = r.get("texture_dir")
+                lines.append("- glb: %s%s" % (g, (" · texture_dir: %s" % t) if t else ""))
+            if errors:
+                lines.append("注意：有 %d 个生成失败（可能已消耗 credits）：%s"
+                             % (len(errors), "; ".join(str(e)[:80] for e in errors)))
+            lines.append("请对每个 glb 调用 import_3d_asset 导入 Houdini。")
+            return "\n".join(lines)
 
-        thumbs = [{"index": i, "image": r.get("thumbnail") or ""}
-                  for i, r in enumerate(results)]
-        show(phase="done", images=thumbs, results=thumbs, progress=100,
-             note="生成结果 · %d" % len(results))
-        lines = ["并行生成完成，共 %d 个：" % len(results)]
-        for r in results:
-            g = r.get("glb")
-            t = r.get("texture_dir")
-            lines.append("- glb: %s%s" % (g, (" · texture_dir: %s" % t) if t else ""))
-        lines.append("请对每个 glb 调用 import_3d_asset 导入 Houdini。")
-        self._last_activity = time.monotonic()
-        return {"success": True, "result": "\n".join(lines), "error": "",
-                "data": {"models": results}}
+        errs = []
+
+        def deliver_bg(results, err):
+            if err or not results:
+                self._enqueue_bg_feedback("【后台任务】%s 失败：%s" % (label, err or "未知"), label)
+                return
+            self._enqueue_bg_feedback("【后台任务完成】" + _summary(results, errs), label)
+
+        try:
+            status, results, perr = self._await_or_background(
+                token,
+                lambda: _meshy.run_network_parallel(
+                    tool_name, kwargs, count, on_item=on_item,
+                    should_stop=should_stop, errors_out=errs),
+                deliver_bg)
+            if status == "bg":
+                show(phase="background", count=count, images=list(done),
+                     note="已转入后台运行中…完成后结果会自动发给 Agent")
+                return {"success": True, "error": "",
+                        "result": ("已将【%s ×%d】转入后台运行（任务号 %s）。完成后结果会"
+                                   "自动作为新消息发给你——无需轮询。" % (label, count, token[:8])),
+                        "data": {"background": True, "op": token}}
+            if perr:
+                show(phase="cancelled", note="失败: %s" % perr)
+                return _meshy._err("并行生成失败: %s" % perr) if hasattr(_meshy, "_err") \
+                    else {"success": False, "error": "并行生成失败: %s" % perr, "result": "", "data": {}}
+            thumbs = [{"index": i, "image": r.get("thumbnail") or ""}
+                      for i, r in enumerate(results)]
+            show(phase="done", images=thumbs, results=thumbs, progress=100,
+                 note="生成结果 · %d" % len(results))
+            return {"success": True, "result": _summary(results, errs), "error": "",
+                    "data": {"models": results}}
+        finally:
+            self._meshy_bg_requests.pop(token, None)
+            if not bg_evt.is_set():
+                self._meshy_bg.pop(token, None)
+            self._last_activity = time.monotonic()
 
     # tools that mutate the scene (need an undo group + node-change snapshot)
     _MUTATING = {"create_node", "create_nodes_batch", "create_wrangle_node", "delete_node",
@@ -3115,6 +3808,9 @@ class Controller(QObject):
             d = json.loads(js)
         except Exception:
             return
+        # Meshy 生成期间只发进度信号、不走 content/tool 回调；这里刷新活动时间，
+        # 否则长达数分钟的正常生成会被看门狗误判为"超过 45 秒无进展"。
+        self._touch_activity()
         op = d.get("op")
         block = self._meshy_ops.get(op)
         if block is None:
@@ -3140,6 +3836,7 @@ class Controller(QObject):
             d = json.loads(js)
         except Exception:
             return
+        self._touch_activity()   # 画廊生成/等待选择期间同样刷新活动时间，避免看门狗误报
         token = d.get("token")
         if not token:
             return
@@ -3182,17 +3879,25 @@ class Controller(QObject):
                 self._pending_bg_galleries.append(token)
             return
         concepts = g["concepts"]
-        # 独立系统消息行承载这张画廊（不调 _start_run，避免触发 agent 轮次）
-        self._bm = BlockModel()
-        self._ai_row = self._model.append({"type": "ai", "payload": {"bm": self._bm}})
+        # 独立系统消息行承载这张画廊（不调 _start_run，避免触发 agent 轮次）。
+        # 每张后台画廊各占一行、各有自己的 BlockModel；用 token→bm 映射记下，
+        # 这样后续解析某张画廊时能精确刷新它自己那一行（多张并存时不互相覆盖）。
+        bm = BlockModel()
+        self._bm = bm
+        self._ai_row = self._model.append({"type": "ai", "payload": {"bm": bm}})
         block = {"kind": "concept", "token": token, "phase": "pick",
                  "mode": g.get("mode", "concept"), "prompt": g.get("card_prompt", ""),
                  "images": list(concepts), "selected": [], "progress": 100,
                  "count": len(concepts),
                  "note": "后台已生成 %d 张 · 勾选后可生成 3D / 二次编辑 / 换提示词" % len(concepts)}
         self._blocks = [block]
-        self._concept_blocks = {token: block}
-        self._do_flush()
+        if not isinstance(getattr(self, "_concept_blocks", None), dict):
+            self._concept_blocks = {}
+        self._concept_blocks[token] = block          # 更新而非整体替换，保留其它 token
+        if not hasattr(self, "_bg_gallery_bm"):
+            self._bg_gallery_bm = {}
+        self._bg_gallery_bm[token] = bm
+        bm.sync(self._blocks)
         self.toast.emit("后台已生成 %d 张概念图，请在画廊里挑选" % len(concepts))
 
     def _drain_pending_bg_galleries(self):
@@ -3214,17 +3919,28 @@ class Controller(QObject):
         card_prompt = g.get("card_prompt", "")
 
         def _blk(**fields):
-            blk = self._concept_blocks.get(token)
-            if blk is not None:
-                blk.update(fields)
+            blk = (self._concept_blocks or {}).get(token)
+            if blk is None:
+                return
+            blk.update(fields)
+            # 精确刷新这张画廊自己的那一行（不依赖 self._bm 当前指向哪一行），
+            # 多张后台画廊并存时也能正确更新。
+            bm = getattr(self, "_bg_gallery_bm", {}).get(token)
+            if bm is not None:
+                bm.sync([blk])
+            else:
                 self._do_flush()
+
+        def _drop_token():
+            self._bg_galleries.pop(token, None)
+            getattr(self, "_bg_gallery_bm", {}).pop(token, None)
 
         if action == "submit":
             sel = [int(i) for i in (d.get("selected") or [])]
             chosen = [c for c in concepts if c["index"] in sel] or concepts[:1]
             paths = [c["image"] for c in chosen]
             _blk(phase="done", selected=sel, note="已交给 Agent 生成 3D…")
-            self._bg_galleries.pop(token, None)
+            _drop_token()
             lines = ["【用户操作 · 把选中的概念图做成 3D】",
                      "用户在后台完成的画廊里选了这 %d 张图，要【直接升级成 3D 模型】"
                      "（不是要你重做 2D 图）：" % len(paths)]
@@ -3242,7 +3958,7 @@ class Controller(QObject):
                 _blk(note="请先选中图片并在提示词框写明想要的改动，再点二次编辑")
                 return
             _blk(phase="done", selected=sel, note="已把反馈交给 Agent，做二次编辑…")
-            self._bg_galleries.pop(token, None)
+            _drop_token()
             lines = ["【用户反馈 · 二次编辑选中图】", "用户希望的改动：%s" % fb,
                      "选中的参考图（本地路径）："]
             lines += ["- %s" % p for p in sel_imgs]
@@ -3256,7 +3972,7 @@ class Controller(QObject):
             gen_tool = ("meshy_image_to_image" if g.get("tool") == "meshy_image_to_image"
                         else "meshy_text_to_image")
             _blk(phase="done", note="已把你的意见交给 Agent，优化提示词后重做…")
-            self._bg_galleries.pop(token, None)
+            _drop_token()
             lines = ["【用户反馈 · 要求重做这批图】"]
             lines.append("用户意见：%s" % fb if fb
                          else "用户没满意但未给具体意见——请你判断如何改进。")
@@ -3270,12 +3986,12 @@ class Controller(QObject):
             selset = sorted(set(int(i) for i in (d.get("selected") or [])))
             _blk(phase="done", selected=selset,
                  note="已保留 %d 张图片" % (len(selset) or len(concepts)))
-            self._bg_galleries.pop(token, None)
+            _drop_token()
             return
 
         # cancel / 其他
         _blk(phase="cancelled", note="已取消")
-        self._bg_galleries.pop(token, None)
+        _drop_token()
 
     # ---- Meshy 云资产库（侧滑抽屉） ----
     def _exec_houdini_tool(self, name, kwargs):
@@ -3340,6 +4056,10 @@ class Controller(QObject):
             self.toast.emit(self.tr("Meshy 集成不可用"))
             return
         if self._library_busy:
+            # 已有加载在飞：记一个挂起刷新标记，本次加载结束后补做一次整表刷新
+            # （否则生成成功触发的自动刷新会被静默吞掉，新资产不显示）。
+            if not append:
+                self._library_refresh_pending = True
             return
         try:
             from houdini_agent.meshy import config as _mcfg
@@ -3394,30 +4114,54 @@ class Controller(QObject):
             else:
                 self.toast.emit(self.tr("没有更多了"))
         else:
+            # 整表替换时，把仍在导入中的条目的状态按 id 迁移到新对象，
+            # 避免刷新使正在导入的卡片丢失进度/cached 标记（item 变孤儿）。
+            old_by_id = {x.get("id"): x for x in self._library_items}
+            for it in items:
+                old = old_by_id.get(it.get("id"))
+                if old:
+                    for k in ("importing", "import_stage", "cached", "local_glb"):
+                        if old.get(k):
+                            it[k] = old[k]
             self._library_items = items
             self._library_page = int(d.get("page") or 1)
         self.libraryChanged.emit()
+        # 导入/生成期间被推迟的刷新：本次加载结束后补做一次。
+        if getattr(self, "_library_refresh_pending", False) and not self._library_busy:
+            self._library_refresh_pending = False
+            self.refreshLibrary()
 
     @Slot(str)
     def importLibraryItem(self, task_id):
+        if _meshy is None:
+            return
+        if not hasattr(self, "_importing_ids"):
+            self._importing_ids = set()
+        # 用 id 级别去重，而非依赖 item["importing"]——刷新会换掉 item 对象、丢掉该标记，
+        # 否则刷新后可对同一资产重复点击触发双重下载/导入。
+        if task_id in self._importing_ids:
+            return
         item = next((x for x in self._library_items if x.get("id") == task_id), None)
         if not item:
             self.toast.emit(self.tr("找不到该资产"))
             return
-        if _meshy is None:
-            return
-        if item.get("importing"):
-            return   # 已在导入中，忽略重复点击
+        self._importing_ids.add(task_id)
+
+        def _cur():
+            # 始终取"当前列表里这个 id"的对象（刷新后是新对象），取不到回退到原 item。
+            return next((x for x in self._library_items if x.get("id") == task_id), item)
 
         def stage(label):
-            # 在卡片上就地更新导入阶段（worker 线程安全：libraryChanged 跨线程排队）
-            item["importing"] = True
-            item["import_stage"] = label
+            it = _cur()
+            it["importing"] = True
+            it["import_stage"] = label
             self.libraryChanged.emit()
 
         def finish(ok, msg=""):
-            item["importing"] = False
-            item["import_stage"] = ""
+            it = _cur()
+            it["importing"] = False
+            it["import_stage"] = ""
+            self._importing_ids.discard(task_id)
             self.libraryChanged.emit()
             if msg:
                 (self.toast.emit if ok else
@@ -3441,8 +4185,9 @@ class Controller(QObject):
                 args["texture_dir"] = data["texture_dir"]
             res = self._exec_houdini_tool("import_3d_asset", args)
             if isinstance(res, dict) and res.get("success"):
-                item["cached"] = True
-                item["local_glb"] = glb
+                it = _cur()
+                it["cached"] = True
+                it["local_glb"] = glb
                 finish(True, self.tr("已导入") + ": " + os.path.basename(glb))
             else:
                 finish(False, str((res or {}).get("error", "未知错误"))[:600])
@@ -3747,7 +4492,7 @@ class Controller(QObject):
 
     # ---- token display ----
     def _context_limit(self):
-        return CONTEXT_LIMITS.get(self._model_name, 128000)
+        return self._active_model_context()
 
     def _active_tools_for_context(self):
         if not self._session:
@@ -4195,16 +4940,29 @@ class Controller(QObject):
         return True
 
     # ---- confirm mode + ask_question (blocking UI cards) ----
+    def _stop_requested(self):
+        try:
+            return bool(self._session and self._session.client.is_stop_requested())
+        except Exception:
+            return False
+
     def _await_confirm(self, tool_name, kwargs):
         self._int_seq += 1
         cid = "c%d" % self._int_seq
         q = queue.Queue()
         self._interactive[cid] = q
         self._sigConfirm.emit(cid, tool_name, self._confirm_preview(tool_name, kwargs))
+        # 分段等待：每 0.3s 检查一次停止请求，最长 300s。否则用户点 Stop 时这里会一直
+        # 阻塞到 300s 超时（确认卡完全不响应停止），与画廊/批量流的行为不一致。
         try:
-            return bool(q.get(timeout=120))
-        except queue.Empty:
-            return False
+            waited = 0.0
+            while True:
+                try:
+                    return bool(q.get(timeout=0.3))
+                except queue.Empty:
+                    waited += 0.3
+                    if self._stop_requested() or waited >= 300:
+                        return False
         finally:
             self._interactive.pop(cid, None)
 
@@ -4215,10 +4973,19 @@ class Controller(QObject):
         self._interactive[qid] = q
         questions = kwargs.get("questions", []) or []
         self._sigAskQ.emit(qid, json.dumps(questions, default=str))
+        # 分段等待：同 _await_confirm，点 Stop 时能及时退出而不是干等到 300s。
+        ans = {}
+        waited = 0.0
         try:
-            ans = q.get(timeout=300)
-        except queue.Empty:
-            ans = {}
+            while True:
+                try:
+                    ans = q.get(timeout=0.3)
+                    break
+                except queue.Empty:
+                    waited += 0.3
+                    if self._stop_requested() or waited >= 300:
+                        ans = {}
+                        break
         finally:
             self._interactive.pop(qid, None)
         return {"success": True, "result": "用户回答：" + json.dumps(ans, ensure_ascii=False)}
@@ -4297,7 +5064,8 @@ class Controller(QObject):
         return 0
 
     def _confirm_preview(self, tool_name, kwargs):
-        """确认卡片的副标题：对绑定/动画这类计费工具，补一行预计 credits 花费。"""
+        """确认卡片的副标题：尽量给出"生成数量 + 预计 credits 花费"，
+        让用户在点同意前清楚知道这次会生成几个、烧多少（尤其 count>1 的批量）。"""
         base = self._arg_preview(kwargs)
         a = kwargs if isinstance(kwargs, dict) else {}
         extra = ""
@@ -4308,6 +5076,14 @@ class Controller(QObject):
             n = len(acts) if isinstance(acts, (list, tuple)) else 1
             n = max(1, min(n, 10))
             extra = "%d 个动作 · 约 %d credits" % (n, n * 3)
+        elif tool_name in ("meshy_text_to_3d", "meshy_image_to_3d",
+                           "meshy_retexture", "meshy_remesh"):
+            # 这些是可 count>1 批量的计费工具：把数量显式标出来，避免用户以为只生成 1 个。
+            try:
+                cnt = max(1, min(int(a.get("count", 1) or 1), 4))
+            except (TypeError, ValueError):
+                cnt = 1
+            extra = ("将生成 %d 个，均消耗 credits" % cnt) if cnt > 1 else "将消耗 credits"
         if extra:
             return (base + " · " + extra) if base else extra
         return base
