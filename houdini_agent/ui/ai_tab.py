@@ -2372,7 +2372,7 @@ class AITab(
         if provider == 'custom':
             self._open_custom_provider_dialog()
             return
-        names = {'openai': 'OpenAI', 'deepseek': 'DeepSeek', 'glm': 'GLM（智谱AI）', 'openrouter': 'OpenRouter'}
+        names = {'openai': 'OpenAI', 'deepseek': 'DeepSeek', 'glm': 'GLM（智谱AI）', 'openrouter': 'OpenRouter', 'claude': 'Claude (Anthropic)'}
         
         key, ok = QtWidgets.QInputDialog.getText(
             self, f"Set {names.get(provider, provider)} API Key",

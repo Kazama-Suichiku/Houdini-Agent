@@ -32,6 +32,7 @@ class HeaderMixin:
         self.provider_combo.addItem("DeepSeek", 'deepseek')
         self.provider_combo.addItem("GLM", 'glm')
         self.provider_combo.addItem("OpenAI", 'openai')
+        self.provider_combo.addItem("Claude", 'claude')
         self.provider_combo.addItem("Duojie", 'duojie')
         self.provider_combo.addItem("OpenRouter", 'openrouter')
         self.provider_combo.addItem("Custom", 'custom')
@@ -86,6 +87,11 @@ class HeaderMixin:
                 'qwen/qwen3-235b-a22b',
                 'mistralai/mistral-large-2512',
             ],
+            'claude': [  # fallback; dynamically fetched when key is set
+                'claude-opus-4-5',
+                'claude-sonnet-4-5',
+                'claude-haiku-4-5-20251001',
+            ],
             'custom': [],  # 由用户通过配置对话框动态填充
         }
         # Custom provider 的运行时配置（从持久化配置加载）
@@ -116,6 +122,10 @@ class HeaderMixin:
             'glm-5.1': 200000,
             'MiniMax-M2.7': 128000,
             'MiniMax-M2.7-highspeed': 128000,
+            # Claude (Anthropic)
+            'claude-opus-4-5': 200000,
+            'claude-sonnet-4-5': 200000,
+            'claude-haiku-4-5-20251001': 200000,
             # OpenRouter 模型
             'anthropic/claude-sonnet-4.6': 1000000,
             'anthropic/claude-opus-4.6': 1000000,
@@ -160,6 +170,10 @@ class HeaderMixin:
             # Duojie - MiniMax
             'MiniMax-M2.7':               {'supports_prompt_caching': True, 'supports_vision': False},
             'MiniMax-M2.7-highspeed':     {'supports_prompt_caching': True, 'supports_vision': False},
+            # Claude (Anthropic direct)
+            'claude-opus-4-5':            {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-sonnet-4-5':          {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-haiku-4-5-20251001':  {'supports_prompt_caching': True, 'supports_vision': True},
             # OpenRouter 模型
             'anthropic/claude-sonnet-4.6':        {'supports_prompt_caching': True, 'supports_vision': True},
             'anthropic/claude-opus-4.6':          {'supports_prompt_caching': True, 'supports_vision': True},

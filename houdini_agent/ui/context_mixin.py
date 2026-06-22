@@ -285,8 +285,22 @@ class ContextMixin:
 
     def _refresh_models(self, provider: str):
         self.model_combo.clear()
-        # 使用预设的模型列表
         self.model_combo.addItems(self._model_map.get(provider, []))
+        if provider == 'claude':
+            if self.client.has_api_key('claude'):
+                def _fetch_claude():
+                    models = self.client.get_claude_models()
+                    QtCore.QTimer.singleShot(0, lambda: self._on_claude_models_ready(models))
+                threading.Thread(target=_fetch_claude, daemon=True).start()
+
+    def _on_claude_models_ready(self, models: list):
+        """Claude model list loaded in background — update combo if still on claude provider."""
+        if self._current_provider() != 'claude' or not models:
+            return
+        self.model_combo.clear()
+        self.model_combo.addItems(models)
+        self._model_map['claude'] = models
+        self._load_model_preference()
 
     def _update_key_status(self):
         provider = self._current_provider()

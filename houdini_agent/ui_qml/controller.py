@@ -42,6 +42,10 @@ ROLE_PAYLOAD = Qt.UserRole + 2
 
 # Real provider keys + model ids (kept in sync with ui/header.py _model_map)
 MODEL_MAP = {
+    "claude": [
+        "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+        "claude-opus-4-5", "claude-sonnet-4-5",
+    ],
     "duojie": ["claude-opus-4-6-max", "claude-opus-4-6-gemini", "claude-sonnet-4-6",
                "claude-sonnet-4-5", "gemini-3.1-pro", "gemini-3-flash", "glm-5.1", "MiniMax-M2.7"],
     "openrouter": ["anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6",
@@ -53,26 +57,41 @@ MODEL_MAP = {
     "custom": [],
 }
 PROVIDER_LABELS = {
-    "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
+    "claude": "Claude", "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
 CONTEXT_LIMITS = {
+    # Claude (Anthropic direct)
+    "claude-opus-4-8": 200000, "claude-sonnet-4-6": 200000, "claude-haiku-4-5-20251001": 200000,
+    "claude-opus-4-5": 200000, "claude-sonnet-4-5": 200000,
+    # Duojie
     "claude-opus-4-6-max": 200000, "claude-opus-4-6-gemini": 200000,
-    "claude-sonnet-4-6": 200000, "claude-sonnet-4-5": 200000,
     "gemini-3.1-pro": 1048576, "gemini-3-flash": 1048576, "glm-5.1": 200000, "MiniMax-M2.7": 128000,
+    # OpenRouter
     "anthropic/claude-opus-4.6": 1000000, "anthropic/claude-sonnet-4.6": 1000000,
     "anthropic/claude-haiku-4.5": 200000, "openai/gpt-5.2": 400000,
     "google/gemini-3-flash-preview": 1048576, "deepseek/deepseek-v3.2": 163840,
-    "x-ai/grok-4.1-fast": 2000000, "gpt-5.2": 128000, "gpt-5.3-codex": 200000,
+    "x-ai/grok-4.1-fast": 2000000,
+    # OpenAI
+    "gpt-5.2": 128000, "gpt-5.3-codex": 200000,
+    # DeepSeek
     "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-chat": 1048576,
-    "deepseek-reasoner": 1048576, "glm-4.7": 200000,
+    "deepseek-reasoner": 1048576,
+    # GLM
+    "glm-4.7": 200000,
 }
 VISION_MODELS = {
-    "claude-opus-4-6-max", "claude-opus-4-6-gemini", "claude-sonnet-4-6",
-    "claude-sonnet-4-5", "gemini-3.1-pro", "gemini-3-flash",
+    # Claude (Anthropic direct)
+    "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+    "claude-opus-4-5", "claude-sonnet-4-5",
+    # Duojie
+    "claude-opus-4-6-max", "claude-opus-4-6-gemini",
+    "gemini-3.1-pro", "gemini-3-flash",
+    # OpenRouter
     "anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6",
     "anthropic/claude-haiku-4.5", "openai/gpt-5.2",
     "google/gemini-3-flash-preview", "x-ai/grok-4.1-fast",
+    # OpenAI
     "gpt-5.2", "gpt-5.3-codex",
 }
 # tools safe to run off the Qt main thread (no hou.* access)
@@ -974,6 +993,8 @@ class Controller(QObject):
             self.modelChanged.emit()
         if is_custom:
             self._apply_custom_provider(self._custom_provider(v))
+        if v == "claude":
+            self._fetch_claude_models_async()
         self.providerChanged.emit()
         self.tokensChanged.emit()
         self._save_prefs()
@@ -2163,6 +2184,25 @@ class Controller(QObject):
         if meta is not None:
             return bool(meta.get("vision"))
         return self._model_name in VISION_MODELS
+
+    def _fetch_claude_models_async(self):
+        """Fetch available Claude models from the Anthropic API in a background thread."""
+        if not (self._session and self._session.client.has_api_key("claude")):
+            return
+        import threading
+        def _fetch():
+            try:
+                models = self._session.client.get_claude_models()
+                if models and self._provider == "claude":
+                    MODEL_MAP["claude"] = models
+                    for m in models:
+                        VISION_MODELS.add(m)
+                        if m not in CONTEXT_LIMITS:
+                            CONTEXT_LIMITS[m] = 200000
+                    self.modelChanged.emit()
+            except Exception as e:
+                print("[controller] claude model fetch failed:", e)
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def _apply_custom_provider(self, p):
         """把某自定义供应商的 url/key/协议应用到 client（被选中或运行前调用）。"""
