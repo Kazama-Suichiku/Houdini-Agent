@@ -246,8 +246,8 @@ UI_EN = {
     "让助手跨会话记住你的偏好与项目信息。可在「记忆」分区查看与删除。":
         "Let the assistant remember your preferences and project info across chats. View & delete in the Memory section.",
     # 内嵌的规则/插件/记忆面板里用到的文案
-    "编辑": "Edit", "浏览": "Browse", "选择用户技能目录": "Choose user skill folder",
-    "用户技能目录未设置，仅使用内置技能": "No user skill folder set — built-in skills only",
+    "编辑": "Edit", "浏览": "Browse", "选择用户脚本目录": "Choose user script folder",
+    "用户脚本目录未设置，仅使用内置脚本": "No user script folder set — built-in scripts only",
     "插件设置": "Plugin settings", "这个插件没有可配置项": "This plugin has no configurable options",
     # 多供应商管理（模型设置）
     "管理自定义模型供应商，配置后可在聊天时选择使用。":
@@ -1760,9 +1760,9 @@ class Controller(QObject):
                 reload_skills()
             except Exception:
                 pass
-            self.toast.emit("用户技能目录已设置")
+            self.toast.emit("用户脚本目录已设置")
         except Exception as e:
-            self._info("插件管理", "设置技能目录失败：%s" % e)
+            self._info("插件管理", "设置脚本目录失败：%s" % e)
 
     @Slot(result="QVariantMap")
     def memoryStats(self):

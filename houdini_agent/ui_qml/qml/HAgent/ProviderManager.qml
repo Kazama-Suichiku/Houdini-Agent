@@ -62,9 +62,12 @@ Item {
 
     // 小工具组件
     component Field: Rectangle {
+        id: fieldRoot
         property alias text: inp.text
         property string placeholder: ""
         property bool password: false
+        // 仅在用户实际编辑时触发；用它做写回可避免与 text: <model> 的绑定形成回环。
+        signal textEdited()
         implicitWidth: Math.round(120 * Theme.scale)
         implicitHeight: Math.round(34 * Theme.scale)
         radius: Theme.radSm; color: Theme.surface
@@ -79,6 +82,7 @@ Item {
             color: Theme.text
             font.family: Theme.fontMono; font.pixelSize: Theme.fSm
             background: null
+            onTextEdited: fieldRoot.textEdited()
         }
     }
     component FieldLabel: Text {
@@ -202,99 +206,117 @@ Item {
     }
 
     // ====== 编辑/新增态 ======
-    ScrollView {
+    // 标题行与底部动作按钮固定，仅中间表单滚动：模型增多时"保存/取消"始终可见（修复 #31）。
+    ColumnLayout {
         anchors.fill: parent
         visible: pm.editingId !== ""
-        clip: true
-        contentWidth: availableWidth
-        ColumnLayout {
-            width: pm.width
-            spacing: 0
+        spacing: 0
 
-            RowLayout {
-                Layout.fillWidth: true; spacing: 8
-                Text { Layout.fillWidth: true
-                    text: pm.editingId === "new" ? pm.loc("添加模型供应商") : pm.fName
-                    color: Theme.textBright; font.family: Theme.fontDisplay; font.pixelSize: Theme.fLg; elide: Text.ElideRight }
-                Pill { label: pm.loc("取消"); onClicked: pm.editingId = "" }
-            }
-            Text { Layout.fillWidth: true; Layout.topMargin: 4
-                text: pm.loc("配置一个自定义 API 端点和它的模型。")
-                color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fXs; wrapMode: Text.Wrap }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 8
+            Text { Layout.fillWidth: true
+                text: pm.editingId === "new" ? pm.loc("添加模型供应商") : pm.fName
+                color: Theme.textBright; font.family: Theme.fontDisplay; font.pixelSize: Theme.fLg; elide: Text.ElideRight }
+            Pill { label: pm.loc("取消"); onClicked: pm.editingId = "" }
+        }
 
-            FieldLabel { text: pm.loc("名称") }
-            Field { Layout.fillWidth: true; id: fld_name; text: pm.fName; placeholder: "Kimi / GLM / ..."; onTextChanged: pm.fName = text }
-            FieldLabel { text: "Base URL" }
-            Field { Layout.fillWidth: true; id: fld_url; text: pm.fUrl; placeholder: "https://api.example.com/v1"; onTextChanged: pm.fUrl = text }
-            FieldLabel { text: "API Key" }
-            Field { Layout.fillWidth: true; id: fld_key; text: pm.fKey; placeholder: "sk-..."; password: true; onTextChanged: pm.fKey = text }
+        ScrollView {
+            id: editScroll
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.topMargin: 8
+            clip: true
+            contentWidth: availableWidth
 
-            FieldLabel { text: pm.loc("API 格式") }
-            RowLayout {
-                Layout.fillWidth: true; spacing: 6
-                Pill { label: "OpenAI"; active: !pm.fAnthropic; onClicked: pm.fAnthropic = false }
-                Pill { label: "Anthropic"; active: pm.fAnthropic; onClicked: pm.fAnthropic = true }
-                Item { Layout.fillWidth: true }
-            }
+            Item {
+                width: editScroll.availableWidth
+                implicitHeight: formCol.implicitHeight
 
-            FieldLabel { text: pm.loc("模型列表") }
-            Repeater {
-                model: modelModel
-                delegate: RowLayout {
-                    required property int index
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 6
-                    spacing: 6
-                    Field {
-                        Layout.fillWidth: true
-                        text: model.mname; placeholder: pm.loc("模型名")
-                        onTextChanged: modelModel.setProperty(index, "mname", text)
+                ColumnLayout {
+                    id: formCol
+                    width: parent.width
+                    spacing: 0
+
+                    Text { Layout.fillWidth: true; Layout.topMargin: 4
+                        text: pm.loc("配置一个自定义 API 端点和它的模型。")
+                        color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fXs; wrapMode: Text.Wrap }
+
+                    FieldLabel { text: pm.loc("名称") }
+                    Field { Layout.fillWidth: true; id: fld_name; text: pm.fName; placeholder: "Kimi / GLM / ..."; onTextEdited: pm.fName = text }
+                    FieldLabel { text: "Base URL" }
+                    Field { Layout.fillWidth: true; id: fld_url; text: pm.fUrl; placeholder: "https://api.example.com/v1"; onTextEdited: pm.fUrl = text }
+                    FieldLabel { text: "API Key" }
+                    Field { Layout.fillWidth: true; id: fld_key; text: pm.fKey; placeholder: "sk-..."; password: true; onTextEdited: pm.fKey = text }
+
+                    FieldLabel { text: pm.loc("API 格式") }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 6
+                        Pill { label: "OpenAI"; active: !pm.fAnthropic; onClicked: pm.fAnthropic = false }
+                        Pill { label: "Anthropic"; active: pm.fAnthropic; onClicked: pm.fAnthropic = true }
+                        Item { Layout.fillWidth: true }
                     }
-                    Field {
-                        Layout.preferredWidth: Math.round(78 * Theme.scale)
-                        Layout.fillWidth: false
-                        text: model.ctx; placeholder: pm.loc("上下文窗口")
-                        onTextChanged: modelModel.setProperty(index, "ctx", text)
-                    }
-                    ColumnLayout {
-                        spacing: 2
-                        Text { text: pm.loc("图片"); color: Theme.textMute; font.family: Theme.fontMono
-                               font.pixelSize: Theme.fMicro; Layout.alignment: Qt.AlignHCenter }
-                        MiniToggle { on: model.vis === true; onToggled: modelModel.setProperty(index, "vis", !(model.vis === true)) }
+
+                    FieldLabel { text: pm.loc("模型列表") }
+                    Repeater {
+                        model: modelModel
+                        delegate: RowLayout {
+                            required property int index
+                            required property var model
+                            Layout.fillWidth: true
+                            Layout.bottomMargin: 6
+                            spacing: 6
+                            Field {
+                                Layout.fillWidth: true
+                                text: model.mname; placeholder: pm.loc("模型名")
+                                onTextEdited: modelModel.setProperty(index, "mname", text)
+                            }
+                            Field {
+                                Layout.preferredWidth: Math.round(78 * Theme.scale)
+                                Layout.fillWidth: false
+                                text: model.ctx; placeholder: pm.loc("上下文窗口")
+                                onTextEdited: modelModel.setProperty(index, "ctx", text)
+                            }
+                            ColumnLayout {
+                                spacing: 2
+                                Text { text: pm.loc("图片"); color: Theme.textMute; font.family: Theme.fontMono
+                                       font.pixelSize: Theme.fMicro; Layout.alignment: Qt.AlignHCenter }
+                                MiniToggle { on: model.vis === true; onToggled: modelModel.setProperty(index, "vis", !(model.vis === true)) }
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 24; Layout.preferredHeight: 24
+                                radius: Theme.radSm; color: rmMa.containsMouse ? Qt.rgba(0.867, 0.6, 0.6, 0.14) : "transparent"
+                                TrashIcon { anchors.centerIn: parent; size: Math.round(13 * Theme.scale)
+                                            color: rmMa.containsMouse ? Theme.err : Theme.textMute }
+                                MouseArea { id: rmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (modelModel.count > 1) modelModel.remove(index)
+                                               else modelModel.setProperty(index, "mname", "") }
+                            }
+                        }
                     }
                     Rectangle {
-                        Layout.preferredWidth: 24; Layout.preferredHeight: 24
-                        radius: Theme.radSm; color: rmMa.containsMouse ? Qt.rgba(0.867, 0.6, 0.6, 0.14) : "transparent"
-                        TrashIcon { anchors.centerIn: parent; size: Math.round(13 * Theme.scale)
-                                    color: rmMa.containsMouse ? Theme.err : Theme.textMute }
-                        MouseArea { id: rmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: if (modelModel.count > 1) modelModel.remove(index)
-                                       else modelModel.setProperty(index, "mname", "") }
+                        Layout.fillWidth: true
+                        implicitHeight: Math.round(32 * Theme.scale)
+                        radius: Theme.radSm; color: addmMa.containsMouse ? Theme.surface : "transparent"
+                        border.width: 1; border.color: Theme.border
+                        Text { anchors.centerIn: parent; text: "+ " + pm.loc("添加模型"); color: Theme.textDim
+                               font.family: Theme.fontMono; font.pixelSize: Theme.fXs }
+                        MouseArea { id: addmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: modelModel.append({ mname: "", ctx: "128000", vis: false }) }
                     }
+                    Item { Layout.preferredHeight: 12 }
                 }
             }
-            Rectangle {
-                Layout.fillWidth: true
-                implicitHeight: Math.round(32 * Theme.scale)
-                radius: Theme.radSm; color: addmMa.containsMouse ? Theme.surface : "transparent"
-                border.width: 1; border.color: Theme.border
-                Text { anchors.centerIn: parent; text: "+ " + pm.loc("添加模型"); color: Theme.textDim
-                       font.family: Theme.fontMono; font.pixelSize: Theme.fXs }
-                MouseArea { id: addmMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                    onClicked: modelModel.append({ mname: "", ctx: "128000", vis: false }) }
-            }
+        }
 
-            RowLayout {
-                Layout.fillWidth: true; Layout.topMargin: 16
-                Pill {
-                    label: pm.loc("删除"); dashed: true; visible: pm.editingId !== "new"
-                    onClicked: { if (controller) controller.deleteCustomProvider(pm.editingId); pm.editingId = ""; pm.reload() }
-                }
-                Item { Layout.fillWidth: true }
-                Pill { label: pm.loc("取消"); onClicked: pm.editingId = "" }
-                Pill { label: pm.loc("保存"); accent: true; onClicked: pm.submit() }
+        RowLayout {
+            Layout.fillWidth: true; Layout.topMargin: 12
+            Pill {
+                label: pm.loc("删除"); dashed: true; visible: pm.editingId !== "new"
+                onClicked: { if (controller) controller.deleteCustomProvider(pm.editingId); pm.editingId = ""; pm.reload() }
             }
-            Item { Layout.preferredHeight: 12 }
+            Item { Layout.fillWidth: true }
+            Pill { label: pm.loc("取消"); onClicked: pm.editingId = "" }
+            Pill { label: pm.loc("保存"); accent: true; onClicked: pm.submit() }
         }
     }
 }

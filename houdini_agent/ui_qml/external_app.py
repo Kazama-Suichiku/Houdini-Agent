@@ -2,16 +2,17 @@
 """Standalone double-click entry point for Houdini Agent."""
 
 import os
+import threading
 import traceback
 from pathlib import Path
 
 os.environ.setdefault("QML_DISABLE_DISK_CACHE", "1")
 
 try:
-    from PySide6.QtCore import QSettings, QTimer
+    from PySide6.QtCore import QSettings, QTimer, QObject, Signal
     from PySide6.QtWidgets import QApplication, QMainWindow
 except ImportError:
-    from PySide2.QtCore import QSettings, QTimer
+    from PySide2.QtCore import QSettings, QTimer, QObject, Signal
     from PySide2.QtWidgets import QApplication, QMainWindow
 
 from houdini_agent.bridge.client import BridgeClient
@@ -43,8 +44,12 @@ class ExternalWindow(QMainWindow):
         super().closeEvent(event)
 
 
-class ExternalCoordinator:
+class ExternalCoordinator(QObject):
+    # 后台探测线程通过此信号把结果回传到 UI 线程（跨线程 emit 默认走队列连接）。
+    _probe_done = Signal(object)
+
     def __init__(self, win, controller, repo_root):
+        super().__init__(win)
         self.win = win
         self.controller = controller
         self.repo_root = str(repo_root)
@@ -53,9 +58,12 @@ class ExternalCoordinator:
         self.prompted = False
         self.installs = []
         self._running_seen_at_start = False
+        self._probing = False
         self.poll = QTimer(win)
-        self.poll.setInterval(1000)
-        self.poll.timeout.connect(self.check_bridge)
+        self.poll.setInterval(1500)
+        # 周期探测改走非阻塞路径：在后台线程 ping，避免冻结 UI 主线程。
+        self.poll.timeout.connect(self._poll_tick)
+        self._probe_done.connect(self._on_poll_result)
 
     def _log(self, msg):
         try:
@@ -70,9 +78,8 @@ class ExternalCoordinator:
         self.installs = find_houdini_installs()
         self._ensure_packages()
         self._running_seen_at_start = is_houdini_running()
-        if self.check_bridge():
-            return
         self.poll.start()
+        self._poll_tick()  # 立即非阻塞探测一次（结果异步回来）
         if self._running_seen_at_start:
             self.controller.toast.emit("检测到 Houdini 已打开，正在连接 Bridge…")
             QTimer.singleShot(5000, self._maybe_prompt_for_bridge)
@@ -87,11 +94,17 @@ class ExternalCoordinator:
                 print("[external launcher] package install failed:", exc)
 
     def check_bridge(self):
+        """同步探测一次（仅用于用户主动触发的 prompt_relaunch；周期探测走 _poll_tick）。"""
         if self.connected:
             return True
-        info = self.bridge.ping()
-        if not info:
+        if not self.bridge.ping():
             return False
+        return self._attach()
+
+    def _attach(self):
+        """在 UI 线程把已响应的 Bridge 接到 controller。成功返回 True。"""
+        if self.connected:
+            return True
         try:
             session = BridgeAgentSession(self.bridge)
             self.controller.attach_backend_session(session)
@@ -102,6 +115,33 @@ class ExternalCoordinator:
             self._log("Bridge attach failed: %s\n%s" % (exc, traceback.format_exc()))
             self.controller.toast.emit("Bridge 已响应，但 Agent 后端初始化失败，正在重试…")
             return False
+
+    def _poll_tick(self):
+        """周期触发：在【后台线程】做可能阻塞的 ping（连到错误服务器时最长堵 1 秒），
+        避免冻结 UI 主线程——这是之前端口被占用时 GUI 卡死的根因。"""
+        if self.connected or self._probing:
+            return
+        self._probing = True
+
+        def worker():
+            info = None
+            try:
+                info = self.bridge.ping()
+            except Exception:
+                info = None
+            try:
+                self._probe_done.emit(info)   # 跨线程：队列连接，槽在 UI 线程执行
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, name="HAgentBridgeProbe", daemon=True).start()
+
+    def _on_poll_result(self, info):
+        """运行在 UI 线程：应用后台探测结果。"""
+        self._probing = False
+        if self.connected or not info:
+            return
+        self._attach()
 
     def _maybe_prompt_for_bridge(self):
         if not self.connected:

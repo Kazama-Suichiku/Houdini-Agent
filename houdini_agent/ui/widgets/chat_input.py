@@ -20,7 +20,7 @@ SLASH_COMMANDS = [
     # ── Houdini 场景 ──
     ("network",   "🌐",  "读取网络",     "Read Network",     "读取当前网络结构",           "Read current network structure","scene"),
     ("selection", "👆",  "读取选中",     "Read Selection",   "读取当前选中节点信息",       "Read selected node info",      "scene"),
-    ("skills",    "⚡",  "技能列表",     "List Skills",      "列出所有可用 Skill",         "List all available skills",    "scene"),
+    ("skills",    "⚡",  "脚本列表",     "List Scripts",     "列出所有可用脚本",           "List all available scripts",   "scene"),
     # ── 工具 ──
     ("status",    "📊",  "系统状态",     "System Status",    "查看记忆/成长/上下文统计",   "View memory/growth/context stats", "tool"),
     ("export",    "💾",  "导出训练",     "Export Training",  "导出对话为训练数据",         "Export conversation as training data", "tool"),
