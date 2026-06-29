@@ -2710,12 +2710,12 @@ class AITab(
         self._on_read_selection()
 
     def _slash_skills(self):
-        """/skills — 列出所有技能"""
+        """/skills — 列出所有脚本"""
         result = self.mcp._tool_list_skills({})
         self._add_user_message("[/skills]")
         resp = self._add_ai_response()
         if result.get('success'):
-            resp.set_content(result.get('result', '无可用 Skill'))
+            resp.set_content(result.get('result', '无可用脚本'))
         else:
             resp.set_content(f"❌ {result.get('error', '未知错误')}")
         resp.finalize()

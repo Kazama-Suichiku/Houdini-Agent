@@ -74,7 +74,7 @@ Item {
             Item { Layout.preferredWidth: 4 }
             Pill { label: mc.mode === "plugins" ? "Plugins" : "Episodic"; active: mc.tab === 0; onClicked: { mc.tab = 0; mc.refresh() } }
             Pill { label: mc.mode === "plugins" ? "Tools" : "Semantic"; active: mc.tab === 1; onClicked: { mc.tab = 1; mc.refresh() } }
-            Pill { label: mc.mode === "plugins" ? "Skills" : "Procedural"; active: mc.tab === 2; onClicked: { mc.tab = 2; mc.refresh() } }
+            Pill { label: mc.mode === "plugins" ? "Scripts" : "Procedural"; active: mc.tab === 2; onClicked: { mc.tab = 2; mc.refresh() } }
             Item { Layout.fillWidth: true }
             Pill { visible: mc.mode === "plugins"; label: "↻ " + mc.loc("重载"); onClicked: { if (controller) controller.reloadAllPlugins(); mc.refresh() } }
             Pill { visible: mc.mode === "plugins"; label: mc.loc("打开插件目录"); onClicked: if (controller) controller.openPluginsFolder() }
@@ -90,7 +90,7 @@ Item {
                 anchors.fill: parent; anchors.leftMargin: 4; anchors.rightMargin: 4; spacing: 8
                 Text {
                     Layout.fillWidth: true
-                    text: mc.skillDir ? mc.skillDir : mc.loc("用户技能目录未设置，仅使用内置技能")
+                    text: mc.skillDir ? mc.skillDir : mc.loc("用户脚本目录未设置，仅使用内置脚本")
                     color: mc.skillDir ? Theme.textDim : Theme.textMute
                     elide: Text.ElideMiddle
                     font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
@@ -327,7 +327,7 @@ Item {
                 radius: Theme.radSm
                 Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.right: ctrl.left; anchors.rightMargin: 10; anchors.top: parent.top; anchors.topMargin: 10; text: modelData.name || ""; color: Theme.textBright; elide: Text.ElideRight; font.family: Theme.fontBody; font.pixelSize: Theme.fMd }
                 Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.right: ctrl.left; anchors.rightMargin: 10; anchors.top: parent.top; anchors.topMargin: 32; text: modelData.description || ""; color: Theme.textDim; elide: Text.ElideRight; font.family: Theme.fontBody; font.pixelSize: Theme.fSm }
-                Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.bottom: parent.bottom; anchors.bottomMargin: 8; text: mc.tab === 0 ? ((modelData.version || "") + "  " + (modelData.author || "")) : mc.tab === 1 ? ((modelData.source || "tool").toUpperCase()) : "SKILL"; color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
+                Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.bottom: parent.bottom; anchors.bottomMargin: 8; text: mc.tab === 0 ? ((modelData.version || "") + "  " + (modelData.author || "")) : mc.tab === 1 ? ((modelData.source || "tool").toUpperCase()) : "SCRIPT"; color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
                 Row {
                     id: ctrl
                     anchors.right: parent.right; anchors.rightMargin: 10
@@ -388,7 +388,7 @@ Item {
 
     FolderDialog {
         id: skillDirDialog
-        title: mc.loc("选择用户技能目录")
+        title: mc.loc("选择用户脚本目录")
         onAccepted: { if (controller) controller.setUserSkillDir("" + selectedFolder); mc.refresh() }
     }
 
