@@ -9,7 +9,7 @@ import threading
 import traceback
 from pathlib import Path
 
-from .client import DEFAULT_HOST, DEFAULT_PORT
+from .client import DEFAULT_HOST, DEFAULT_PORT, port_file
 
 _SERVER = None
 _THREAD = None
@@ -271,15 +271,50 @@ class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 
+def _write_port_file(port):
+    """把实际监听端口写到发现文件，客户端据此连接（端口被占用自动顺延时仍能连上）。"""
+    try:
+        p = port_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(port), encoding="utf-8")
+    except Exception as e:
+        _log("write port file failed: %s" % e)
+
+
 def start_bridge(host=DEFAULT_HOST, port=None):
-    """Start the Houdini bridge once and return the server object."""
+    """Start the Houdini bridge once and return the server object.
+
+    端口被占用（如其它程序占了默认端口，Windows 上表现为 WinError 10013/10048）时，
+    自动顺延到下一个可用端口，并把实际端口写入发现文件供客户端连接；
+    全部尝试失败则打印清晰提示而非直接抛错。"""
     global _SERVER, _THREAD
     if _SERVER is not None:
         return _SERVER
-    port = int(port or os.environ.get("HAGENT_BRIDGE_PORT", DEFAULT_PORT))
-    _SERVER = _Server((host, port), _Handler)
+    base = int(port or os.environ.get("HAGENT_BRIDGE_PORT", DEFAULT_PORT))
+    candidates = [base] + [base + i for i in range(1, 21)]
+    last_err = None
+    bound = None
+    for p in candidates:
+        try:
+            _SERVER = _Server((host, p), _Handler)
+            bound = p
+            break
+        except OSError as e:
+            last_err = e
+            _SERVER = None
+            continue
+    if _SERVER is None:
+        msg = ("[Houdini Agent] 无法启动 Bridge：端口 %s 起连续 %d 个端口都被占用或被系统禁止 (%s)。"
+               "可设置环境变量 HAGENT_BRIDGE_PORT 指定一个空闲端口后重启 Houdini。"
+               % (base, len(candidates), last_err))
+        _log(msg)
+        print(msg)
+        return None
+    _write_port_file(bound)
     _THREAD = threading.Thread(target=_SERVER.serve_forever, name="HoudiniAgentBridge", daemon=True)
     _THREAD.start()
-    _log("Bridge listening on %s:%s root=%s" % (host, port, Path(__file__).resolve().parents[2]))
-    print("[Houdini Agent] Bridge listening on %s:%s" % (host, port))
+    _log("Bridge listening on %s:%s root=%s" % (host, bound, Path(__file__).resolve().parents[2]))
+    print("[Houdini Agent] Bridge listening on %s:%s" % (host, bound))
+    if bound != base:
+        print("[Houdini Agent] （默认端口 %s 被占用，已自动改用 %s）" % (base, bound))
     return _SERVER
