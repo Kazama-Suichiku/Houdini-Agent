@@ -63,14 +63,20 @@ def _init_db():
                 credits     INTEGER,
                 prompt      TEXT,
                 env         TEXT,
+                account_hash TEXT,
+                channel     TEXT,
+                os          TEXT,
+                session_id  TEXT,
                 received_at INTEGER
             )
         """)
-        # 迁移：老库没有 env 列则补上（历史行 env=NULL，report 视为 prod）
+        # 迁移：缺列则补（历史行为 NULL；env=NULL 在 report 里视为 prod）
         cols = [r[1] for r in conn.execute("PRAGMA table_info(events)")]
-        if "env" not in cols:
-            conn.execute("ALTER TABLE events ADD COLUMN env TEXT")
+        for col in ("env", "account_hash", "channel", "os", "session_id"):
+            if col not in cols:
+                conn.execute("ALTER TABLE events ADD COLUMN %s TEXT" % col)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_install ON events(install_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_account ON events(account_hash)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)")
         conn.commit()
@@ -93,7 +99,8 @@ def _ingest(events):
         rows.append((
             eid, e.get("install_id"), e.get("ts"), e.get("version"),
             e.get("kind"), e.get("task_id"), e.get("ai_model"), e.get("mode"),
-            e.get("status"), credits, e.get("prompt"), e.get("env"), now,
+            e.get("status"), credits, e.get("prompt"), e.get("env"),
+            e.get("account_hash"), e.get("channel"), e.get("os"), e.get("session_id"), now,
         ))
     if not rows:
         return 0
@@ -102,8 +109,8 @@ def _ingest(events):
         conn.executemany(
             "INSERT OR IGNORE INTO events "
             "(event_id, install_id, ts, version, kind, task_id, ai_model, mode, "
-            " status, credits, prompt, env, received_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            " status, credits, prompt, env, account_hash, channel, os, session_id, received_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
         return conn.total_changes - before
 
@@ -134,20 +141,26 @@ def _report(days=30):
     out = {"now": now, "window_days": days}
     with _db_lock, _connect() as conn:
         cur = conn.cursor()
-        # 概览
-        tc, te, ins = cur.execute(
-            "SELECT COALESCE(SUM(credits),0), COUNT(*), COUNT(DISTINCT install_id) FROM events"
+        # 概览（distinct_accounts 忽略无 key 的 NULL —— 即真实付费账号数）
+        tc, te, ins, acc = cur.execute(
+            "SELECT COALESCE(SUM(credits),0), COUNT(*), COUNT(DISTINCT install_id), "
+            "COUNT(DISTINCT account_hash) FROM events"
         ).fetchone()
-        out["overview"] = {"total_credits": tc, "total_events": te, "distinct_installs": ins}
+        out["overview"] = {"total_credits": tc, "total_events": te,
+                           "distinct_installs": ins, "distinct_accounts": acc}
 
-        # 活跃用户：按 ts 落在最近 N 天窗口内的去重 install
-        active = {}
+        # 活跃用户：按 ts 落在最近 N 天窗口内去重（install 维度 + account 维度）
+        active, active_acc = {}, {}
         for label, win in (("dau", 1), ("wau", 7), ("mau", 30)):
-            n = cur.execute(
+            active[label] = cur.execute(
                 "SELECT COUNT(DISTINCT install_id) FROM events WHERE ts >= ?",
                 (now - win * DAY,)).fetchone()[0]
-            active[label] = n
+            active_acc[label] = cur.execute(
+                "SELECT COUNT(DISTINCT account_hash) FROM events "
+                "WHERE account_hash IS NOT NULL AND ts >= ?",
+                (now - win * DAY,)).fetchone()[0]
         out["active_installs"] = active
+        out["active_accounts"] = active_acc      # 更接近"真实活跃付费用户"
 
         # 按天趋势（最近 days 天）
         daily = []
@@ -181,6 +194,21 @@ def _report(days=30):
                 "COUNT(DISTINCT install_id) FROM events GROUP BY COALESCE(env,'prod')"):
             by_env[env] = {"events": n, "credits": cr, "installs": ins3}
         out["by_env"] = by_env
+
+        # 按渠道（frozen 打包版 / source 源码运行；帮助区分正式使用与开发自测）
+        by_channel = {}
+        for ch, n, cr, ins4 in cur.execute(
+                "SELECT COALESCE(channel,'?'), COUNT(*), COALESCE(SUM(credits),0), "
+                "COUNT(DISTINCT install_id) FROM events GROUP BY COALESCE(channel,'?')"):
+            by_channel[ch] = {"events": n, "credits": cr, "installs": ins4}
+        out["by_channel"] = by_channel
+
+        # 按操作系统
+        by_os = {}
+        for osname, n in cur.execute(
+                "SELECT COALESCE(os,'?'), COUNT(*) FROM events GROUP BY COALESCE(os,'?')"):
+            by_os[osname] = n
+        out["by_os"] = by_os
 
         # Top 安装（含各自最新版本）
         # 注意：先 fetchall 物化外层结果，再用独立游标做子查询——
@@ -347,10 +375,11 @@ async function load(){
 }
 function render(d){
   const root=$('#root'); root.innerHTML='';
-  const o=d.overview, a=d.active_installs;
+  const o=d.overview, a=d.active_installs, aa=d.active_accounts||{};
   const cards=el('div',{className:'cards'});
   [['总 credits',o.total_credits],['总任务',o.total_events],['安装数',o.distinct_installs],
-   ['DAU',a.dau],['WAU',a.wau],['MAU',a.mau]].forEach(([k,v])=>{
+   ['付费账号数',o.distinct_accounts],['DAU(账号)',aa.dau],['WAU(账号)',aa.wau],['MAU(账号)',aa.mau],
+   ['DAU(安装)',a.dau],['WAU(安装)',a.wau],['MAU(安装)',a.mau]].forEach(([k,v])=>{
     const c=el('div',{className:'c'});c.appendChild(el('div',{className:'k',textContent:k}));
     c.appendChild(el('div',{className:'v',textContent:fmt(v)}));cards.appendChild(c)});
   root.appendChild(cards);
@@ -364,6 +393,12 @@ function render(d){
 
   root.appendChild(sect('按 env（仅呈现，未剔除）', tbl(['env','任务','credits','安装'],
     Object.entries(d.by_env).map(([k,v])=>[k,v.events,fmt(v.credits),v.installs]))));
+
+  if(d.by_channel) root.appendChild(sect('按渠道（frozen 打包 / source 源码）', tbl(['channel','任务','credits','安装'],
+    Object.entries(d.by_channel).map(([k,v])=>[k,v.events,fmt(v.credits),v.installs]))));
+
+  if(d.by_os) root.appendChild(sect('按系统', tbl(['os','任务'],
+    Object.entries(d.by_os).map(([k,v])=>[k,v]))));
 
   root.appendChild(sect('按能力', tbl(['kind','任务','credits'],
     Object.entries(d.by_kind).map(([k,v])=>[k,v.events,fmt(v.credits)]))));
