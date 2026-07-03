@@ -287,6 +287,12 @@ class MeshyClient:
                 last = prog
             if status in _TERMINAL:
                 if status != "SUCCEEDED":
+                    # 失败/取消也记一条（status 非 SUCCEEDED），用于统计成功率；埋点绝不影响主流程
+                    try:
+                        from . import telemetry
+                        telemetry.record_task(kind, task, status=status)
+                    except Exception:
+                        pass
                     err = (task.get("task_error") or {}).get("message") or status
                     raise MeshyError(_friendly_task_error(status, err, kind))
                 # 用量埋点：所有计费任务都从这里终态返回（埋点绝不影响主流程）
