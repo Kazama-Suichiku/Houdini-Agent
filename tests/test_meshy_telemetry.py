@@ -52,11 +52,46 @@ def test_prompt_truncated(telemetry_mod, monkeypatch):
 
 def test_install_id_stable_and_persisted(telemetry_mod):
     a = telemetry_mod.install_id()
-    telemetry_mod._install_id_cache[0] = None      # 清缓存，强制从 ini 再读
+    telemetry_mod._install_id_cache[0] = None      # 清缓存，强制从磁盘再读
     b = telemetry_mod.install_id()
     assert a == b
-    cfg, _ = cu.load_config("ai", dcc_type="houdini")
-    assert cfg.get("telemetry_install_id") == a
+    # 新行为：install_id 持久化在用户级文件（跨源码/打包/重装稳定），不再写进 ini
+    path = os.path.join(telemetry_mod._user_state_dir(), "install_id")
+    with open(path, encoding="utf-8") as f:
+        assert f.read().strip() == a
+
+
+def test_event_has_new_dimensions(telemetry_mod):
+    ev = telemetry_mod._build_event("image-to-3d", {"id": "z", "consumed_credits": 30})
+    for f in ("version", "env", "channel", "session_id", "os", "account_hash"):
+        assert f in ev
+    assert ev["version"] != "1.0.0"                # 真实版本，不再写死
+    assert ev["channel"] in ("frozen", "source")
+    assert ev["env"] in ("dev", "prod")
+
+
+def test_account_hash_from_key_not_leaking(telemetry_mod, monkeypatch):
+    import hashlib
+    import hmac
+    monkeypatch.setenv("MESHY_API_KEY", "sk-secret-xyz")
+    telemetry_mod._account_hash_cache[0] = None
+    h = telemetry_mod.account_hash()
+    assert h == hmac.new(telemetry_mod._ACCOUNT_SALT, b"sk-secret-xyz",
+                         hashlib.sha256).hexdigest()[:16]
+    assert "sk-secret-xyz" not in (h or "")        # 绝不泄露 key 本身
+
+
+def test_account_hash_none_without_key(telemetry_mod):
+    telemetry_mod._account_hash_cache[0] = None
+    assert telemetry_mod.account_hash() is None     # 无 key 时为 None（clean_meshy_env 已清 key）
+
+
+def test_record_failed_task_keeps_status(telemetry_mod):
+    telemetry_mod.record_task("text-to-3d", {"id": "failtask"}, status="FAILED")
+    telemetry_mod._wait_writes()
+    lines = _read_spool_lines(telemetry_mod)
+    assert len(lines) == 1
+    assert json.loads(lines[0])["status"] == "FAILED"
 
 
 def test_is_enabled_default_true(telemetry_mod):
