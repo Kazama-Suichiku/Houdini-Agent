@@ -60,20 +60,24 @@ def _hou_stub():
 
 
 @pytest.fixture
-def telemetry_mod(monkeypatch):
+def telemetry_mod(monkeypatch, tmp_path):
     """返回隔离好的 telemetry 模块：
     - requests 设为真值哨兵（让 is_enabled 不因测试环境缺 requests 而误判为关闭）
     - _post 打桩为捕获器，绝不发真实请求
-    - 重置进程级状态（_seen_tasks / install id 缓存 / 上传线程）
+    - 重置进程级状态（_seen_tasks / install id / account_hash / version 缓存 / 上传线程）
+    - install_id 的用户级目录重定向到临时目录（不碰真实 %APPDATA%/~/.config）
     - 阻止后台上传线程启动
     """
     from houdini_agent.meshy import telemetry as t
 
     monkeypatch.setattr(t, "requests", object())     # 真值即可，_post 已被打桩
+    monkeypatch.setattr(t, "_user_state_dir", lambda: str(tmp_path / "userstate"))
     t._seen_tasks.clear()
     t._seen_order.clear()
     t._write_threads.clear()
     t._install_id_cache[0] = None
+    t._account_hash_cache[0] = None
+    t._app_version_cache[0] = None
     t._uploader[0] = None
     monkeypatch.setattr(t, "_ensure_uploader", lambda: None)
 

@@ -15,8 +15,11 @@ Meshy 用量埋点 —— 记录每次实际消耗的 credits 并异步上报到
   - 可关闭：环境变量 HAGENT_TELEMETRY_OFF=1 或 ini telemetry_optout:1。
 """
 
+import hashlib
+import hmac
 import json
 import os
+import platform
 import sys
 import threading
 import time
@@ -38,7 +41,12 @@ from shared.common_utils import load_config, save_config, get_cache_dir
 # ---------------------------------------------------------------- 配置
 
 AGENT = "houdini-agent"
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.0.0"          # 兜底版本（读不到 VERSION 文件时用）
+
+# 每次进程启动生成一次，用于区分同一安装的不同启动会话
+_SESSION_ID = uuid.uuid4().hex
+# account_hash 的盐：把 Meshy API Key 单向哈希成稳定去重标识用，绝不上报 key 本身
+_ACCOUNT_SALT = b"ha-telemetry/account/v1"
 
 # 默认上报端点（沿用项目主站，/api 反代到本地后端 127.0.0.1:8000）
 DEFAULT_URL = "https://houdini-agent.com/api/telemetry"
@@ -114,21 +122,105 @@ def send_prompt_enabled():
     return False
 
 
+_app_version_cache = [None]
+
+
+def app_version():
+    """真实 app 版本（读 VERSION 文件；打包后取 _MEIPASS，源码取仓库根）。
+    此前这里写死 '1.0.0'，导致埋点分不出版本——现在上报真实版本。"""
+    if _app_version_cache[0]:
+        return _app_version_cache[0]
+    v = ""
+    roots = []
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        roots.append(mei)
+    roots.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    for r in roots:
+        try:
+            with open(os.path.join(r, "VERSION"), "r", encoding="utf-8") as f:
+                s = f.read().strip()
+            if s:
+                v = s.splitlines()[0].strip()
+                break
+        except Exception:
+            pass
+    v = v or AGENT_VERSION
+    _app_version_cache[0] = v
+    return v
+
+
+def _channel():
+    """运行渠道：打包 exe(frozen) 还是源码(source)。"""
+    return "frozen" if (getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None)) else "source"
+
+
+def _env():
+    """环境维度：显式 env 覆盖 > 源码=dev > 打包=prod。仅作维度呈现，不做任何剔除。"""
+    for var in ("HAGENT_TELEMETRY_ENV", "DCC_AI_TELEMETRY_ENV"):
+        v = (os.environ.get(var) or "").strip().lower()
+        if v:
+            return v
+    return "prod" if _channel() == "frozen" else "dev"
+
+
+_account_hash_cache = [None]
+
+
+def account_hash():
+    """把 Meshy API Key 单向哈希成稳定去重标识（跨机器/重装识别同一付费账号）。
+    只上报 16 位哈希前缀，【绝不上报 key 本身】；无 key 时返回 None。"""
+    if _account_hash_cache[0]:
+        return _account_hash_cache[0]
+    key = ""
+    try:
+        from . import config as _mcfg
+        key = (_mcfg.get_api_key() or "").strip()
+    except Exception:
+        key = (os.environ.get("MESHY_API_KEY") or "").strip()
+    h = ""
+    if key:
+        try:
+            h = hmac.new(_ACCOUNT_SALT, key.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+        except Exception:
+            h = ""
+    if h:
+        _account_hash_cache[0] = h        # 只缓存成功结果；无 key 时不缓存，下次可重算
+    return h or None
+
+
+def _user_state_dir():
+    """用户级状态目录（跨"源码/打包/重装"稳定，不随构建目录变化）。"""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "HoudiniAgent")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "houdini-agent")
+
+
 _install_id_cache = [None]
 
 
 def install_id():
-    """匿名安装 ID：首次随机生成并落盘，之后稳定不变。"""
+    """匿名安装 ID：存用户级目录，跨源码/打包/重装稳定。
+    迁移：用户级文件不存在时，沿用旧 ini 里的 install_id，保证老用户身份连续（不被算成新用户）。"""
     if _install_id_cache[0]:
         return _install_id_cache[0]
-    cfg, _ = load_config("ai", dcc_type="houdini")
-    cfg = cfg or {}
-    iid = (cfg.get(_CFG_INSTALL_KEY) or "").strip()
+    path = os.path.join(_user_state_dir(), "install_id")
+    iid = ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            iid = f.read().strip()
+    except Exception:
+        iid = ""
     if not iid:
-        iid = uuid.uuid4().hex
-        cfg[_CFG_INSTALL_KEY] = iid
+        # 迁移旧的 ini 内 install_id（保持身份连续），没有则新生成
+        cfg, _ = load_config("ai", dcc_type="houdini")
+        iid = ((cfg or {}).get(_CFG_INSTALL_KEY) or "").strip() or uuid.uuid4().hex
         try:
-            save_config("ai", cfg, dcc_type="houdini")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(iid)
         except Exception:
             pass
     _install_id_cache[0] = iid
@@ -173,7 +265,7 @@ def _extract_prompt(task):
     return p[:_PROMPT_MAX] if len(p) > _PROMPT_MAX else p
 
 
-def _build_event(kind, task):
+def _build_event(kind, task, status="SUCCEEDED"):
     tid = str(task.get("id") or task.get("task_id") or "")
     credits = task.get("consumed_credits")
     try:
@@ -184,14 +276,19 @@ def _build_event(kind, task):
     ev = {
         "event_id": uuid.uuid4().hex,
         "install_id": install_id(),
+        "account_hash": account_hash(),     # 同一付费账号稳定去重（不含 key 本身）
         "ts": int(time.time()),
         "agent": AGENT,
-        "version": AGENT_VERSION,
+        "version": app_version(),           # 真实 app 版本（不再写死 1.0.0）
+        "env": _env(),                      # dev / prod（仅维度，不剔除）
+        "channel": _channel(),              # frozen / source
+        "session_id": _SESSION_ID,          # 本次启动会话
+        "os": platform.system() or None,    # Windows / Darwin / Linux
         "kind": kind,                       # text-to-3d / image-to-3d / ...
         "task_id": tid,
         "ai_model": task.get("ai_model"),
         "mode": task.get("mode"),           # text-to-3d 的 preview/refine
-        "status": "SUCCEEDED",
+        "status": status,                   # SUCCEEDED / FAILED / CANCELED
         "credits": credits,
         "prompt_len": len(prompt_text),     # 始终上报长度（无隐私），便于粗略分析
     }
@@ -210,8 +307,9 @@ def _append_spool(event):
             f.write(line + "\n")
 
 
-def record_task(kind, task):
-    """采集一次成功任务的用量。任何异常都吞掉——埋点绝不能影响生成主流程。
+def record_task(kind, task, status="SUCCEEDED"):
+    """采集一次任务的用量（终态）。status 默认 SUCCEEDED，失败/取消也可记以便看成功率。
+    任何异常都吞掉——埋点绝不能影响生成主流程。
 
     本函数在 client.wait() 的生成主流程线程里被同步调用，因此只做最廉价的内存
     去重判断，落盘/上传放到后台线程，避免磁盘 IO 拖慢生成结果返回（#32）。"""
@@ -223,7 +321,7 @@ def record_task(kind, task):
             with _lock:
                 if tid in _seen_tasks:
                     return
-        th = threading.Thread(target=_persist_task, args=(kind, task, tid),
+        th = threading.Thread(target=_persist_task, args=(kind, task, tid, status),
                               name="meshy-telemetry-write", daemon=True)
         with _lock:
             _write_threads.append(th)
@@ -236,13 +334,13 @@ def record_task(kind, task):
             pass
 
 
-def _persist_task(kind, task, tid):
+def _persist_task(kind, task, tid, status="SUCCEEDED"):
     """后台线程：判定开关 → 落盘 → 落盘成功后再标记 seen（#30：落盘失败不标记，
     下次仍可重试，不会永久漏报）→ 唤起上传线程。"""
     try:
         if not is_enabled():
             return
-        _append_spool(_build_event(kind, task))
+        _append_spool(_build_event(kind, task, status))
         if tid:
             with _lock:
                 _mark_seen_locked(tid)
