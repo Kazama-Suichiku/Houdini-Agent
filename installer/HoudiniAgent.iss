@@ -43,6 +43,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; 没有管理员权限时允许用户改装到个人目录
 PrivilegesRequiredOverridesAllowed=dialog
+; 应用内一键更新：若旧进程仍占用文件则请求关闭；装完由 [Run] 重启
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -62,5 +65,7 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-; 安装结束后可选立即启动
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; 安装结束后启动：交互安装显示复选框（默认勾选）；静默安装（应用内一键更新）
+; 也会执行——这是升级后自动重启应用的机制，故不加 skipifsilent。
+; postinstall 自带 runasoriginaluser：即使安装器提权，应用也以普通权限重启。
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall

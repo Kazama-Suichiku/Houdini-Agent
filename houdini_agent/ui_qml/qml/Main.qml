@@ -42,6 +42,7 @@ Rectangle {
         }
 
         // 更新提示横幅 —— 紧贴输入框上方（沿用 1.5 的“输入区域上方”位置）
+        // updateState: available（可一键更新）/ downloading（显示进度、禁止关闭）/ ready
         Rectangle {
             Layout.fillWidth: true
             visible: controller && controller.updateText.length > 0
@@ -49,16 +50,29 @@ Rectangle {
             color: Theme.accentSoft
             Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.accentLine }
             Row {
-                anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 12; spacing: 8
+                anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 12; spacing: 10
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 70
+                    width: parent.width - updateBtn.width - 56
                     text: controller ? controller.updateText : ""
                     color: Theme.accent; font.family: Theme.fontBody; font.pixelSize: Theme.fXs
                     elide: Text.ElideRight
                 }
+                Rectangle {
+                    id: updateBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: controller && controller.updateState === "available"
+                    width: visible ? updateBtnLabel.implicitWidth + 22 : 0
+                    height: 22; radius: 11
+                    color: "transparent"; border.width: 1; border.color: Theme.accent
+                    Text { id: updateBtnLabel; anchors.centerIn: parent; text: "立即更新"
+                           color: Theme.accent; font.family: Theme.fontBody; font.pixelSize: Theme.fXs }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: if (controller) controller.startUpdate() }
+                }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
+                    visible: !controller || controller.updateState !== "downloading"
                     text: "✕"; color: Theme.textMute; font.pixelSize: Theme.fSm
                     MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor
                         onClicked: if (controller) controller.dismissUpdate() }
