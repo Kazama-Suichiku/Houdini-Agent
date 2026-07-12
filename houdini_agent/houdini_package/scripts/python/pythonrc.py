@@ -8,11 +8,12 @@ import sys
 def _diag(msg):
     """诊断日志：pythonrc 是否被执行、bridge 启动是否失败，都落到 bridge.log。"""
     try:
+        import time
         from pathlib import Path
         p = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "HoudiniAgent" / "bridge.log"
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:
-            f.write("[pythonrc] " + str(msg).rstrip() + "\n")
+            f.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + "[pythonrc] " + str(msg).rstrip() + "\n")
     except Exception:
         pass
 

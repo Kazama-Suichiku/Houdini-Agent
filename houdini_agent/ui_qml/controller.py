@@ -79,16 +79,19 @@ VISION_MODELS = {
 BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
            "list_skills", "search_memory", "execute_shell"}
 
-# 经 bridge 调 Houdini 侧工具时，若 Houdini 已关闭/断开，返回这条而不是卡超时或抛原始 socket 错误
-_BRIDGE_LOST_MSG = ("Houdini 连接已断开（可能已关闭 Houdini 或 Bridge 未运行）。"
-                    "当前无法读取或修改场景，请重新打开 Houdini 后重试。")
+# 经 bridge 调 Houdini 侧工具时，若 Houdini 已关闭/断开（且自动扫描重连也失败），
+# 返回这条而不是卡超时或抛原始 socket 错误——并直接告诉模型有哪些自救工具可用。
+_BRIDGE_LOST_MSG = ("Houdini 连接已断开（可能已关闭 Houdini 或 Bridge 未运行），当前无法读取或修改场景。"
+                    "可先调用 check_houdini_connection 排查原因，再按其 advice 用 repair_houdini_connection "
+                    "修复（reconnect / reinstall_package / launch_houdini）。聊天与 Meshy 生成不受影响。")
 
 # read-only tools available during the Plan planning phase
 PLAN_READONLY = {"get_network_structure", "get_node_parameters", "list_children",
                  "get_node_inputs", "search_node_types", "semantic_search_nodes",
                  "read_selection", "check_errors", "search_local_doc",
                  "get_houdini_node_doc", "web_search", "fetch_webpage",
-                 "search_memory", "list_skills", "capture_viewport"}
+                 "search_memory", "list_skills", "capture_viewport",
+                 "check_houdini_connection"}
 
 try:
     from houdini_agent.utils.plan_manager import (
@@ -97,9 +100,11 @@ except Exception:
     PLAN_TOOL_CREATE = PLAN_TOOL_UPDATE_STEP = PLAN_TOOL_ASK_QUESTION = None
 
 # tools that require user approval when confirm mode is on
+# （repair_houdini_connection 可能启动 Houdini 进程，确认模式下应征得同意）
 CONFIRM_TOOLS = {"create_node", "create_nodes_batch", "create_wrangle_node", "delete_node",
                  "set_node_parameter", "batch_set_parameters", "connect_nodes", "copy_node",
-                 "execute_python", "execute_shell", "save_hip", "run_skill"}
+                 "execute_python", "execute_shell", "save_hip", "run_skill",
+                 "repair_houdini_connection"}
 
 # Meshy 集成（自包含包，import 即自注册到 ToolRegistry）。
 # 网络工具在 app 侧后台线程执行；生成类工具消耗 credits，纳入确认门。
@@ -535,6 +540,8 @@ class Controller(QObject):
     meshyAccountChanged = Signal()   # connection / balance changed
     # worker -> main thread, BLOCKING (Houdini tool execution)
     _sigToolExec = Signal(str, str)
+    # worker -> main thread: 连接自愈/修复成功后刷新上下文条（场景路径/选择）
+    _sigCtxRefresh = Signal()
 
     def __init__(self, model, use_backend=False, parent=None):
         super().__init__(parent)
@@ -680,6 +687,7 @@ class Controller(QObject):
         self._sigPreview.connect(self._ui_preview)
         self._sigPlanStream.connect(self._ui_plan_stream)
         self._sigInfo.connect(self._info)
+        self._sigCtxRefresh.connect(self.refreshContext)
 
         # coalesce UI flushes to ~25fps (avoids O(N^2) re-render on long runs)
         self._flush_timer = QTimer(self)
@@ -727,8 +735,9 @@ class Controller(QObject):
         except Exception as e:
             self._log_external("Session migration failed: %s" % e)
 
-    def attach_backend_session(self, session):
-        """Attach a late-created backend session, used by the external launcher."""
+    def attach_backend_session(self, session, announce=True):
+        """Attach a late-created backend session, used by the external launcher.
+        announce=False：启动时静默挂载（此时 Bridge 未必已连上，不该提示"已连接"）。"""
         self._session = session
         try:
             self._session.set_tool_executor(self._tool_executor)
@@ -744,7 +753,8 @@ class Controller(QObject):
         except Exception:
             pass
         self.refreshContext()
-        self.toast.emit("已连接 Houdini Bridge")
+        if announce:
+            self.toast.emit("已连接 Houdini Bridge")
 
     @staticmethod
     def _log_external(msg):
@@ -1828,7 +1838,7 @@ class Controller(QObject):
 
     def _open_api_key(self):
         if not self._session:
-            self.toast.emit("后端不可用，无法配置 API Key")
+            self.toast.emit("AI 后端尚未就绪，请稍候几秒再试")
             return
         try:
             self.openApiKeyDialog.emit(self._provider)
@@ -1855,7 +1865,7 @@ class Controller(QObject):
                 self.refreshLibrary()
             return bool(ok)
         if not self._session:
-            self.toast.emit("后端不可用，无法保存 API Key")
+            self.toast.emit("AI 后端尚未就绪，请稍候几秒再试")
             return False
         try:
             self._session.client.set_api_key(key, persist=True, provider=provider)
@@ -2276,9 +2286,10 @@ class Controller(QObject):
         # 会被误判为"未连接"，把用户错误地引去重开 Houdini。改为只看后端会话是否存在——
         # 会话在（哪怕 bridge 暂时不可达），配置都能写入 client，下次即生效。
         if self._session is None:
-            # 独立模式下后端会话随 Bridge 建立；确实没有可承载配置的后端时才引导连接。
+            # 后端会话随应用启动异步构建（不依赖 Bridge）；走到这说明仍在初始化或构建失败，
+            # 与 Houdini 是否连接无关——不要把用户误导去开启动器。
             self._revert_provider_from_custom()
-            self._prompt_open_houdini(self.tr("配置自定义 Provider"))
+            self.toast.emit(self.tr("AI 后端尚未就绪，请稍候几秒再试"))
             return
         try:
             cur = QSettings("HoudiniAI", "Assistant")
@@ -2299,6 +2310,7 @@ class Controller(QObject):
     def submitCustomProvider(self, url, key, model, anthropic, context_limit, supports_vision=False):
         if not self._session:
             self._revert_provider_from_custom()
+            self.toast.emit(self.tr("AI 后端尚未就绪，请稍候几秒再试"))
             return False
         url = (url or "").strip()
         key = (key or "").strip()
@@ -2634,6 +2646,39 @@ class Controller(QObject):
         self._last_activity = time.monotonic()
         self._watchdog_warned = False
 
+    def _heal_bridge(self):
+        """ping 失败后的静默自愈：扫描候选端口找活着的 Bridge 并固化端口。
+        运行在工具执行线程（localhost 扫描 <1 秒），成功后刷新上下文条。"""
+        try:
+            from houdini_agent.bridge import doctor
+            port, _info = doctor.ensure_connected(heartbeat=self._touch_activity)
+        except Exception:
+            return False
+        if port:
+            self._sigCtxRefresh.emit()
+            return True
+        return False
+
+    def _run_connection_tool(self, tool_name, kwargs):
+        """check_houdini_connection / repair_houdini_connection：app 侧执行。"""
+        if getattr(self._session, "bridge", None) is None:
+            return {"success": True,
+                    "result": "当前直接运行在 Houdini 进程内，不经过 Bridge，无需连接诊断。"}
+        try:
+            from houdini_agent.bridge import doctor
+            if tool_name == "check_houdini_connection":
+                res = doctor.diagnose()
+            else:
+                res = doctor.repair(kwargs.get("action") or "",
+                                    version=kwargs.get("version"),
+                                    wait_seconds=kwargs.get("wait_seconds"),
+                                    heartbeat=self._touch_activity)
+        except Exception as e:
+            return {"success": False, "error": "连接诊断/修复执行失败: %s" % e}
+        if isinstance(res, dict) and res.get("reconnected"):
+            self._sigCtxRefresh.emit()
+        return res
+
     def _watchdog_tick(self):
         if not self._running:
             return
@@ -2788,6 +2833,9 @@ class Controller(QObject):
         if self._confirm_mode and tool_name in CONFIRM_TOOLS:
             if not self._await_confirm(tool_name, kwargs):
                 return {"success": False, "error": "用户取消了该操作"}
+        # 连接诊断/修复：必须在 app 侧执行——连接坏了才需要它，绝不能走 bridge
+        if tool_name in ("check_houdini_connection", "repair_houdini_connection"):
+            return self._run_connection_tool(tool_name, kwargs)
         # Meshy 网络工具：app 侧后台线程执行，绝不进 Houdini/bridge
         if tool_name in MESHY_NETWORK_TOOLS and _meshy is not None:
             # 同一轮内重复的生成调用去重：防止模型/中转站把同一调用发两次
@@ -2828,14 +2876,16 @@ class Controller(QObject):
                     pass
             return res
         if getattr(self._session, "bridge", None) is not None:
-            if self._session.bridge.ping() is None:
+            # 断连自愈：Bridge 可能换了端口（Houdini 重启/端口被占顺延/发现文件过期），
+            # 全端口扫一遍再判死刑。ensure_connected 找到后固化端口，本次调用直接继续。
+            if self._session.bridge.ping() is None and not self._heal_bridge():
                 return {"success": False, "error": _BRIDGE_LOST_MSG}
             try:
                 res = self._session.mcp.execute_tool(tool_name, kwargs)
                 self._last_activity = time.monotonic()
                 return res
             except Exception as e:
-                if self._session.bridge.ping() is None:
+                if self._session.bridge.ping() is None and not self._heal_bridge():
                     return {"success": False, "error": _BRIDGE_LOST_MSG}
                 return {"success": False, "error": str(e)}
         if tool_name in BG_SAFE:
@@ -5373,18 +5423,15 @@ class Controller(QObject):
                 out.append(esc(t))
         return "".join(out)
 
-    # ---- simulated reply (fallback when no backend) ----
+    # ---- fallback reply (backend not ready) ----
     def _simulate(self, text):
-        short = text[:24] + ("…" if len(text) > 24 else "")
-
-        def step_think():
-            self._blocks.append({"kind": "thinking", "dur": "2.1s",
-                                 "text": "（模拟）分析请求：“%s”。未连接后端，仅演示流式。" % short})
-            self._do_flush(); QTimer.singleShot(450, step_done)
-
+        """无后端时的兜底回复。正常运行不该走到这里——外部 exe 启动即异步构建聊天后端
+        （不依赖 Houdini/Bridge），仅在后端仍在初始化/初始化失败或 UI 预览时出现。"""
         def step_done():
             self._blocks.append({"kind": "prose",
-                                 "html": "（模拟回复）未连接真实 agent loop。在 Houdini 中通过 launcher.show_tool() 启动即接真实后端。"})
+                                 "html": "AI 后端尚未就绪，本条消息未处理。请稍等几秒后重试；"
+                                         "若重启应用后仍然如此，请反馈日志文件："
+                                         "%LOCALAPPDATA%\\HoudiniAgent\\launcher.log"})
             self._do_flush(); self._set_running(False)
 
-        QTimer.singleShot(350, step_think)
+        QTimer.singleShot(200, step_done)
