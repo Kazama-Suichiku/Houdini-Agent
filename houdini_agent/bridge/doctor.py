@@ -165,7 +165,8 @@ def ensure_connected(heartbeat=None):
 def diagnose():
     """结构化体检 + 修复建议。全部字段都给 agent 看，advice 是主结论。"""
     from houdini_agent.launcher.houdini_discovery import (
-        _bridge_python_root, find_houdini_installs, is_houdini_running, user_pref_dir)
+        _bridge_python_root, find_houdini_installs, is_houdini_running,
+        known_pref_versions, user_pref_dirs)
 
     resolved = resolve_port()
     if _env_base():
@@ -182,27 +183,33 @@ def diagnose():
     running = is_houdini_running()
     expected_target = str(_bridge_python_root(str(_payload_root())))
 
+    # 按「版本 × 候选用户目录」逐一体检：pref_dir_exists=True 而 exists=False
+    # 就是"Houdini 实际使用的目录里没有集成包"（文档目录重定向时旧版装错位置的铁证）。
+    versions = sorted({it["major_minor"] for it in installs} | known_pref_versions())
     packages = []
-    for it in installs:
-        pkg = user_pref_dir(it["major_minor"]) / "packages" / "HoudiniAgent.json"
-        entry = {"houdini": it["version"], "package_file": str(pkg),
-                 "exists": pkg.is_file(), "target": "", "target_exists": False,
-                 "points_to_current_app": False}
-        if entry["exists"]:
-            try:
-                data = json.loads(pkg.read_text(encoding="utf-8"))
-                repo = ""
-                for e in data.get("env", []) or []:
-                    if isinstance(e, dict) and "HAGENT_REPO" in e:
-                        repo = str(e["HAGENT_REPO"])
-                entry["target"] = repo
-                entry["target_exists"] = bool(repo) and os.path.isdir(repo)
-                if repo:
-                    entry["points_to_current_app"] = (
-                        Path(repo).resolve() == Path(expected_target).resolve())
-            except Exception as e:
-                entry["parse_error"] = str(e)
-        packages.append(entry)
+    for mm in versions:
+        for pref in user_pref_dirs(mm):
+            pkg = pref / "packages" / "HoudiniAgent.json"
+            entry = {"houdini": mm, "pref_dir": str(pref),
+                     "pref_dir_exists": pref.is_dir(),
+                     "package_file": str(pkg), "exists": pkg.is_file(),
+                     "target": "", "target_exists": False,
+                     "points_to_current_app": False}
+            if entry["exists"]:
+                try:
+                    data = json.loads(pkg.read_text(encoding="utf-8"))
+                    repo = ""
+                    for e in data.get("env", []) or []:
+                        if isinstance(e, dict) and "HAGENT_REPO" in e:
+                            repo = str(e["HAGENT_REPO"])
+                    entry["target"] = repo
+                    entry["target_exists"] = bool(repo) and os.path.isdir(repo)
+                    if repo:
+                        entry["points_to_current_app"] = (
+                            Path(repo).resolve() == Path(expected_target).resolve())
+                except Exception as e:
+                    entry["parse_error"] = str(e)
+            packages.append(entry)
 
     out = {
         "success": True,
@@ -238,12 +245,18 @@ def diagnose():
         advice.append("Houdini 未在运行。可调用 repair_houdini_connection(action='launch_houdini') "
                       "启动（自动安装集成包，启动约需 1 分钟），或让用户手动打开 Houdini。")
     else:
-        missing = [p for p in packages if not p["exists"]]
+        # 只统计「目录真实存在」的候选：pref 目录在=Houdini 真用过它，里面没包才是问题
+        gap = [p for p in packages if p["pref_dir_exists"] and not p["exists"]]
         stale = [p for p in packages if p["exists"] and not p["points_to_current_app"]]
-        if missing or stale:
-            advice.append("集成包异常（缺失 %d 个 / 指向旧安装目录 %d 个）。先调用 "
-                          "repair_houdini_connection(action='reinstall_package')，"
-                          "然后请用户重启 Houdini 生效。" % (len(missing), len(stale)))
+        if gap:
+            advice.append("发现 Houdini 实际使用的用户目录缺少集成包（常见原因：「文档」目录被"
+                          "移动到其他盘/被 OneDrive 重定向，旧版本装错了位置）：%s。先调用 "
+                          "repair_houdini_connection(action='reinstall_package')——新版会写入"
+                          "全部候选目录——然后请用户重启 Houdini。"
+                          % "; ".join(p["pref_dir"] for p in gap[:3]))
+        elif stale:
+            advice.append("集成包存在但指向旧安装目录（%d 处）。先调用 repair_houdini_connection"
+                          "(action='reinstall_package')，然后请用户重启 Houdini 生效。" % len(stale))
         tail = "\n".join(out["bridge_log_tail"])
         if "无法启动 Bridge" in tail or "10013" in tail or "10048" in tail:
             advice.append("bridge.log 显示端口被占用导致 Bridge 启动失败。请用户重启 Houdini"
@@ -291,23 +304,17 @@ def _repair_reconnect(wait_seconds, heartbeat=None):
 
 
 def _repair_reinstall():
-    from houdini_agent.launcher.houdini_discovery import find_houdini_installs, install_package
-    installs = find_houdini_installs()
-    if not installs:
-        return {"success": False, "error": "未找到已安装的 Houdini（需要 19.5 及以上），无法安装集成包。"}
-    written, errors = [], []
-    for it in installs:
-        try:
-            written.append(install_package(str(_payload_root()), it))
-        except Exception as e:
-            errors.append("%s: %s" % (it["version"], e))
+    from houdini_agent.launcher.houdini_discovery import install_all_packages
+    result_map = install_all_packages(str(_payload_root()))
+    written = [p for lst in result_map.values() for p in lst]
     if not written:
-        return {"success": False, "errors": errors,
-                "error": "集成包安装全部失败: %s" % "; ".join(errors)}
-    return {"success": True, "package_files": written, "errors": errors,
-            "result": ("已为 %d 个 Houdini 版本重写集成包。注意：需要重启 Houdini 才会生效——"
+        return {"success": False,
+                "error": "未找到已安装的 Houdini（需要 19.5 及以上）或用户目录全部不可写，无法安装集成包。"}
+    return {"success": True, "package_files": written,
+            "result": ("已为 %d 个 Houdini 版本重写集成包（共写入 %d 处候选用户目录，覆盖"
+                       "「文档」目录被移动/重定向的情况）。注意：需要重启 Houdini 才会生效——"
                        "请用户保存工作并重启 Houdini，之后用 repair_houdini_connection"
-                       "(action='reconnect') 验证连接。" % len(written))}
+                       "(action='reconnect') 验证连接。" % (len(result_map), len(written)))}
 
 
 def _repair_launch(version, wait_seconds, heartbeat=None):

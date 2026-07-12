@@ -17,7 +17,7 @@ except ImportError:
 
 from houdini_agent.bridge.client import BridgeClient
 from houdini_agent.launcher.houdini_discovery import (
-    find_houdini_installs, install_package, is_houdini_running, launch_houdini
+    find_houdini_installs, install_all_packages, is_houdini_running, launch_houdini
 )
 from houdini_agent.ui_qml import host
 from houdini_agent.ui_qml.bridge_session import BridgeAgentSession
@@ -98,11 +98,14 @@ class ExternalCoordinator(QObject):
             QTimer.singleShot(300, self.show_launcher)
 
     def _ensure_packages(self):
-        for install in self.installs:
-            try:
-                install_package(self.repo_root, install)
-            except Exception as exc:
-                print("[external launcher] package install failed:", exc)
+        """给所有相关 Houdini 版本装集成包：写全部候选用户目录（注册表 Documents /
+        USERPROFILE / env），并覆盖安装扫描漏掉但用户目录存在的版本。"""
+        try:
+            written = install_all_packages(self.repo_root, self.installs)
+            self._log("packages installed: %s" % written)
+        except Exception as exc:
+            print("[external launcher] package install failed:", exc)
+            self._log("package install failed: %s" % exc)
 
     @staticmethod
     def _probe():

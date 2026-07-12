@@ -142,9 +142,84 @@ def is_houdini_running():
         return False
 
 
+def _documents_candidates():
+    """按可信度排序的「文档」目录候选。Houdini 通过 shell API 解析 Documents，
+    中文机常见把「文档」移到 D 盘 / 被 OneDrive 重定向——那时真实路径只有注册表知道，
+    而 %USERPROFILE%\\Documents 是错的（此前只写这里导致部分用户集成包永远不加载）。"""
+    out = []
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+        try:
+            val, _t = winreg.QueryValueEx(key, "Personal")
+        finally:
+            winreg.CloseKey(key)
+        p = os.path.expandvars(str(val)).strip()
+        if p:
+            out.append(Path(p))
+    except Exception:
+        pass
+    up = os.environ.get("USERPROFILE")
+    if up:
+        out.append(Path(up) / "Documents")
+    out.append(Path.home() / "Documents")
+    seen, uniq = set(), []
+    for p in out:
+        k = str(p).lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(p)
+    return uniq
+
+
+def user_pref_dirs(major_minor):
+    """某 Houdini 版本所有候选用户目录（houdiniX.Y），去重保序。
+    HOUDINI_USER_PREF_DIR 环境变量最优先（支持官方 __HVER__ 占位符）。"""
+    dirs = []
+    envd = (os.environ.get("HOUDINI_USER_PREF_DIR") or "").strip()
+    if envd:
+        p = envd.replace("__HVER__", major_minor).replace(
+            "$HOME", os.environ.get("HOME") or os.environ.get("USERPROFILE") or "$HOME")
+        p = os.path.expandvars(p)
+        if "$" not in p and "%" not in p:   # 变量没展开干净就放弃该候选，别写进字面量路径
+            dirs.append(Path(p))
+    for doc in _documents_candidates():
+        dirs.append(doc / ("houdini%s" % major_minor))
+    seen, uniq = set(), []
+    for p in dirs:
+        k = str(p).lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(p)
+    return uniq
+
+
 def user_pref_dir(major_minor):
-    docs = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Documents"
-    return docs / ("houdini%s" % major_minor)
+    """向后兼容：返回首选候选（env 覆盖 > 注册表 Documents > USERPROFILE）。"""
+    return user_pref_dirs(major_minor)[0]
+
+
+def known_pref_versions():
+    """扫描所有候选 Documents 下已存在的 houdiniX.Y 用户目录 → 版本号集合。
+    覆盖「运行中的 Houdini 不在安装扫描结果里」（Steam 版/自定义安装/网络盘）的情况：
+    用户目录存在 = 这个版本在本机真实跑过，就该给它装集成包。"""
+    vers = set()
+    for doc in _documents_candidates():
+        try:
+            for d in doc.glob("houdini*"):
+                if not d.is_dir():
+                    continue
+                m = re.fullmatch(r"houdini(\d+)\.(\d+)", d.name)
+                if not m:
+                    continue
+                ver = (int(m.group(1)), int(m.group(2)))
+                if _version_ok(ver):
+                    vers.add("%d.%d" % ver)
+        except Exception:
+            continue
+    return vers
 
 
 def _bridge_python_root(repo_root):
@@ -155,12 +230,10 @@ def _bridge_python_root(repo_root):
     return repo
 
 
-def install_package(repo_root, install):
+def _package_json(repo_root):
     py_root = _bridge_python_root(repo_root)
     package_root = (py_root / "houdini_agent" / "houdini_package").resolve()
-    pkg_dir = user_pref_dir(install["major_minor"]) / "packages"
-    pkg_dir.mkdir(parents=True, exist_ok=True)
-    data = {
+    return {
         "enable": True,
         "env": [
             {"HAGENT_REPO": str(py_root).replace("\\", "/")},
@@ -168,9 +241,48 @@ def install_package(repo_root, install):
             {"HOUDINI_PATH": str(package_root).replace("\\", "/") + ";&"},
         ],
     }
-    path = pkg_dir / "HoudiniAgent.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return str(path)
+
+
+def install_package_for_version(repo_root, major_minor):
+    """给某个 Houdini 版本装集成包：写进【全部】候选用户目录（注册表 Documents /
+    USERPROFILE / env 覆盖）。Houdini 只会读它实际解析出的那个，其余是几百字节的
+    无害冗余——比猜错一个位置导致永远不加载好得多。返回写下的文件路径列表。"""
+    data = _package_json(repo_root)
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    written = []
+    for pref in user_pref_dirs(major_minor):
+        try:
+            pkg_dir = pref / "packages"
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            path = pkg_dir / "HoudiniAgent.json"
+            path.write_text(text, encoding="utf-8")
+            written.append(str(path))
+        except Exception:
+            continue
+    if not written:
+        raise RuntimeError("no writable Houdini user pref dir for %s" % major_minor)
+    return written
+
+
+def install_package(repo_root, install):
+    """向后兼容入口：按安装记录装包（现在会写全部候选目录）。返回首个文件路径。"""
+    return install_package_for_version(repo_root, install["major_minor"])[0]
+
+
+def install_all_packages(repo_root, installs=None):
+    """给本机所有相关 Houdini 版本装集成包：已发现安装的版本 ∪ 用户目录里出现过的
+    版本（Steam 版/自定义安装即使扫不到安装目录，跑过就会留下 houdiniX.Y）。
+    返回 {version: [written...]}；单版本失败不阻断其它版本。"""
+    if installs is None:
+        installs = find_houdini_installs()
+    versions = {it["major_minor"] for it in installs} | known_pref_versions()
+    out = {}
+    for mm in sorted(versions):
+        try:
+            out[mm] = install_package_for_version(repo_root, mm)
+        except Exception:
+            out[mm] = []
+    return out
 
 
 def launch_houdini(repo_root, install):

@@ -128,7 +128,8 @@ def test_diagnose_finds_bridge_on_other_port(monkeypatch, fake_bridge, tmp_path)
     monkeypatch.setattr(doctor, "_candidate_ports", lambda: [dead, fake_bridge])
     monkeypatch.setattr(hd, "find_houdini_installs", _fake_installs)
     monkeypatch.setattr(hd, "is_houdini_running", lambda: True)
-    monkeypatch.setattr(hd, "user_pref_dir", lambda mm: tmp_path / ("houdini%s" % mm))
+    monkeypatch.setattr(hd, "known_pref_versions", lambda: set())
+    monkeypatch.setattr(hd, "user_pref_dirs", lambda mm: [tmp_path / ("houdini%s" % mm)])
     out = doctor.diagnose()
     assert out["bridge_connected"] is False
     assert out["bridge_found_on_port"] == fake_bridge
@@ -141,7 +142,8 @@ def test_diagnose_houdini_not_running(monkeypatch, tmp_path):
     monkeypatch.setattr(doctor, "_candidate_ports", lambda: [dead])
     monkeypatch.setattr(hd, "find_houdini_installs", _fake_installs)
     monkeypatch.setattr(hd, "is_houdini_running", lambda: False)
-    monkeypatch.setattr(hd, "user_pref_dir", lambda mm: tmp_path / ("houdini%s" % mm))
+    monkeypatch.setattr(hd, "known_pref_versions", lambda: set())
+    monkeypatch.setattr(hd, "user_pref_dirs", lambda mm: [tmp_path / ("houdini%s" % mm)])
     out = doctor.diagnose()
     assert out["bridge_connected"] is False
     assert "launch_houdini" in out["advice"]
@@ -154,8 +156,9 @@ def test_diagnose_stale_package_advises_reinstall(monkeypatch, tmp_path):
     monkeypatch.setattr(doctor, "_candidate_ports", lambda: [dead])
     monkeypatch.setattr(hd, "find_houdini_installs", _fake_installs)
     monkeypatch.setattr(hd, "is_houdini_running", lambda: True)
+    monkeypatch.setattr(hd, "known_pref_versions", lambda: set())
     pref = tmp_path / "houdini21.0"
-    monkeypatch.setattr(hd, "user_pref_dir", lambda mm: pref)
+    monkeypatch.setattr(hd, "user_pref_dirs", lambda mm: [pref])
     pkg = pref / "packages" / "HoudiniAgent.json"
     pkg.parent.mkdir(parents=True, exist_ok=True)
     pkg.write_text(json.dumps({"enable": True, "env": [
@@ -165,6 +168,26 @@ def test_diagnose_stale_package_advises_reinstall(monkeypatch, tmp_path):
     assert out["packages"][0]["exists"] is True
     assert out["packages"][0]["target_exists"] is False
     assert "reinstall_package" in out["advice"]
+
+
+def test_diagnose_pref_dir_missing_package(monkeypatch, tmp_path):
+    """用户目录存在但没有集成包（文档重定向导致旧版装错位置）→ 明确点名 + reinstall。"""
+    dead = _free_port()
+    monkeypatch.setenv("HAGENT_BRIDGE_PORT", str(dead))
+    monkeypatch.setattr(doctor, "_candidate_ports", lambda: [dead])
+    monkeypatch.setattr(hd, "find_houdini_installs", _fake_installs)
+    monkeypatch.setattr(hd, "is_houdini_running", lambda: True)
+    monkeypatch.setattr(hd, "known_pref_versions", lambda: set())
+    real_pref = tmp_path / "docs_d" / "houdini21.0"    # Houdini 真在用的目录（D 盘文档）
+    real_pref.mkdir(parents=True)                       # 存在但没有 packages
+    wrong_pref = tmp_path / "docs_c" / "houdini21.0"   # 旧版写包的位置（不存在）
+    monkeypatch.setattr(hd, "user_pref_dirs", lambda mm: [real_pref, wrong_pref])
+    out = doctor.diagnose()
+    assert out["bridge_connected"] is False
+    gap = [p for p in out["packages"] if p["pref_dir_exists"] and not p["exists"]]
+    assert gap and gap[0]["pref_dir"] == str(real_pref)
+    assert "reinstall_package" in out["advice"]
+    assert "重定向" in out["advice"] or "移动" in out["advice"]
 
 
 # -------------------------------------------------------------------- repair
@@ -187,17 +210,21 @@ def test_repair_reconnect_timeout(monkeypatch):
     assert "check_houdini_connection" in res["error"]
 
 
-def test_repair_reinstall_writes_package(monkeypatch, tmp_path):
-    pref = tmp_path / "houdini21.0"
+def test_repair_reinstall_writes_all_candidates(monkeypatch, tmp_path):
+    """重装会写进全部候选用户目录（注册表 Documents + USERPROFILE 等）。"""
+    docs_a, docs_b = tmp_path / "docs_a", tmp_path / "docs_b"
     monkeypatch.setattr(hd, "find_houdini_installs", _fake_installs)
-    monkeypatch.setattr(hd, "user_pref_dir", lambda mm: pref)
+    monkeypatch.setattr(hd, "known_pref_versions", lambda: set())
+    monkeypatch.setattr(hd, "user_pref_dirs",
+                        lambda mm: [docs_a / ("houdini%s" % mm), docs_b / ("houdini%s" % mm)])
     res = doctor.repair("reinstall_package")
     assert res["success"] is True
-    pkg = pref / "packages" / "HoudiniAgent.json"
-    assert pkg.is_file()
-    data = json.loads(pkg.read_text(encoding="utf-8"))
-    envs = {k: v for e in data["env"] for k, v in e.items()}
-    assert envs["HAGENT_REPO"]
+    for docs in (docs_a, docs_b):
+        pkg = docs / "houdini21.0" / "packages" / "HoudiniAgent.json"
+        assert pkg.is_file()
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+        envs = {k: v for e in data["env"] for k, v in e.items()}
+        assert envs["HAGENT_REPO"]
     assert "重启" in res["result"]     # 明确告诉 agent 需要重启 Houdini 生效
 
 
