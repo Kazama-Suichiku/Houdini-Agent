@@ -2,10 +2,19 @@
 """Auto-start the Houdini Agent bridge when Houdini loads the package.
 
 本文件可能被执行两次：scripts/python/（Houdini 21 实测生效）与 pythonX.Ylibs/
-（官方文档的启动脚本位置，老版本靠它）都指向这里——用进程级哨兵保证只跑一次。"""
+（官方文档的启动脚本位置，老版本靠它）都指向这里——用进程级哨兵保证只跑一次。
+注意：Houdini exec 启动脚本时不提供 __file__，定位自身必须退回 co_filename。"""
 
 import os
 import sys
+
+
+def _this_file():
+    try:
+        return os.path.abspath(__file__)              # 常规执行 / shim 转发（会传入 __file__）
+    except NameError:
+        import inspect                                # Houdini exec：无 __file__
+        return os.path.abspath(inspect.currentframe().f_code.co_filename)
 
 
 def _diag(msg):
@@ -27,8 +36,7 @@ def _repo_root():
         return root
     # pythonrc.py 在 <root>/houdini_agent/houdini_package/scripts/python/ 下，
     # 需向上 5 层才到加载根 <root>（含 houdini_agent + shared），之前少了一层。
-    here = os.path.abspath(__file__)
-    return os.path.abspath(os.path.join(here, "..", "..", "..", "..", ".."))
+    return os.path.abspath(os.path.join(_this_file(), "..", "..", "..", "..", ".."))
 
 
 def _start():
@@ -47,7 +55,7 @@ def _main():
         sys.path.insert(0, root)
 
     _diag("loaded from %s; HAGENT_REPO=%r root=%r exists=%s" % (
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(_this_file()),
         os.environ.get("HAGENT_REPO"), root, os.path.isdir(root)))
 
     try:
