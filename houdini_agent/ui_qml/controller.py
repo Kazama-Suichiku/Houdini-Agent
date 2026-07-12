@@ -542,6 +542,8 @@ class Controller(QObject):
     _sigToolExec = Signal(str, str)
     # worker -> main thread: 连接自愈/修复成功后刷新上下文条（场景路径/选择）
     _sigCtxRefresh = Signal()
+    # worker -> main thread: 应用内更新状态机 (state, percent, message)
+    _sigUpdateState = Signal(str, int, str)
 
     def __init__(self, model, use_backend=False, parent=None):
         super().__init__(parent)
@@ -597,6 +599,9 @@ class Controller(QObject):
         self._status_phase = ""      # "", thinking, generating, tool:<name>, planning
         self._pending_ops = 0
         self._update_info = None
+        self._update_state = ""        # "" | available | downloading | ready | failed
+        self._update_progress = 0
+        self._update_installer_path = ""
         self._node_name_map = {}     # bare name -> full path (for resolve)
         try:
             from houdini_agent.ui.i18n import get_language
@@ -688,6 +693,7 @@ class Controller(QObject):
         self._sigPlanStream.connect(self._ui_plan_stream)
         self._sigInfo.connect(self._info)
         self._sigCtxRefresh.connect(self.refreshContext)
+        self._sigUpdateState.connect(self._on_update_state)
 
         # coalesce UI flushes to ~25fps (avoids O(N^2) re-render on long runs)
         self._flush_timer = QTimer(self)
@@ -921,6 +927,10 @@ class Controller(QObject):
 
     def _get_update_text(self): return self._update_info or ""
     updateText = Property(str, _get_update_text, notify=updateAvailableChanged)
+    def _get_update_state(self): return self._update_state
+    updateState = Property(str, _get_update_state, notify=updateAvailableChanged)
+    def _get_update_progress(self): return self._update_progress
+    updateProgress = Property(int, _get_update_progress, notify=updateAvailableChanged)
 
     def _get_library_open(self): return self._library_open
     libraryOpen = Property(bool, _get_library_open, notify=libraryOpenChanged)
@@ -1894,13 +1904,18 @@ class Controller(QObject):
         except Exception as e:
             self._info("导出对话", "导出失败：%s" % e)
 
-    def _set_update(self, info):
+    def _set_update(self, info, state="available"):
         self._update_info = info
+        self._update_state = state if info else ""
         self.updateAvailableChanged.emit()
 
     @Slot()
     def dismissUpdate(self):
+        if self._update_state == "downloading":
+            return                      # 下载中不允许关横幅（没有取消语义）
         self._update_info = None
+        self._update_state = ""
+        self._update_progress = 0
         self.updateAvailableChanged.emit()
 
     @Slot()
@@ -1910,11 +1925,89 @@ class Controller(QObject):
                 from houdini_agent.utils.updater import check_update
                 r = check_update()
                 if isinstance(r, dict) and r.get("has_update"):
-                    info = "发现新版本 %s — 在 ⋯ 菜单点「检查更新」升级" % r.get("remote_version", "")
+                    info = "发现新版本 %s" % r.get("remote_version", "")
                     QTimer.singleShot(0, lambda: self._set_update(info))
             except Exception:
                 pass
         threading.Thread(target=work, daemon=True).start()
+
+    @Slot()
+    def startUpdate(self):
+        """一键更新：下载新版安装包 → 拉起静默安装 → 退出应用（装完自动重启）。
+        仅打包 exe 可用；源码运行没有可覆盖的安装，引导去官网。"""
+        if self._update_state == "downloading":
+            return
+        if not getattr(sys, "frozen", False):
+            try:
+                import webbrowser
+                webbrowser.open("https://houdini-agent.com")
+            except Exception:
+                pass
+            self.toast.emit("源码运行无法就地更新，请 git pull 或从官网安装")
+            return
+        self._update_state = "downloading"
+        self._update_progress = 0
+        self.updateAvailableChanged.emit()
+
+        def work():
+            try:
+                from houdini_agent.utils.updater import check_update, download_installer
+                check_update()          # 刷新 release 缓存，拿到资产直链
+                last = [-1]
+
+                def prog(pct):
+                    if pct != last[0]:
+                        last[0] = pct
+                        self._sigUpdateState.emit("downloading", int(pct), "")
+
+                r = download_installer(progress_callback=prog)
+                if r.get("success"):
+                    self._update_installer_path = r["path"]
+                    self._sigUpdateState.emit("ready", 100, "")
+                else:
+                    self._sigUpdateState.emit("failed", 0, r.get("error") or "下载失败")
+            except Exception as e:
+                self._sigUpdateState.emit("failed", 0, str(e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_state(self, state, percent, message):
+        """运行在 UI 线程：应用更新状态机。ready → 拉起安装器并退出。"""
+        self._update_state = state
+        self._update_progress = percent
+        if state == "downloading":
+            self._update_info = "正在下载新版本… %d%%" % percent
+        elif state == "failed":
+            self._update_info = "更新下载失败：%s — 点「立即更新」重试" % (message or "")[:80]
+            self._update_state = "available"
+        elif state == "ready":
+            self._update_info = "下载完成，正在安装并重启…"
+            self.updateAvailableChanged.emit()
+            try:
+                from houdini_agent.utils.updater import launch_installer
+                launch_installer(self._update_installer_path)
+            except Exception as e:
+                self._update_info = "启动安装器失败：%s" % e
+                self._update_state = "available"
+                self.updateAvailableChanged.emit()
+                return
+            # 立刻退出让出文件占用；closeAllWindows 会触发窗口的保存逻辑
+            try:
+                self._snapshot_active()
+                self._save_all()
+            except Exception:
+                pass
+            def _quit():
+                try:
+                    from PySide6.QtWidgets import QApplication
+                except ImportError:
+                    from PySide2.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app is not None:
+                    app.closeAllWindows()
+                    QTimer.singleShot(200, app.quit)
+            QTimer.singleShot(300, _quit)
+        self.updateAvailableChanged.emit()
 
     @Slot(str, result=bool)
     def copyToClipboard(self, text):
@@ -1961,8 +2054,11 @@ class Controller(QObject):
                             "发现新版本：%s\n"
                             "当前版本：%s\n\n"
                             "%s\n\n"
-                            "请到 houdini-agent.com 或 GitHub Releases 下载新版安装包更新。"
+                            "点主界面输入框上方横幅的「立即更新」即可自动下载安装；"
+                            "也可到 houdini-agent.com 手动下载。"
                         ) % (r.get("remote_version", "?"), r.get("local_version", "?"), notes)
+                        info = "发现新版本 %s" % r.get("remote_version", "")
+                        QTimer.singleShot(0, lambda: self._set_update(info))
                     else:
                         msg = "已是最新版本。\n\n当前版本：%s\n最新 Release：%s" % (
                             r.get("local_version", "?"), r.get("remote_version", "?"))

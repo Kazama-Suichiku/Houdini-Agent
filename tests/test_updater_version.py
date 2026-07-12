@@ -29,3 +29,26 @@ def test_candidates_include_meipass_when_frozen(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     roots = [str(p) for p in updater._version_candidates()]
     assert str(tmp_path) == roots[0]      # 打包时 _MEIPASS 必须排在最前
+
+
+# ---------------------------------------------- 应用内更新：安装包资产直链
+
+def test_installer_url_from_release_assets():
+    data = {"assets": [
+        {"name": "Source code (zip)", "browser_download_url": "https://x/src.zip"},
+        {"name": "HoudiniAgent-Setup-2.0.13.exe",
+         "browser_download_url": "https://github.com/x/HoudiniAgent-Setup-2.0.13.exe"},
+    ]}
+    assert updater.get_installer_url(data).endswith("HoudiniAgent-Setup-2.0.13.exe")
+
+
+def test_installer_url_fallback_to_stable_link():
+    # 没有匹配资产 → 退回官网稳定直链（永远指向最新版）
+    assert updater.get_installer_url({"assets": []}) == updater._STABLE_INSTALLER_URL
+    assert updater.get_installer_url({}) == updater._STABLE_INSTALLER_URL
+
+
+def test_installer_url_ignores_non_exe_assets():
+    data = {"assets": [{"name": "HoudiniAgent-Setup-2.0.13.exe.sha256",
+                        "browser_download_url": "https://x/sum"}]}
+    assert updater.get_installer_url(data) == updater._STABLE_INSTALLER_URL

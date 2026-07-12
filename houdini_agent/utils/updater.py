@@ -273,7 +273,84 @@ def check_update(timeout: float = 8.0) -> dict:
 
 
 # ==========================================================
-# 下载 & 应用更新
+# 应用内更新（打包 exe）：下载安装包资产 → 拉起 Inno 静默覆盖安装
+# ==========================================================
+
+# 官网稳定直链（release 资产取不到时的兜底，始终指向最新版）
+_STABLE_INSTALLER_URL = "https://houdini-agent.com/download/HoudiniAgent-Setup.exe"
+
+
+def get_installer_url(release_data=None) -> str:
+    """从 release 数据里取 Windows 安装包资产直链；取不到退回官网稳定链接。
+    release_data=None 时读 check_update 留下的 ETag 缓存（含完整 release JSON）。"""
+    data = release_data if release_data is not None else _load_etag_cache().get("release_data", {})
+    for a in (data.get("assets") or []):
+        name = str(a.get("name") or "")
+        if name.startswith("HoudiniAgent-Setup") and name.endswith(".exe"):
+            url = a.get("browser_download_url")
+            if url:
+                return str(url)
+    return _STABLE_INSTALLER_URL
+
+
+def download_installer(progress_callback=None, url=None) -> dict:
+    """把新版安装包下载到 %TEMP%。progress_callback(percent: int)。
+    Returns: {'success': bool, 'path': str, 'error': str}"""
+    try:
+        import requests  # type: ignore
+    except ImportError:
+        lib_dir = str(_PROJECT_ROOT / "lib")
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
+        import requests  # type: ignore
+
+    def _p(pct):
+        if progress_callback:
+            try:
+                progress_callback(int(pct))
+            except Exception:
+                pass
+
+    target = os.path.join(tempfile.gettempdir(), "HoudiniAgent-Setup-Update.exe")
+    try:
+        resp = requests.get(url or get_installer_url(), stream=True, timeout=60)
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length", 0))
+        done = 0
+        with open(target, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+                    done += len(chunk)
+                    if total > 0:
+                        _p(done * 100 / total)
+        if done < 1024 * 1024:      # 装不进 1MB 的一定不是安装包（挡 404 页面之类）
+            return {'success': False, 'path': '', 'error': '下载内容异常（%d 字节）' % done}
+        _p(100)
+        return {'success': True, 'path': target, 'error': ''}
+    except Exception as e:
+        return {'success': False, 'path': '', 'error': str(e)}
+
+
+def launch_installer(path) -> bool:
+    """拉起 Inno 安装器静默覆盖安装（需要提权时会弹一次 UAC）。调用方随后应立即
+    退出应用，避免文件占用；安装器 [Run] 段在静默模式下会自动重启应用。"""
+    import subprocess
+    args = "/SILENT /NORESTART /SUPPRESSMSGBOXES"
+    try:
+        subprocess.Popen(
+            [str(path)] + args.split(),
+            close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+    except OSError:
+        # WinError 740（需要提权）等：改走 ShellExecute，由系统弹 UAC
+        os.startfile(str(path), "open", args)   # noqa: S606
+    return True
+
+
+# ==========================================================
+# 下载 & 应用更新（旧版：源码树覆盖，仅供 Houdini 内源码模式）
 # ==========================================================
 
 def download_and_apply(progress_callback=None) -> dict:
