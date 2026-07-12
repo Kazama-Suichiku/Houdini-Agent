@@ -30,9 +30,24 @@ class BridgeAgentSession:
             self.tools = self.tools + list(meshy.MESHY_TOOLS)
         except Exception as e:
             print("[bridge_session] meshy tools unavailable:", e)
+        # 连接诊断/修复工具（仅独立 app 有意义：让 agent 能排查甚至重连 Houdini）
+        try:
+            from houdini_agent.bridge.doctor import CONNECTION_TOOLS
+            self.tools = self.tools + list(CONNECTION_TOOLS)
+        except Exception as e:
+            print("[bridge_session] connection tools unavailable:", e)
         self.history = []
-        self._sys_think = _make_system_prompt(True)
-        self._sys_no_think = _make_system_prompt(False)
+        note = (
+            "\n\n[Standalone Bridge Mode]\n"
+            "You run inside a standalone desktop app connected to Houdini through a local bridge. "
+            "Chat, planning, web/doc search and Meshy generation always work, even without Houdini. "
+            "Only scene tools need the bridge. If a scene tool reports the Houdini connection is lost, "
+            "do NOT give up: call check_houdini_connection to diagnose, then follow its advice with "
+            "repair_houdini_connection (action='reconnect' for port changes, 'reinstall_package' when the "
+            "integration package is missing/stale, 'launch_houdini' to start Houdini and wait for it). "
+            "If Houdini must be restarted manually, tell the user exactly what to do and continue helping.")
+        self._sys_think = _make_system_prompt(True) + note
+        self._sys_no_think = _make_system_prompt(False) + note
 
     def set_tool_executor(self, fn):
         self.client.set_tool_executor(fn)

@@ -636,7 +636,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
           <a class="btn solid" href="#download"><span class="zh">立即下载</span><span class="en">Download</span></a>
           <a class="btn" href="#generation"><span class="zh">看 3D 生成</span><span class="en">See 3D gen</span></a>
           <a class="btn meshy js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="" /><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
-          <span class="ver">v2.0.10</span>
+          <span class="ver">v2.0.11</span>
         </div>
         <div class="hero-stats">
           <div class="hstat"><div class="n"><em class="cnt" data-to="50">0</em>+</div><div class="l"><span class="zh">内置工具</span><span class="en">Built-in tools</span></div></div>
@@ -1484,10 +1484,11 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
     <div class="sec-head reveal">
       <div class="kicker"><span class="ln"></span><span class="ml accent">11 — Changelog</span></div>
       <h2><span class="zh">持续<em>迭代</em>。</span><span class="en">Shipping, <em>continuously</em>.</span></h2>
-      <p><span class="zh">当前版本 v2.0.10。一个拥有 50+ 工具、能生成并绑定 / 动画 3D 角色的自主 Agent。</span><span class="en">Currently v2.0.10. An autonomous agent with 50+ tools that generates, rigs and animates 3D characters.</span></p>
+      <p><span class="zh">当前版本 v2.0.11。一个拥有 50+ 工具、能生成并绑定 / 动画 3D 角色的自主 Agent。</span><span class="en">Currently v2.0.11. An autonomous agent with 50+ tools that generates, rigs and animates 3D characters.</span></p>
     </div>
     <div class="timeline" data-stagger>
-      <div class="tl now"><div class="tlv">v2.0.10</div><div class="tlt"><span class="zh">维护性更新</span><span class="en">Maintenance update</span></div><div class="tld"><span class="zh">内部维护与稳定性改进，修复若干已知问题。</span><span class="en">Internal maintenance and stability improvements; fixes several known issues.</span></div></div>
+      <div class="tl now"><div class="tlv">v2.0.11</div><div class="tlt"><span class="zh">离线可用 · 自动重连 · Agent 连接自检</span><span class="en">Works offline · auto-reconnect · agent self-diagnosis</span></div><div class="tld"><span class="zh">未连接 Houdini 时聊天、配置 API Key 与 Meshy 生成也完全可用；连接改为常驻心跳——断开自动提示、恢复自动重连，Bridge 换端口自动发现；Agent 新增连接自检与修复工具，可排查原因、重装集成包、甚至替你启动 Houdini。</span><span class="en">Chat, API-key setup and Meshy generation now work fully without Houdini; a persistent heartbeat auto-detects disconnects, reconnects automatically and discovers port changes; new agent tools diagnose connection issues, reinstall the integration package and can even launch Houdini for you.</span></div></div>
+      <div class="tl"><div class="tlv">v2.0.10</div><div class="tlt"><span class="zh">维护性更新</span><span class="en">Maintenance update</span></div><div class="tld"><span class="zh">内部维护与稳定性改进，修复若干已知问题。</span><span class="en">Internal maintenance and stability improvements; fixes several known issues.</span></div></div>
       <div class="tl"><div class="tlv">v2.0.9</div><div class="tlt"><span class="zh">稳定性修复 · 自定义供应商 · 端口自愈</span><span class="en">Stability fixes · custom providers · port self-heal</span></div><div class="tld"><span class="zh">修复自定义供应商「图片」开关无法开启、重新编辑时模型名丢失、模型过多时保存按钮被挤出；桥接端口被占用时自动顺延并由客户端自动发现，连接探测移至后台线程，避免端口冲突导致界面卡顿。</span><span class="en">Fixes the custom-provider "image" toggle not turning on, model names lost on re-edit, and save buttons pushed off-screen with many models; the bridge now auto-falls back when its port is taken (clients auto-discover it), with connection probing moved off the UI thread to prevent freezes on port conflicts.</span></div></div>
       <div class="tl"><div class="tlv">v2.0.8</div><div class="tlt"><span class="zh">外观换肤 · 起手式与模板库 · 顶栏自适应</span><span class="en">Theming · starters & templates · responsive header</span></div><div class="tld"><span class="zh">可换肤外观系统：极夜 / 石墨 / 午夜蓝 / 日光（浅色）主题、强调色、字体方案与界面密度；空会话起手式与可复用模板库（Meshy 生成在前，可存自己的模板）；顶栏在窄窗下自适应。含多供应商（内置 + 自定义）。</span><span class="en">A themeable appearance system: Noir / Graphite / Midnight / Daylight (light) themes, accent colors, type pairings and UI density; empty-session starters and a reusable template library (Meshy generation first, save your own); a header that adapts to narrow windows. Plus multi-provider support (built-in + custom).</span></div></div>
       <div class="tl"><div class="tlv">v2.0.7</div><div class="tlt"><span class="zh">直达 Meshy · 生图选模型 · 资产库浮层</span><span class="en">Meshy quick access · pick image model · overlay library</span></div><div class="tld"><span class="zh">主窗口一键直达 Meshy（官网 / 工作台 / 充值 / API Key）；生图时在画廊里挑选具体模型（Nano Banana / Pro / GPT Image）；资产库为窗口内磨砂浮层，内置「在 Meshy 生成 / 网页管理」入口。</span><span class="en">One-click Meshy access from the main window (site / workspace / credits / API key); pick a specific image model in the gallery (Nano Banana / Pro / GPT Image); an in-window frosted overlay asset library with built-in "generate on Meshy / manage on web" entries.</span></div></div>
@@ -1549,7 +1550,7 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
     <div class="dl reveal">
       <h2><span class="zh">把 AI 装进<em>你的节点网络</em>。</span><span class="en">Put AI <em>in your node graph</em>.</span></h2>
       <p><span class="zh">免费、开源。下载独立程序，自动连接 Houdini —— 无需配置 Python。建网、写 VEX、生成 3D 资产，全在一句话之间。</span><span class="en">Free and open source. Download the standalone app — it connects to Houdini, no Python setup. Build networks, write VEX, generate 3D assets — all a sentence away.</span></p>
-      <div class="reqline">v2.0.10 · Houdini 19.5+ (经 Bridge) / 21+ · Windows · macOS · Linux · MIT</div>
+      <div class="reqline">v2.0.11 · Houdini 19.5+ (经 Bridge) / 21+ · Windows · macOS · Linux · MIT</div>
       <div class="dl-cta">
         <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download><span class="zh">下载安装程序</span><span class="en">Download installer</span></a>
         <a class="btn" href="/downloads/"><span class="zh">所有版本</span><span class="en">All versions</span></a>

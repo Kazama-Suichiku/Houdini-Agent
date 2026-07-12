@@ -18,10 +18,11 @@ _MCP = None
 
 def _log(msg):
     try:
+        import time
         p = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "HoudiniAgent" / "bridge.log"
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:
-            f.write(str(msg).rstrip() + "\n")
+            f.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + str(msg).rstrip() + "\n")
     except Exception:
         pass
 
