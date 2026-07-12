@@ -45,6 +45,9 @@ class BridgeAgentSession:
             "do NOT give up: call check_houdini_connection to diagnose, then follow its advice with "
             "repair_houdini_connection (action='reconnect' for port changes, 'reinstall_package' when the "
             "integration package is missing/stale, 'launch_houdini' to start Houdini and wait for it). "
+            "The integration package adds NO menus, shelves or visible UI inside Houdini — never ask the "
+            "user to look for one. After the user restarts Houdini, verify by calling "
+            "repair_houdini_connection(action='reconnect', wait_seconds=30) yourself. "
             "If Houdini must be restarted manually, tell the user exactly what to do and continue helping.")
         self._sys_think = _make_system_prompt(True) + note
         self._sys_no_think = _make_system_prompt(False) + note
