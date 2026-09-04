@@ -41,14 +41,20 @@ ROLE_TYPE = Qt.UserRole + 1
 ROLE_PAYLOAD = Qt.UserRole + 2
 
 # Real provider keys + model ids (kept in sync with ui/header.py _model_map)
+# 2026-09 对齐：Duojie 以 /v1/models 实时清单为准；OpenRouter/OpenAI/DeepSeek 以官方目录为准
 MODEL_MAP = {
-    "duojie": ["claude-opus-4-6-max", "claude-opus-4-6-gemini", "claude-sonnet-4-6",
-               "claude-sonnet-4-5", "gemini-3.1-pro", "gemini-3-flash", "glm-5.1", "MiniMax-M2.7"],
-    "openrouter": ["anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6",
-                   "anthropic/claude-haiku-4.5", "openai/gpt-5.2", "google/gemini-3-flash-preview",
-                   "deepseek/deepseek-v3.2", "x-ai/grok-4.1-fast"],
-    "openai": ["gpt-5.2", "gpt-5.3-codex"],
-    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+    "duojie": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
+               "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.6-sol-pro",
+               "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5-turbo",
+               "grok-4.6", "grok-4.5", "deepseek-v4-flash"],
+    "openrouter": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
+                   "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
+                   "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
+                   "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
+                   "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro",
+                   "z-ai/glm-5.3", "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3"],
+    "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
     "glm": ["glm-4.7"],
     "custom": [],
 }
@@ -57,23 +63,39 @@ PROVIDER_LABELS = {
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
 CONTEXT_LIMITS = {
-    "claude-opus-4-6-max": 200000, "claude-opus-4-6-gemini": 200000,
-    "claude-sonnet-4-6": 200000, "claude-sonnet-4-5": 200000,
-    "gemini-3.1-pro": 1048576, "gemini-3-flash": 1048576, "glm-5.1": 200000, "MiniMax-M2.7": 128000,
-    "anthropic/claude-opus-4.6": 1000000, "anthropic/claude-sonnet-4.6": 1000000,
-    "anthropic/claude-haiku-4.5": 200000, "openai/gpt-5.2": 400000,
-    "google/gemini-3-flash-preview": 1048576, "deepseek/deepseek-v3.2": 163840,
-    "x-ai/grok-4.1-fast": 2000000, "gpt-5.2": 128000, "gpt-5.3-codex": 200000,
-    "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-chat": 1048576,
-    "deepseek-reasoner": 1048576, "glm-4.7": 200000,
+    # Duojie（中转；Claude 走 200K 保守值）
+    "claude-opus-5": 200000, "claude-sonnet-5": 200000, "claude-opus-4-8": 200000,
+    "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000,
+    "gpt-5.5": 1000000, "gpt-5.6-sol-pro": 1000000,
+    "glm-5.3": 1048576, "glm-5.3-flash": 1048576, "glm-5.2": 1048576, "glm-5-turbo": 200000,
+    "grok-4.6": 500000, "grok-4.5": 500000, "deepseek-v4-flash": 1048576,
+    # OpenRouter
+    "anthropic/claude-opus-5": 1000000, "anthropic/claude-sonnet-5": 1000000,
+    "anthropic/claude-opus-4.8": 1000000, "anthropic/claude-haiku-4.5": 200000,
+    "openai/gpt-5.6-sol": 1000000, "openai/gpt-5.6-terra": 1000000,
+    "openai/gpt-5.6-luna": 1000000, "openai/gpt-5.5": 1000000,
+    "google/gemini-3.8-flash": 1048576, "google/gemini-3.1-pro-preview": 1048576,
+    "deepseek/deepseek-v4-flash": 1048576, "deepseek/deepseek-v4-pro": 1048576,
+    "z-ai/glm-5.3": 1048576, "x-ai/grok-4.6": 500000,
+    "moonshotai/kimi-k3": 1048576, "minimax/minimax-m3": 1048576,
+    # DeepSeek 直连
+    "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
+    # GLM 直连
+    "glm-4.7": 200000,
 }
 VISION_MODELS = {
-    "claude-opus-4-6-max", "claude-opus-4-6-gemini", "claude-sonnet-4-6",
-    "claude-sonnet-4-5", "gemini-3.1-pro", "gemini-3-flash",
-    "anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6",
-    "anthropic/claude-haiku-4.5", "openai/gpt-5.2",
-    "google/gemini-3-flash-preview", "x-ai/grok-4.1-fast",
-    "gpt-5.2", "gpt-5.3-codex",
+    # Duojie
+    "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.6-sol-pro",
+    "glm-5.3-flash", "grok-4.6", "grok-4.5",
+    # OpenRouter
+    "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
+    "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
+    "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
+    "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
+    "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3",
+    # DeepSeek 直连
+    "deepseek-v4-flash-vision-exp",
 }
 # tools safe to run off the Qt main thread (no hou.* access)
 BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
@@ -549,7 +571,7 @@ class Controller(QObject):
         super().__init__(parent)
         self._model = model
         self._provider = "duojie"
-        self._model_name = "claude-opus-4-6-max"
+        self._model_name = MODEL_MAP["duojie"][0]
         # 自定义供应商列表（每个含 name/base_url/api_key/anthropic/models[]，
         # 每个模型带 name/context/vision）。激活键形如 "custom:<id>"。
         self._custom_providers = []

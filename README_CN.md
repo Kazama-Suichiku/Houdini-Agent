@@ -36,11 +36,11 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 
 | 提供商 | 模型 | 说明 |
 |--------|------|------|
-| **DeepSeek** | `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-chat`*、`deepseek-reasoner`* | V4：显式 thinking 参数 + reasoning_effort；*旧模型 2026/07/24 废弃 |
+| **DeepSeek** | `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp` | V4：显式 thinking 参数 + reasoning_effort；1M 上下文；`deepseek-chat` / `deepseek-reasoner` 已于 2026/07/24 下线 |
 | **智谱 GLM** | `glm-4.7` | 国内访问稳定，原生推理与工具调用 |
-| **OpenAI** | `gpt-5.2`、`gpt-5.3-codex` | 能力强大，完整 Function Calling 与 Vision 支持 |
-| **拼好饭**（中转） | `claude-opus-4-6-gemini`、`claude-opus-4-6-max`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`gemini-3-flash`、`gemini-3.1-pro`、`glm-5-turbo`、`glm-5.1`、`MiniMax-M2.7`、`MiniMax-M2.7-highspeed` | 通过中转接口使用 Claude、Gemini、GLM、MiniMax |
-| **OpenRouter** | `claude-sonnet-4.6`、`claude-opus-4.6`、`gpt-5.2`、`gemini-2.5-pro`、`deepseek-r1`、`grok-4.1-fast`、`llama-4-maverick`、`qwen3-235b` 等 16 个 | 通过单一 API Key 使用所有主流提供商的模型 |
+| **OpenAI** | `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` | GPT-5.6 系列（1M 上下文），完整 Function Calling 与 Vision 支持 |
+| **拼好饭**（中转） | `claude-opus-5`、`claude-sonnet-5`、`claude-opus-4-8`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5`、`gpt-5.6-sol-pro`、`glm-5.3`、`glm-5.3-flash`、`glm-5.2`、`glm-5-turbo`、`grok-4.6`、`grok-4.5`、`deepseek-v4-flash` | 通过中转接口使用 Claude、GPT、GLM、Grok、DeepSeek（清单与中转站实时 `/v1/models` 一致） |
+| **OpenRouter** | `claude-opus-5`、`claude-sonnet-5`、`claude-opus-4.8`、`claude-haiku-4.5`、`gpt-5.6-sol/terra/luna`、`gpt-5.5`、`gemini-3.8-flash`、`gemini-3.1-pro-preview`、`deepseek-v4-flash/pro`、`glm-5.3`、`grok-4.6`、`kimi-k3`、`minimax-m3` 共 16 个 | 通过单一 API Key 使用所有主流提供商的模型 |
 | **自定义** | 用户可配置 | 任何 OpenAI 兼容端点（LM Studio、vLLM 等）；可配置 URL、API Key、模型名、上下文限制、Vision 和 FC 支持 |
 
 ### 图片/多模态输入
@@ -50,7 +50,7 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 - **文件选择器** — 点击「Img」按钮从磁盘选择图片
 - **图片预览** — 发送前在输入框上方显示缩略图，支持单独移除；**点击缩略图可放大查看**（弹出全尺寸预览窗口）
 - **模型感知** — 自动检测当前模型是否支持视觉；不支持的模型会给出明确提示
-- 已支持：OpenAI GPT-5.2/5.3、Claude（所有变体）、Gemini
+- 已支持：OpenAI GPT-5.5/5.6、Claude（所有变体）、Gemini、Grok
 
 ### QML/Qt Quick 界面（Mono Editorial）
 
