@@ -36,11 +36,11 @@ User request → AI plans → call tools → inspect results → call more tools
 
 | Provider | Models | Notes |
 |----------|--------|-------|
-| **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-chat`*, `deepseek-reasoner`* | V4: explicit thinking param + reasoning_effort; *old models deprecated 2026/07/24 |
+| **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4-flash-vision-exp` | V4: explicit thinking param + reasoning_effort; 1M context; `deepseek-chat` / `deepseek-reasoner` retired 2026/07/24 |
 | **GLM (Zhipu AI)** | `glm-4.7` | Stable in China, native reasoning & tool calling |
-| **OpenAI** | `gpt-5.2`, `gpt-5.3-codex` | Powerful, full Function Calling & Vision support |
-| **Duojie** (relay) | `claude-opus-4-6-gemini`, `claude-opus-4-6-max`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `gemini-3-flash`, `gemini-3.1-pro`, `glm-5-turbo`, `glm-5.1`, `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | Claude, Gemini, GLM, MiniMax via relay endpoint |
-| **OpenRouter** | `claude-sonnet-4.6`, `claude-opus-4.6`, `gpt-5.2`, `gemini-2.5-pro`, `deepseek-r1`, `grok-4.1-fast`, `llama-4-maverick`, `qwen3-235b` + 8 more | 16 models from all major providers via single API key |
+| **OpenAI** | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | GPT-5.6 family (1M context), full Function Calling & Vision support |
+| **Duojie** (relay) | `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.6-sol-pro`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `glm-5-turbo`, `grok-4.6`, `grok-4.5`, `deepseek-v4-flash` | Claude, GPT, GLM, Grok, DeepSeek via relay endpoint (list mirrors the relay's live `/v1/models`) |
+| **OpenRouter** | `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4.8`, `claude-haiku-4.5`, `gpt-5.6-sol/terra/luna`, `gpt-5.5`, `gemini-3.8-flash`, `gemini-3.1-pro-preview`, `deepseek-v4-flash/pro`, `glm-5.3`, `grok-4.6`, `kimi-k3`, `minimax-m3` | 16 models from all major providers via single API key |
 | **Custom** | User-configurable | Any OpenAI-compatible endpoint (LM Studio, vLLM, etc.); configurable URL, API Key, model name, context limit, vision & FC support |
 
 ### Vision / Image Input
@@ -50,7 +50,7 @@ User request → AI plans → call tools → inspect results → call more tools
 - **File picker** — click the "Img" button to select images from disk
 - **Image preview** — thumbnails displayed above the input box before sending, with remove buttons; **click any thumbnail to enlarge** in a full-size preview dialog
 - **Model-aware** — automatically checks if the current model supports vision; non-vision models show a clear warning
-- Supported: OpenAI GPT-5.2/5.3, Claude (all variants), Gemini
+- Supported: OpenAI GPT-5.5/5.6, Claude (all variants), Gemini, Grok
 
 ### QML/Qt Quick UI (Mono Editorial)
 

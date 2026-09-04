@@ -33,8 +33,10 @@ class AIClientProvidersMixin:
     DUOJIE_ANTHROPIC_API_URL = "https://api.duojie.games/v1/messages"  # 拼好饭中转站（Anthropic 协议）
     OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"  # OpenRouter（OpenAI 兼容）
 
-    # 使用 Anthropic 协议的 Duojie 模型（GLM 系等）
-    _DUOJIE_ANTHROPIC_MODELS = frozenset({'glm-4.7', 'glm-5', 'glm-5-turbo', 'glm-5.1'})
+    # 使用 Anthropic 协议的 Duojie 模型
+    # 2026-09 对齐：Duojie 的 GLM 系已只暴露 openai 端点，Claude 系两种协议都支持；
+    # 统一走 OpenAI 协议，此集合留空（协议适配层仍供 Custom provider 使用）
+    _DUOJIE_ANTHROPIC_MODELS = frozenset()
 
     # Custom provider 运行时配置
     _CUSTOM_API_URL: str = ''
@@ -268,12 +270,13 @@ class AIClientProvidersMixin:
 
     def _get_default_model(self, provider: str) -> str:
         defaults = {
-            'openai': 'gpt-5.2',
+            'openai': 'gpt-5.6-sol',
             'deepseek': 'deepseek-v4-flash',
             'glm': 'glm-4.7',
-            'openrouter': 'anthropic/claude-sonnet-4.6',
+            'duojie': 'claude-opus-5',
+            'openrouter': 'anthropic/claude-sonnet-5',
         }
-        return defaults.get(provider, 'gpt-5.2')
+        return defaults.get(provider, 'gpt-5.6-sol')
 
     @staticmethod
     def is_reasoning_model(model: str) -> bool:

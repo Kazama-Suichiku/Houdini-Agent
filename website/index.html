@@ -636,7 +636,7 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
           <a class="btn solid" href="#download"><span class="zh">立即下载</span><span class="en">Download</span></a>
           <a class="btn" href="#generation"><span class="zh">看 3D 生成</span><span class="en">See 3D gen</span></a>
           <a class="btn meshy js-meshy-api" href="https://www.meshy.ai/settings/api" target="_blank" rel="noopener"><img class="meshy-ico" src="assets/meshy-logo.svg" alt="" /><span class="zh">获取 Meshy API Key</span><span class="en">Get Meshy key</span></a>
-          <span class="ver">v2.0.14</span>
+          <span class="ver">v2.0.15</span>
         </div>
         <div class="hero-stats">
           <div class="hstat"><div class="n"><em class="cnt" data-to="50">0</em>+</div><div class="l"><span class="zh">内置工具</span><span class="en">Built-in tools</span></div></div>
@@ -1160,12 +1160,12 @@ footer{border-top:1px solid var(--border);padding:54px 0 40px;margin-top:30px}
       <p><span class="zh">云端、中转、本地、自定义端点 — 一个面板里随时切换提供商与模型。</span><span class="en">Cloud, relay, local, custom endpoints — switch provider and model from one panel.</span></p>
     </div>
     <div class="prov-grid" data-stagger>
-      <div class="prov"><div class="pn">DeepSeek</div><div class="pk">Reasoning</div><div class="pm"><code>deepseek-v4-flash</code><code>deepseek-v4-pro</code></div></div>
+      <div class="prov"><div class="pn">DeepSeek</div><div class="pk">Reasoning</div><div class="pm"><code>deepseek-v4-flash</code><code>deepseek-v4-pro</code><code>deepseek-v4-flash-vision-exp</code></div></div>
       <div class="prov"><div class="pn">智谱 GLM</div><div class="pk">Stable in CN</div><div class="pm"><code>glm-4.7</code></div></div>
-      <div class="prov"><div class="pn">OpenAI</div><div class="pk">Function calling · Vision</div><div class="pm"><code>gpt-5.2</code><code>gpt-5.3-codex</code></div></div>
+      <div class="prov"><div class="pn">OpenAI</div><div class="pk">Function calling · Vision</div><div class="pm"><code>gpt-5.6-sol</code><code>gpt-5.6-terra</code><code>gpt-5.5</code></div></div>
       <div class="prov"><div class="pn">Custom</div><div class="pk"><span class="zh">任意 OpenAI 兼容端点</span><span class="en">Any OpenAI-compatible endpoint</span></div><div class="pm"><code>LM Studio</code><code>vLLM</code><code>self-hosted</code></div></div>
-      <div class="prov"><div class="pn"><span class="zh">拼好饭 中转</span><span class="en">Relay</span></div><div class="pk">Claude · Gemini · MiniMax</div><div class="pm"><code>claude-opus-4-6</code><code>gemini-3.1-pro</code><code>MiniMax-M2.7</code></div></div>
-      <div class="prov"><div class="pn">OpenRouter</div><div class="pk">16+ models · one key</div><div class="pm"><code>claude-opus-4.6</code><code>gpt-5.2</code><code>grok-4.1-fast</code></div></div>
+      <div class="prov"><div class="pn"><span class="zh">拼好饭 中转</span><span class="en">Relay</span></div><div class="pk">Claude · GPT · GLM · Grok</div><div class="pm"><code>claude-opus-5</code><code>gpt-5.6-sol</code><code>glm-5.3</code></div></div>
+      <div class="prov"><div class="pn">OpenRouter</div><div class="pk">16+ models · one key</div><div class="pm"><code>claude-opus-5</code><code>gpt-5.6-sol</code><code>grok-4.6</code></div></div>
     </div>
   </div>
 </section>
@@ -1484,10 +1484,11 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
     <div class="sec-head reveal">
       <div class="kicker"><span class="ln"></span><span class="ml accent">11 — Changelog</span></div>
       <h2><span class="zh">持续<em>迭代</em>。</span><span class="en">Shipping, <em>continuously</em>.</span></h2>
-      <p><span class="zh">当前版本 v2.0.14。一个拥有 50+ 工具、能生成并绑定 / 动画 3D 角色的自主 Agent。</span><span class="en">Currently v2.0.14. An autonomous agent with 50+ tools that generates, rigs and animates 3D characters.</span></p>
+      <p><span class="zh">当前版本 v2.0.15。一个拥有 50+ 工具、能生成并绑定 / 动画 3D 角色的自主 Agent。</span><span class="en">Currently v2.0.15. An autonomous agent with 50+ tools that generates, rigs and animates 3D characters.</span></p>
     </div>
     <div class="timeline" data-stagger>
-      <div class="tl now"><div class="tlv">v2.0.14</div><div class="tlt"><span class="zh">应用内一键更新</span><span class="en">One-click in-app updates</span></div><div class="tld"><span class="zh">发现新版本时，主界面横幅点「立即更新」即可自动下载、安装并重启——无需再手动去官网下载。带下载进度显示，失败可一键重试。</span><span class="en">When a new version is available, click "Update now" in the in-app banner to download, install and restart automatically — no more manual downloads. With download progress and one-click retry on failure.</span></div></div>
+      <div class="tl now"><div class="tlv">v2.0.15</div><div class="tlt"><span class="zh">模型阵容对齐：Claude 5 · GPT-5.6 · DeepSeek V4 · GLM-5.3</span><span class="en">Model lineup refresh: Claude 5 · GPT-5.6 · DeepSeek V4 · GLM-5.3</span></div><div class="tld"><span class="zh">四个渠道的模型列表与各家当前目录对齐：拼好饭中转按其实时模型清单更新（Claude Opus 5 / Sonnet 5 / Opus 4.8、GPT-5.6 Sol / Terra / Luna、GPT-5.5、GLM-5.3 系列、Grok 4.6 / 4.5、DeepSeek V4 Flash）；OpenRouter 换上 Claude 5、GPT-5.6、Gemini 3.8 Flash、DeepSeek V4、GLM-5.3、Grok 4.6、Kimi K3、MiniMax M3；OpenAI 直连切到 GPT-5.6 系列；DeepSeek 去掉已下线的旧模型并加入 V4 视觉实验版。上下文上限、视觉能力与计费表全部同步，OpenRouter 模型的费用统计此前一直按默认价，已修正。</span><span class="en">All four providers now match their current catalogs: the Duojie relay follows its live model list (Claude Opus 5 / Sonnet 5 / Opus 4.8, GPT-5.6 Sol / Terra / Luna, GPT-5.5, the GLM-5.3 family, Grok 4.6 / 4.5, DeepSeek V4 Flash); OpenRouter moves to Claude 5, GPT-5.6, Gemini 3.8 Flash, DeepSeek V4, GLM-5.3, Grok 4.6, Kimi K3 and MiniMax M3; OpenAI direct switches to the GPT-5.6 family; DeepSeek drops the retired models and adds the V4 vision preview. Context limits, vision flags and pricing are all in sync, and OpenRouter cost tracking, which silently used default rates before, is fixed.</span></div></div>
+      <div class="tl"><div class="tlv">v2.0.14</div><div class="tlt"><span class="zh">应用内一键更新</span><span class="en">One-click in-app updates</span></div><div class="tld"><span class="zh">发现新版本时，主界面横幅点「立即更新」即可自动下载、安装并重启——无需再手动去官网下载。带下载进度显示，失败可一键重试。</span><span class="en">When a new version is available, click "Update now" in the in-app banner to download, install and restart automatically — no more manual downloads. With download progress and one-click retry on failure.</span></div></div>
       <div class="tl"><div class="tlv">v2.0.13</div><div class="tlt"><span class="zh">启动脚本热修复</span><span class="en">Startup-script hotfix</span></div><div class="tld"><span class="zh">修复 v2.0.12 启动脚本在 Houdini 内报错（NameError: __file__）导致 Bridge 无法自启的问题。v2.0.12 用户请直接升级。</span><span class="en">Fixes the v2.0.12 startup script erroring inside Houdini (NameError: __file__), which prevented the bridge from auto-starting. v2.0.12 users should upgrade directly.</span></div></div>
       <div class="tl"><div class="tlv">v2.0.12</div><div class="tlt"><span class="zh">集成包安装修复</span><span class="en">Integration package install fix</span></div><div class="tld"><span class="zh">修复「文档」目录被移动 / 重定向（移到其他盘、OneDrive）时集成包装错位置、Houdini 始终连不上的问题：现在按系统真实文档路径写入全部候选目录，启动脚本位置覆盖各版本 Houdini；连接自检能直接指出此类问题。</span><span class="en">Fixes the integration package landing in the wrong place when Documents is relocated or redirected (another drive, OneDrive), which made Houdini never connect: packages are now written to every candidate location using the real Documents path, with startup-script locations covering all Houdini versions; the connection self-check now pinpoints this case.</span></div></div>
       <div class="tl"><div class="tlv">v2.0.11</div><div class="tlt"><span class="zh">离线可用 · 自动重连 · Agent 连接自检</span><span class="en">Works offline · auto-reconnect · agent self-diagnosis</span></div><div class="tld"><span class="zh">未连接 Houdini 时聊天、配置 API Key 与 Meshy 生成也完全可用；连接改为常驻心跳——断开自动提示、恢复自动重连，Bridge 换端口自动发现；Agent 新增连接自检与修复工具，可排查原因、重装集成包、甚至替你启动 Houdini。</span><span class="en">Chat, API-key setup and Meshy generation now work fully without Houdini; a persistent heartbeat auto-detects disconnects, reconnects automatically and discovers port changes; new agent tools diagnose connection issues, reinstall the integration package and can even launch Houdini for you.</span></div></div>
@@ -1553,7 +1554,7 @@ launcher.<span class="fn">show_tool</span>()  <span class="com"># 在 Houdini �
     <div class="dl reveal">
       <h2><span class="zh">把 AI 装进<em>你的节点网络</em>。</span><span class="en">Put AI <em>in your node graph</em>.</span></h2>
       <p><span class="zh">免费、开源。下载独立程序，自动连接 Houdini —— 无需配置 Python。建网、写 VEX、生成 3D 资产，全在一句话之间。</span><span class="en">Free and open source. Download the standalone app — it connects to Houdini, no Python setup. Build networks, write VEX, generate 3D assets — all a sentence away.</span></p>
-      <div class="reqline">v2.0.14 · Houdini 19.5+ (经 Bridge) / 21+ · Windows · macOS · Linux · MIT</div>
+      <div class="reqline">v2.0.15 · Houdini 19.5+ (经 Bridge) / 21+ · Windows · macOS · Linux · MIT</div>
       <div class="dl-cta">
         <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download><span class="zh">下载安装程序</span><span class="en">Download installer</span></a>
         <a class="btn" href="/downloads/"><span class="zh">所有版本</span><span class="en">All versions</span></a>

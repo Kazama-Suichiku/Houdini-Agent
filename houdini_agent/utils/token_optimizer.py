@@ -79,18 +79,30 @@ def count_tokens(text: str, model: str = '') -> int:
 # input_cache: 缓存命中时的输入价格
 # reasoning: 推理 token 的输出价格（若无则用 output）
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    # ---- DeepSeek ----
-    'deepseek-v4-flash':    {'input': 0.27,  'input_cache': 0.07,  'output': 1.10},
-    'deepseek-v4-pro':      {'input': 0.55,  'input_cache': 0.14,  'output': 2.19, 'reasoning': 2.19},
+    # ---- DeepSeek（官方标准时段价） ----
+    'deepseek-v4-flash-vision-exp': {'input': 0.44, 'input_cache': 0.014, 'output': 1.32, 'reasoning': 1.32},
+    'deepseek-v4-flash':    {'input': 0.44,  'input_cache': 0.014, 'output': 1.32, 'reasoning': 1.32},
+    'deepseek-v4-pro':      {'input': 1.32,  'input_cache': 0.044, 'output': 3.96, 'reasoning': 3.96},
     'deepseek-chat':        {'input': 0.27,  'input_cache': 0.07,  'output': 1.10},
     'deepseek-reasoner':    {'input': 0.55,  'input_cache': 0.14,  'output': 2.19, 'reasoning': 2.19},
     # ---- OpenAI ----
+    'gpt-5.6-sol-pro':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
+    'gpt-5.6-sol':          {'input': 4.00,  'input_cache': 0.40,  'output': 20.00, 'reasoning': 20.00},
+    'gpt-5.6-terra':        {'input': 2.00,  'input_cache': 0.20,  'output': 12.00, 'reasoning': 12.00},
+    'gpt-5.6-luna':         {'input': 0.20,  'input_cache': 0.02,  'output': 1.20,  'reasoning': 1.20},
+    'gpt-5.5':              {'input': 5.00,  'input_cache': 0.50,  'output': 30.00, 'reasoning': 30.00},
+    'gpt-5.4':              {'input': 2.50,  'input_cache': 0.25,  'output': 15.00, 'reasoning': 15.00},
     'gpt-5.2':              {'input': 2.50,  'input_cache': 1.25,  'output': 10.00},
     'gpt-5.3-codex':        {'input': 3.00,  'input_cache': 1.50,  'output': 12.00},
     'o3':                   {'input': 10.00, 'input_cache': 2.50,  'output': 40.00, 'reasoning': 40.00},
     'o3-mini':              {'input': 1.10,  'input_cache': 0.55,  'output': 4.40,  'reasoning': 4.40},
     'o4-mini':              {'input': 1.10,  'input_cache': 0.275, 'output': 4.40,  'reasoning': 4.40},
-    # ---- Claude (via Duojie) ----
+    # ---- Claude (Duojie / OpenRouter；OpenRouter 的 4.8 写法为 claude-opus-4.8) ----
+    'claude-opus-5':        {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
+    'claude-sonnet-5':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
+    'claude-opus-4-8':      {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
+    'claude-opus-4.8':      {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
+    'claude-fable-5.1':     {'input': 10.00, 'input_cache': 0.25,  'output': 50.00, 'reasoning': 50.00},
     'claude-opus-4-5':      {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
     'claude-opus-4-5-kiro': {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
     'claude-opus-4-5-max':  {'input': 15.00, 'input_cache': 1.50,  'output': 75.00, 'reasoning': 75.00},
@@ -104,14 +116,23 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     # ---- Gemini ----
     'gemini-3-pro-image-preview': {'input': 1.25, 'input_cache': 0.30, 'output': 10.00},
     'gemini-3-flash':       {'input': 0.50,  'input_cache': 0.125, 'output': 3.00},
-    'gemini-3.1-pro':       {'input': 1.25,  'input_cache': 0.30,  'output': 10.00},
+    'gemini-3.1-pro':       {'input': 2.00,  'input_cache': 0.20,  'output': 12.00},
+    'gemini-3.8-flash':     {'input': 0.75,  'input_cache': 0.075, 'output': 3.75},
     # ---- GLM (智谱清言) ----
     'glm-4.7':              {'input': 0.50,  'input_cache': 0.50,  'output': 0.50},
-    'glm-5-turbo':          {'input': 0.50,  'input_cache': 0.50,  'output': 0.50},
-    'glm-5.1':              {'input': 0.50,  'input_cache': 0.50,  'output': 0.50},
+    'glm-5-turbo':          {'input': 1.20,  'input_cache': 0.24,  'output': 4.00},
+    'glm-5.1':              {'input': 0.97,  'input_cache': 0.18,  'output': 3.04},
+    'glm-5.2':              {'input': 0.97,  'input_cache': 0.19,  'output': 3.04},
+    'glm-5.3-flash':        {'input': 0.07,  'input_cache': 0.015, 'output': 0.25},
+    'glm-5.3':              {'input': 1.40,  'input_cache': 0.14,  'output': 4.40},
+    # ---- Grok ----
+    'grok-4.6':             {'input': 2.00,  'input_cache': 0.50,  'output': 6.00, 'reasoning': 6.00},
+    'grok-4.5':             {'input': 2.00,  'input_cache': 0.30,  'output': 6.00, 'reasoning': 6.00},
     # ---- Kimi ----
+    'kimi-k3':              {'input': 3.00,  'input_cache': 0.30,  'output': 15.00},
     'kimi-k2.5':            {'input': 2.00,  'input_cache': 0.50,  'output': 8.00},
     # ---- MiniMax ----
+    'minimax-m3':           {'input': 0.30,  'input_cache': 0.06,  'output': 1.20},
     'MiniMax-M2.5':         {'input': 1.00,  'input_cache': 0.25,  'output': 4.00},
     'MiniMax-M2.7':         {'input': 1.00,  'input_cache': 0.25,  'output': 4.00},
     'MiniMax-M2.7-highspeed': {'input': 1.00, 'input_cache': 0.25, 'output': 4.00},
@@ -131,13 +152,25 @@ def _match_pricing(model: str) -> Dict[str, float]:
     if not model:
         return _DEFAULT_PRICING
     m = model.lower().strip()
-    # 精确匹配
-    if m in MODEL_PRICING:
-        return MODEL_PRICING[m]
+    # OpenRouter 形式 "vendor/model" → 去掉厂商前缀再匹配
+    if '/' in m:
+        m = m.rsplit('/', 1)[-1]
+    # 精确匹配（表中 key 大小写不一，统一小写比较）
+    lowered = {k.lower(): v for k, v in MODEL_PRICING.items()}
+    if m in lowered:
+        return lowered[m]
     # 前缀匹配（如 claude-sonnet-4-5-xxx → claude-sonnet-4-5）
-    for key in sorted(MODEL_PRICING.keys(), key=len, reverse=True):
+    for key in sorted(lowered.keys(), key=len, reverse=True):
         if m.startswith(key):
-            return MODEL_PRICING[key]
+            return lowered[key]
+    # 版本号写法归一（OpenRouter claude-haiku-4.5 ↔ Anthropic claude-haiku-4-5）
+    normalized = {k.replace('.', '-'): v for k, v in lowered.items()}
+    mn = m.replace('.', '-')
+    if mn in normalized:
+        return normalized[mn]
+    for key in sorted(normalized.keys(), key=len, reverse=True):
+        if mn.startswith(key):
+            return normalized[key]
     return _DEFAULT_PRICING
 
 
