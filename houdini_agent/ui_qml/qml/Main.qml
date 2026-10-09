@@ -72,7 +72,8 @@ Rectangle {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: !controller || controller.updateState !== "downloading"
+                    visible: !controller || (controller.updateState !== "downloading"
+                                             && controller.updateState !== "installing")
                     text: "✕"; color: Theme.textMute; font.pixelSize: Theme.fSm
                     MouseArea { anchors.fill: parent; anchors.margins: -6; cursorShape: Qt.PointingHandCursor
                         onClicked: if (controller) controller.dismissUpdate() }
