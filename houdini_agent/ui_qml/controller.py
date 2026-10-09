@@ -2054,8 +2054,9 @@ class Controller(QObject):
 
     @Slot()
     def dismissUpdate(self):
-        if self._update_state == "downloading":
-            return                      # 下载中不允许关横幅（没有取消语义）
+        if self._update_state in ("downloading", "installing"):
+            return                      # 下载 / 安装中不允许关横幅（没有取消语义）
+        self._stop_update_timers()      # "waiting" 时关横幅 = 取消待安装
         self._update_info = None
         self._update_state = ""
         self._update_progress = 0
@@ -2077,7 +2078,7 @@ class Controller(QObject):
     def startUpdate(self):
         """一键更新：下载新版安装包 → 拉起静默安装 → 退出应用（装完自动重启）。
         仅打包 exe 可用；源码运行没有可覆盖的安装，引导去官网。"""
-        if self._update_state == "downloading":
+        if self._update_state in ("downloading", "waiting", "installing"):
             return
         if not getattr(sys, "frozen", False):
             try:
@@ -2123,33 +2124,107 @@ class Controller(QObject):
             self._update_info = "更新下载失败：%s — 点「立即更新」重试" % (message or "")[:80]
             self._update_state = "available"
         elif state == "ready":
-            self._update_info = "下载完成，正在安装并重启…"
-            self.updateAvailableChanged.emit()
-            try:
-                from houdini_agent.utils.updater import launch_installer
-                launch_installer(self._update_installer_path)
-            except Exception as e:
-                self._update_info = "启动安装器失败：%s" % e
-                self._update_state = "available"
-                self.updateAvailableChanged.emit()
-                return
-            # 立刻退出让出文件占用；closeAllWindows 会触发窗口的保存逻辑
-            try:
-                self._snapshot_active()
-                self._save_all()
-            except Exception:
-                pass
-            def _quit():
-                try:
-                    from PySide6.QtWidgets import QApplication
-                except ImportError:
-                    from PySide2.QtWidgets import QApplication
-                app = QApplication.instance()
-                if app is not None:
-                    app.closeAllWindows()
-                    QTimer.singleShot(200, app.quit)
-            QTimer.singleShot(300, _quit)
+            self._try_install()
+            return
         self.updateAvailableChanged.emit()
+
+    # ---- 安装阶段（主线程） ----
+    # 1) Agent 正在回答或还有后台 Meshy 任务时不安装（安装要退出应用，会打断它们），
+    #    进入 waiting，空闲后自动继续；
+    # 2) 拉起安装器后先不退出：等安装器进度窗口出现（已过 UAC、开始安装）再保存退出；
+    #    安装器先于窗口退出 = 取消授权或出错，应用保持运行并提示重试。
+    def _update_busy(self):
+        if self._running:
+            return True
+        try:
+            with self._meshy_bg_lock:
+                return any(not (v or {}).get("done") for v in self._meshy_bg.values())
+        except Exception:
+            return False
+
+    def _stop_update_timers(self):
+        for name in ("_update_wait_timer", "_update_watch_timer"):
+            t = getattr(self, name, None)
+            if t is not None:
+                t.stop()
+
+    def _update_timer(self, name, interval, slot):
+        t = getattr(self, name, None)
+        if t is None:
+            t = QTimer(self)
+            t.setInterval(interval)
+            t.timeout.connect(slot)
+            setattr(self, name, t)
+        return t
+
+    def _try_install(self):
+        if self._update_busy():
+            self._update_state = "waiting"
+            self._update_progress = 100
+            self._update_info = "新版本已下载，等当前任务结束后自动安装并重启（关闭横幅可取消）"
+            self.updateAvailableChanged.emit()
+            self._update_timer("_update_wait_timer", 1500, self._try_install).start()
+            return
+        self._stop_update_timers()
+        self._begin_install()
+
+    def _begin_install(self):
+        try:
+            from houdini_agent.utils.updater import launch_installer
+            proc = launch_installer(self._update_installer_path)
+        except Exception as e:
+            self._update_state = "available"
+            self._update_info = "启动安装器失败：%s — 点「立即更新」重试" % e
+            self.updateAvailableChanged.emit()
+            return
+        if proc is None:
+            # 拿不到进程句柄（ShellExecute 兜底），无法判断授权结果，只能按旧方式退出
+            self._update_info = "正在安装并重启…"
+            self.updateAvailableChanged.emit()
+            self._quit_for_update()
+            return
+        self._update_proc = proc
+        self._update_state = "installing"
+        self._update_info = "正在启动安装程序…如弹出管理员授权，请点「是」"
+        self.updateAvailableChanged.emit()
+        self._update_timer("_update_watch_timer", 300, self._install_watch).start()
+
+    def _install_watch(self):
+        from houdini_agent.utils.updater import install_watch_step, installer_window_visible
+        proc = getattr(self, "_update_proc", None)
+        code = proc.poll() if proc is not None else 0
+        action, reason = install_watch_step(installer_window_visible(), code)
+        if action == "wait":
+            return
+        self._stop_update_timers()
+        self._update_proc = None
+        if action == "quit":
+            self._update_info = "正在安装，应用即将关闭并自动重启…"
+            self.updateAvailableChanged.emit()
+            self._quit_for_update()
+        else:
+            self._update_state = "available"
+            self._update_info = "%s。点「立即更新」重试" % reason
+            self.updateAvailableChanged.emit()
+
+    def _quit_for_update(self):
+        """保存会话后退出，让安装器替换文件（装完由安装器重启应用）。"""
+        try:
+            self._snapshot_active()
+            self._save_all()
+        except Exception:
+            pass
+
+        def _quit():
+            try:
+                from PySide6.QtWidgets import QApplication
+            except ImportError:
+                from PySide2.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.closeAllWindows()
+                QTimer.singleShot(200, app.quit)
+        QTimer.singleShot(300, _quit)
 
     @Slot(str, result=bool)
     def copyToClipboard(self, text):

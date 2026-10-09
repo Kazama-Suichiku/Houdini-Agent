@@ -434,13 +434,17 @@ def download_installer(progress_callback=None, url=None) -> dict:
     return {'success': False, 'path': '', 'error': "；".join(errors) or "没有可用的下载地址"}
 
 
-def launch_installer(path) -> bool:
-    """拉起 Inno 安装器静默覆盖安装（需要提权时会弹一次 UAC）。调用方随后应立即
-    退出应用，避免文件占用；安装器 [Run] 段在静默模式下会自动重启应用。"""
+def launch_installer(path):
+    """拉起 Inno 安装器静默覆盖安装。返回可 poll() 的进程对象；只能走 ShellExecute
+    兜底时返回 None（拿不到进程句柄，调用方只能按旧方式直接退出）。
+
+    调用方不要立刻退出：装在 Program Files 时 Inno 会自己弹 UAC，用户点"否"安装就不会
+    进行。应等 installer_window_visible() 为真（已过授权、开始安装）再退出，
+    进程先于窗口结束则说明被取消或失败。安装器 [Run] 段在静默模式下会自动重启应用。"""
     import subprocess
     args = "/SILENT /NORESTART /SUPPRESSMSGBOXES"
     try:
-        subprocess.Popen(
+        return subprocess.Popen(
             [str(path)] + args.split(),
             close_fds=True,
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
@@ -448,7 +452,61 @@ def launch_installer(path) -> bool:
     except OSError:
         # WinError 740（需要提权）等：改走 ShellExecute，由系统弹 UAC
         os.startfile(str(path), "open", args)   # noqa: S606
-    return True
+        return None
+
+
+# Inno 安装器开始安装时出现的进度窗口（实测 /SILENT 下类名 TWizardForm、
+# 标题 "Setup - Houdini Agent <版本>"）。需要管理员时它在 UAC 通过后才出现。
+_INSTALLER_WINDOW_CLASS = "TWizardForm"
+_INSTALLER_WINDOW_TITLE = "Setup - Houdini Agent"
+
+
+def installer_window_visible() -> bool:
+    """当前是否有我们的安装器进度窗口（= 已过授权、正在安装）。非 Windows 恒为 False。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        user32 = ctypes.windll.user32
+        found = [False]
+        proc_t = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+
+        def cb(hwnd, _):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value != _INSTALLER_WINDOW_CLASS:
+                return True
+            n = user32.GetWindowTextLengthW(hwnd)
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buf, n + 1)
+            if buf.value.startswith(_INSTALLER_WINDOW_TITLE):
+                found[0] = True
+                return False
+            return True
+
+        user32.EnumWindows(proc_t(cb), 0)
+        return found[0]
+    except Exception:
+        return False
+
+
+def install_watch_step(window_visible: bool, exit_code):
+    """安装器拉起后的一次轮询判断。
+    返回 ("quit", "") —— 已开始安装（或已装完），应用应保存并退出让安装器替换文件；
+         ("failed", 原因) —— 安装器没开始安装就退出了（取消授权 / 出错），应用保持运行；
+         ("wait", "") —— 还在等（例如 UAC 弹窗尚未处理）。"""
+    if window_visible:
+        return "quit", ""
+    if exit_code is None:
+        return "wait", ""
+    if exit_code == 0:
+        return "quit", ""
+    if exit_code in (2, 5):
+        return "failed", "安装已取消（可能拒绝了管理员授权）"
+    return "failed", "安装程序异常退出（退出码 %s）" % exit_code
 
 
 # ==========================================================

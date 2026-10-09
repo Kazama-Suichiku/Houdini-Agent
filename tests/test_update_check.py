@@ -218,3 +218,28 @@ def test_shared_leaked_install_id_is_regenerated(tmp_path, monkeypatch):
     iid = telemetry.install_id()
     assert iid and iid != leaked
     assert (tmp_path / "install_id").read_text(encoding="utf-8") == iid
+
+
+# ---------------------------------------------------------------- install phase decisions
+class TestInstallWatchStep:
+    def test_window_means_installing_quit_now(self):
+        assert updater.install_watch_step(True, None) == ("quit", "")
+
+    def test_still_waiting_for_uac(self):
+        assert updater.install_watch_step(False, None) == ("wait", "")
+
+    def test_cancelled_before_install_keeps_app_running(self):
+        for code in (2, 5):
+            action, reason = updater.install_watch_step(False, code)
+            assert action == "failed" and "管理员授权" in reason
+
+    def test_other_failure_reports_exit_code(self):
+        action, reason = updater.install_watch_step(False, 3)
+        assert action == "failed" and "3" in reason
+
+    def test_finished_without_window_still_quits(self):
+        assert updater.install_watch_step(False, 0) == ("quit", "")
+
+
+def test_installer_window_detection_is_safe_without_installer():
+    assert updater.installer_window_visible() is False
