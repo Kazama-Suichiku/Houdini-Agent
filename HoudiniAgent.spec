@@ -18,11 +18,18 @@ def datas_for(path, dest=None):
 
 datas = []
 datas += datas_for("lib", "lib")
-datas += datas_for("config", "config")
+# 只打包仓库里跟踪的配置文件。config/houdini_ai.ini（API key、遥测 ID）和 templates.json
+# 是开发机本地文件、已被 .gitignore；以前整目录打包，会把开发者的 key 和遥测 ID
+# 发给所有用户，并在每次覆盖安装时冲掉用户自己保存的配置。
+datas += datas_for("config/plugins.json", "config")
+datas += datas_for("config/user_rules.json", "config")
 datas += datas_for("rules", "rules")
 datas += datas_for("plugins", "plugins")
 datas += datas_for("trainData", "trainData")
 datas += datas_for("VERSION", ".")
+# Houdini 侧从 bridge_payload 加载代码；没有这份 VERSION，那里的更新检查会读到 0.0.0，
+# 永远提示"发现新版本"。
+datas += datas_for("VERSION", "bridge_payload")
 datas += datas_for("assets/houdini-agent.ico", "assets")
 datas += datas_for("houdini_agent", "bridge_payload/houdini_agent")
 # bridge_payload 是 Houdini 侧 bridge server 的加载根（HAGENT_REPO 指向它）。

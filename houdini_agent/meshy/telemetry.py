@@ -56,6 +56,9 @@ _ENV_OFF = ("HAGENT_TELEMETRY_OFF", "DCC_AI_TELEMETRY_OFF")
 _ENV_SEND_PROMPT = ("HAGENT_TELEMETRY_SEND_PROMPT", "DCC_AI_TELEMETRY_SEND_PROMPT")
 _CFG_URL_KEY = "telemetry_url"
 _CFG_INSTALL_KEY = "telemetry_install_id"
+# 2.0.16 及更早的安装包误把开发机的 houdini_ai.ini 打包进去，所有安装都迁移到了同一个
+# install_id。遇到它一律重新生成，让各安装恢复独立身份。
+_SHARED_LEAKED_IDS = frozenset({"7c9edd1e26a2436084f5ff59b572f352"})
 _CFG_OPTOUT_KEY = "telemetry_optout"
 _CFG_SEND_PROMPT_KEY = "telemetry_send_prompt"   # 默认不上报提示词原文（隐私）
 
@@ -213,10 +216,14 @@ def install_id():
             iid = f.read().strip()
     except Exception:
         iid = ""
+    if iid in _SHARED_LEAKED_IDS:
+        iid = ""
     if not iid:
         # 迁移旧的 ini 内 install_id（保持身份连续），没有则新生成
         cfg, _ = load_config("ai", dcc_type="houdini")
-        iid = ((cfg or {}).get(_CFG_INSTALL_KEY) or "").strip() or uuid.uuid4().hex
+        iid = ((cfg or {}).get(_CFG_INSTALL_KEY) or "").strip()
+        if not iid or iid in _SHARED_LEAKED_IDS:
+            iid = uuid.uuid4().hex
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:

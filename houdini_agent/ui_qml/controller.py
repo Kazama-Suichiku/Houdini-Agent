@@ -598,6 +598,9 @@ class Controller(QObject):
     _sigCtxRefresh = Signal()
     # worker -> main thread: 应用内更新状态机 (state, percent, message)
     _sigUpdateState = Signal(str, int, str)
+    # worker -> main thread: 检查到新版本，显示更新横幅。必须走信号：在 Python 后台线程里
+    # 调 QTimer.singleShot 回调永远不会执行（该线程没有事件循环），横幅因此从未出现过。
+    _sigUpdateFound = Signal(str)
 
     def __init__(self, model, use_backend=False, parent=None):
         super().__init__(parent)
@@ -749,6 +752,7 @@ class Controller(QObject):
         self._sigInfo.connect(self._info)
         self._sigCtxRefresh.connect(self.refreshContext)
         self._sigUpdateState.connect(self._on_update_state)
+        self._sigUpdateFound.connect(self._set_update)
 
         # coalesce UI flushes to ~25fps (avoids O(N^2) re-render on long runs)
         self._flush_timer = QTimer(self)
@@ -2064,8 +2068,7 @@ class Controller(QObject):
                 from houdini_agent.utils.updater import check_update
                 r = check_update()
                 if isinstance(r, dict) and r.get("has_update"):
-                    info = "发现新版本 %s" % r.get("remote_version", "")
-                    QTimer.singleShot(0, lambda: self._set_update(info))
+                    self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
             except Exception:
                 pass
         threading.Thread(target=work, daemon=True).start()
@@ -2196,8 +2199,9 @@ class Controller(QObject):
                             "点主界面输入框上方横幅的「立即更新」即可自动下载安装；"
                             "也可到 houdini-agent.com 手动下载。"
                         ) % (r.get("remote_version", "?"), r.get("local_version", "?"), notes)
-                        info = "发现新版本 %s" % r.get("remote_version", "")
-                        QTimer.singleShot(0, lambda: self._set_update(info))
+                        if r.get("stale"):
+                            msg += "\n\n（暂时连不上更新服务器，以上为最近一次成功检查的结果）"
+                        self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
                     else:
                         msg = "已是最新版本。\n\n当前版本：%s\n最新 Release：%s" % (
                             r.get("local_version", "?"), r.get("remote_version", "?"))

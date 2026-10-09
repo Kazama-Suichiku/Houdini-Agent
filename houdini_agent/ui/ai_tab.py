@@ -119,6 +119,9 @@ class AITab(
     _agentError = QtCore.Signal(str)
     _agentStopped = QtCore.Signal()
     _updateTodo = QtCore.Signal(str, str, str)  # (todo_id, text, status)
+    # 后台线程 -> 主线程：文档索引加载完成后重建系统提示词（QTimer.singleShot 在
+    # Python 后台线程里不会触发，必须走信号）
+    _docIndexReady = QtCore.Signal()
     _addNodeOperation = QtCore.Signal(str, object)  # (name, result_dict) ★ 直接传 dict，避免 JSON 序列化/反序列化开销
     _addPythonShell = QtCore.Signal(str, str)  # (code, result_json)
     _addSystemShell = QtCore.Signal(str, str)  # (command, result_json)
@@ -409,9 +412,13 @@ class AITab(
                 get_doc_index()  # 触发单例加载（含 JSON 反序列化）
                 self._doc_index_ready = True
                 # 回主线程重建 prompt
-                QtCore.QTimer.singleShot(0, self._rebuild_system_prompts)
+                self._docIndexReady.emit()
             except Exception as e:
                 print(f"[DocIndex] 后台加载失败: {e}")
+        try:
+            self._docIndexReady.connect(self._rebuild_system_prompts, QtCore.Qt.UniqueConnection)
+        except (RuntimeError, TypeError):
+            pass
         threading.Thread(target=_load, daemon=True).start()
 
     def _build_ui(self):
