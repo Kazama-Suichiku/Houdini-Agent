@@ -25,6 +25,8 @@ Item {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
+            // 只按显示需要解码，避免长会话里几十张全分辨率截图常驻内存
+            sourceSize.width: 1600
         }
     }
 }

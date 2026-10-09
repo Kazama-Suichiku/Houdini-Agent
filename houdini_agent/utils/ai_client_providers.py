@@ -273,7 +273,7 @@ class AIClientProvidersMixin:
             'openai': 'gpt-5.6-sol',
             'deepseek': 'deepseek-v4-flash',
             'glm': 'glm-4.7',
-            'duojie': 'claude-opus-5',
+            'duojie': 'claude-opus-5-5',
             'openrouter': 'anthropic/claude-sonnet-5',
         }
         return defaults.get(provider, 'gpt-5.6-sol')

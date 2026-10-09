@@ -14,6 +14,7 @@ Houdini/API keys), Controller falls back to a simulated streamed reply.
 
 import base64
 import copy
+import hashlib
 import json
 import os
 import re
@@ -43,10 +44,10 @@ ROLE_PAYLOAD = Qt.UserRole + 2
 # Real provider keys + model ids (kept in sync with ui/header.py _model_map)
 # 2026-09 对齐：Duojie 以 /v1/models 实时清单为准；OpenRouter/OpenAI/DeepSeek 以官方目录为准
 MODEL_MAP = {
-    "duojie": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
-               "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.6-sol-pro",
-               "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5-turbo",
-               "grok-4.6", "grok-4.5", "deepseek-v4-flash"],
+    "duojie": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
+               "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
+               "kimi-k3", "grok-4.7", "glm-5.3", "glm-5.3-flash",
+               "deepseek-v4-pro", "deepseek-v4.1-flash"],
     "openrouter": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
                    "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
                    "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
@@ -64,11 +65,12 @@ PROVIDER_LABELS = {
 }
 CONTEXT_LIMITS = {
     # Duojie（中转；Claude 走 200K 保守值）
-    "claude-opus-5": 200000, "claude-sonnet-5": 200000, "claude-opus-4-8": 200000,
-    "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000,
-    "gpt-5.5": 1000000, "gpt-5.6-sol-pro": 1000000,
-    "glm-5.3": 1048576, "glm-5.3-flash": 1048576, "glm-5.2": 1048576, "glm-5-turbo": 200000,
-    "grok-4.6": 500000, "grok-4.5": 500000, "deepseek-v4-flash": 1048576,
+    "claude-opus-5-5": 200000, "claude-sonnet-5-5": 200000, "claude-sonnet-5": 200000,
+    "gpt-6.1-sol": 1000000, "gpt-6-sol": 1000000, "gpt-6-astra": 1000000,
+    "kimi-k3": 1048576, "grok-4.7": 500000,
+    "glm-5.3": 1048576, "glm-5.3-flash": 1048576, "deepseek-v4.1-flash": 1048576,
+    # OpenAI 直连
+    "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000, "gpt-5.5": 1000000,
     # OpenRouter
     "anthropic/claude-opus-5": 1000000, "anthropic/claude-sonnet-5": 1000000,
     "anthropic/claude-opus-4.8": 1000000, "anthropic/claude-haiku-4.5": 200000,
@@ -78,16 +80,18 @@ CONTEXT_LIMITS = {
     "deepseek/deepseek-v4-flash": 1048576, "deepseek/deepseek-v4-pro": 1048576,
     "z-ai/glm-5.3": 1048576, "x-ai/grok-4.6": 500000,
     "moonshotai/kimi-k3": 1048576, "minimax/minimax-m3": 1048576,
-    # DeepSeek 直连
-    "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
+    # DeepSeek 直连（deepseek-v4-pro 也在 Duojie 上）
+    "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
     # GLM 直连
     "glm-4.7": 200000,
 }
 VISION_MODELS = {
     # Duojie
-    "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.6-sol-pro",
-    "glm-5.3-flash", "grok-4.6", "grok-4.5",
+    "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
+    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
+    "kimi-k3", "grok-4.7", "glm-5.3-flash", "deepseek-v4.1-flash",
+    # OpenAI 直连
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
     # OpenRouter
     "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
     "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
@@ -368,6 +372,18 @@ class ChatModel(QAbstractListModel):
 ROLE_BLOCK = Qt.UserRole + 1
 
 
+def _block_fp(v):
+    """Structural fingerprint of a block: containers are copied, leaves are shared.
+    Blocks are mutated in place (e.g. exec["tools"][i]["state"] = "ok"), so object
+    identity alone can't tell what changed; comparing fingerprints with == can
+    (leaf compare short-circuits on identity, so unchanged strings cost nothing)."""
+    if isinstance(v, dict):
+        return {k: _block_fp(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_block_fp(x) for x in v]
+    return v
+
+
 class BlockModel(QAbstractListModel):
     """Per-AI-message model of block dicts. Lives for the lifetime of the message
     so QML's Repeater never recreates all delegates — only changed/added/removed
@@ -376,6 +392,7 @@ class BlockModel(QAbstractListModel):
     def __init__(self, blocks=None, parent=None):
         super().__init__(parent)
         self._b = list(blocks) if blocks else []
+        self._fps = [_block_fp(b) for b in self._b]
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self._b)
@@ -395,7 +412,9 @@ class BlockModel(QAbstractListModel):
 
     def sync(self, new):
         """Reconcile to `new` (working list) with minimal model ops.
-        Common prefix (same dict identity) → dataChanged (covers in-place edits);
+        Common prefix (same dict identity) → dataChanged only for rows whose content
+        actually changed (fingerprint diff) — re-pushing unchanged rows makes QML
+        re-set and re-layout every block of the message on each streaming tick;
         differing suffix → remove old tail + insert new tail."""
         old = self._b
         p = 0
@@ -404,13 +423,26 @@ class BlockModel(QAbstractListModel):
         if len(old) > p:
             self.beginRemoveRows(QModelIndex(), p, len(old) - 1)
             del self._b[p:]
+            del self._fps[p:]
             self.endRemoveRows()
         if len(new) > p:
             self.beginInsertRows(QModelIndex(), p, len(new) - 1)
-            self._b.extend(new[p:])
+            tail = list(new[p:])
+            self._b.extend(tail)
+            self._fps.extend(_block_fp(b) for b in tail)
             self.endInsertRows()
-        if p > 0:
-            self.dataChanged.emit(self.index(0, 0), self.index(p - 1, 0), [ROLE_BLOCK])
+        start = None
+        for i in range(p):
+            fp = _block_fp(self._b[i])
+            if fp != self._fps[i]:
+                self._fps[i] = fp
+                if start is None:
+                    start = i
+            elif start is not None:
+                self.dataChanged.emit(self.index(start, 0), self.index(i - 1, 0), [ROLE_BLOCK])
+                start = None
+        if start is not None:
+            self.dataChanged.emit(self.index(start, 0), self.index(p - 1, 0), [ROLE_BLOCK])
 
 
 def wrap_ai_rows(rows):
@@ -684,6 +716,7 @@ class Controller(QObject):
 
         # multi-session + persistence
         self._cache_dir = self._session_cache_dir()
+        self._saved_refs = {}   # session id -> 上次写盘时的签名（只重写有变化的会话）
         self._migrate_legacy_sessions()
         self._sessions = []     # [{id, title, rows, history}]
         self._active = 0
@@ -1338,6 +1371,90 @@ class Controller(QObject):
                     b["state"] = "cancelled"
                 elif k == "askq" and st == "pending":
                     b["state"] = "answered"
+
+    # ---- 图片外置 ----
+    # 截图 / 附图以前以完整 base64 data URI 存在消息行里：单张数百 KB，每次刷新都整串
+    # 转给 QML，每轮结束整体写盘（实测长会话的会话文件达数十 MB）。现在写到缓存目录
+    # 的 images/ 下，消息行只存 file:/// 地址；data URI 无法落盘时原样保留（兼容）。
+    _IMG_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+                "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp"}
+
+    def _image_dir(self):
+        return (self._cache_dir / "images") if self._cache_dir else None
+
+    def _externalize_image(self, src):
+        """data:image/...;base64,... → 缓存文件的 file:/// URL；其它输入原样返回（同一对象）。"""
+        if not isinstance(src, str) or not src.startswith("data:image/"):
+            return src
+        d = self._image_dir()
+        if d is None:
+            return src
+        try:
+            head, b64 = src.split(",", 1)
+            mt = head[5:].split(";", 1)[0].lower()
+            raw = base64.b64decode(b64)
+            p = d / (hashlib.sha1(raw).hexdigest()[:24] + self._IMG_EXT.get(mt, ".img"))
+            if not p.exists():
+                d.mkdir(parents=True, exist_ok=True)
+                tmp = p.with_name(p.name + ".tmp")
+                tmp.write_bytes(raw)
+                os.replace(str(tmp), str(p))
+            return p.resolve().as_uri()
+        except Exception as e:
+            print("[controller] externalize image failed:", e)
+            return src
+
+    def _externalize_rows(self, rows):
+        """把行里的 data URI 图片外置（就地修改）。返回是否有改动。"""
+        changed = False
+        for it in rows or []:
+            pay = it.get("payload") if isinstance(it, dict) else None
+            if not isinstance(pay, dict):
+                continue
+            if it.get("type") == "ai":
+                for b in pay.get("blocks", []) or []:
+                    if isinstance(b, dict) and b.get("kind") == "image":
+                        src = b.get("src")
+                        new = self._externalize_image(src)
+                        if new is not src:
+                            b["src"] = new
+                            changed = True
+            elif it.get("type") == "user":
+                imgs = pay.get("images")
+                if imgs:
+                    new = [self._externalize_image(x) for x in imgs]
+                    if any(a is not b for a, b in zip(new, imgs)):
+                        pay["images"] = new
+                        changed = True
+        return changed
+
+    def _gc_images(self, grace_days=3):
+        """删掉没有任何会话引用、且超过宽限期的外置图片（删会话后残留的）。"""
+        d = self._image_dir()
+        if d is None or not d.is_dir():
+            return
+        used = set()
+        for sess in self._sessions:
+            for it in sess.get("rows", []) or []:
+                pay = it.get("payload") if isinstance(it, dict) else None
+                if not isinstance(pay, dict):
+                    continue
+                srcs = [b.get("src") for b in (pay.get("blocks", []) or [])
+                        if isinstance(b, dict) and b.get("kind") == "image"]
+                srcs += list(pay.get("images") or [])
+                for u in srcs:
+                    if isinstance(u, str) and u.startswith("file:"):
+                        used.add(u.rsplit("/", 1)[-1])
+        cutoff = time.time() - grace_days * 86400
+        try:
+            for f in d.iterdir():
+                try:
+                    if f.name not in used and f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _load_active(self):
         # 切换/新建会话时清掉上一会话残留的附带图片，避免它泄漏到新会话的图生图里。
@@ -2579,14 +2696,29 @@ class Controller(QObject):
                                      for s in self._sessions]}
             (self._cache_dir / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            # 只重写有变化的会话：rows / history 每次快照都是新对象，比较身份即可。
+            # 以前每轮结束把所有会话整体重新序列化写盘，长会话下这一步就要几百毫秒。
+            saved = self._saved_refs
             for s in self._sessions:
+                sig = self._session_sig(s)
+                old = saved.get(s["id"])
+                if old is not None and old[0] is sig[0] and old[1] is sig[1] and old[2:] == sig[2:]:
+                    continue
                 data = {"id": s["id"], "title": s["title"], "rows": s["rows"], "history": s["history"],
                         "provider": s.get("provider", self._provider),
                         "model": s.get("model", self._model_name)}
                 (self._cache_dir / ("session_%s.json" % s["id"])).write_text(
                     json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+                saved[s["id"]] = sig
+            live = {s["id"] for s in self._sessions}
+            for k in [k for k in saved if k not in live]:
+                del saved[k]
         except Exception as e:
             print("[controller] save sessions failed:", e)
+
+    def _session_sig(self, s):
+        return (s.get("rows"), s.get("history"), s.get("title"),
+                s.get("provider", self._provider), s.get("model", self._model_name))
 
     @Slot()
     def restore(self):
@@ -2610,8 +2742,20 @@ class Controller(QObject):
             if loaded:
                 self._sessions = loaded
                 self._active = min(int(manifest.get("active", 0)), len(loaded) - 1)
+                # 磁盘内容即已保存状态；旧会话里内联的 base64 图片顺手外置，
+                # 被迁移的会话不记签名，下面立即重写一次把文件瘦下来。
+                migrated = False
+                for sess in loaded:
+                    if self._externalize_rows(sess["rows"]):
+                        sess["rows"] = list(sess["rows"])
+                        migrated = True
+                    else:
+                        self._saved_refs[sess["id"]] = self._session_sig(sess)
                 self._load_active()
                 self.sessionsChanged.emit()
+                if migrated:
+                    self._save_all()
+                self._gc_images()
         except Exception as e:
             print("[controller] restore failed:", e)
 
@@ -2672,7 +2816,7 @@ class Controller(QObject):
         payload = {"text": text}
         # 在用户气泡里显示附带的缩略图（无论模型是否支持视觉，用户都该看到自己上传了什么）
         if self._pending_images:
-            payload["images"] = ["data:%s;base64,%s" % (mt, b64)
+            payload["images"] = [self._externalize_image("data:%s;base64,%s" % (mt, b64))
                                  for (b64, mt) in self._pending_images]
         self._model.append({"type": "user", "payload": payload})
         self._log_chat("USER", text)
@@ -2752,6 +2896,7 @@ class Controller(QObject):
         self._think_text = ""
         self._prose_text = ""
         self._answer_dirty = False
+        self._resolve_cache = {}
         self._in_think = False
         self._cbuf = ""
 
@@ -3930,7 +4075,7 @@ class Controller(QObject):
 
     @Slot(str)
     def _ui_image(self, data_uri):
-        self._blocks.append({"kind": "image", "src": data_uri})
+        self._blocks.append({"kind": "image", "src": self._externalize_image(data_uri)})
         self._flush()
 
     @Slot(str)
@@ -5300,15 +5445,40 @@ class Controller(QObject):
             self._blocks.append(self._exec_block)
 
     def _recompute_answer(self):
-        """Re-parse the accumulated answer into prose/code segments (no flush)."""
+        """Re-parse the accumulated answer into prose/code segments (no flush).
+
+        Segments are reused in place (same dict per position/kind) so the block
+        model keeps the same rows and only the segment that actually changed —
+        normally the last one — is re-pushed to QML, instead of destroying and
+        re-creating every prose/code delegate of the answer on each tick."""
         segs = self._parse_answer(self._prose_text) if self._prose_text.strip() else []
-        for s in segs:
-            if s.get("kind") == "prose":
-                s["html"] = self._resolve_bare(s["html"])
-        prev = set(id(b) for b in self._answer_blocks)
+        cache = getattr(self, "_resolve_cache", None)
+        if cache is None:
+            cache = self._resolve_cache = {}
+        for seg in segs:
+            if seg.get("kind") == "prose":
+                raw = seg["html"]
+                hit = cache.get(raw)
+                if hit is None:
+                    if len(cache) > 256:
+                        cache.clear()
+                    hit = cache[raw] = self._resolve_bare(raw)
+                seg["html"] = hit
+        old = self._answer_blocks
+        merged = []
+        for i, seg in enumerate(segs):
+            if i < len(old) and old[i].get("kind") == seg.get("kind"):
+                cur = old[i]
+                if cur != seg:
+                    cur.clear()
+                    cur.update(seg)
+                merged.append(cur)
+            else:
+                merged.append(seg)
+        prev = set(id(b) for b in old)
         self._blocks = [b for b in self._blocks if id(b) not in prev]
-        self._answer_blocks = segs
-        self._blocks.extend(segs)
+        self._answer_blocks = merged
+        self._blocks.extend(merged)
 
     @Slot(str)
     def _ui_think(self, t):
@@ -5391,6 +5561,8 @@ class Controller(QObject):
 
     # ---- markdown + code rendering of the final answer ----
     def _finalize_answer(self):
+        # 最终渲染重新解析节点链接（流式期间缓存的解析结果可能早于新建节点）
+        self._resolve_cache = {}
         self._answer_dirty = True
 
     @classmethod

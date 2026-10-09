@@ -39,7 +39,7 @@ User request → AI plans → call tools → inspect results → call more tools
 | **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4-flash-vision-exp` | V4: explicit thinking param + reasoning_effort; 1M context; `deepseek-chat` / `deepseek-reasoner` retired 2026/07/24 |
 | **GLM (Zhipu AI)** | `glm-4.7` | Stable in China, native reasoning & tool calling |
 | **OpenAI** | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | GPT-5.6 family (1M context), full Function Calling & Vision support |
-| **Duojie** (relay) | `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.6-sol-pro`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `glm-5-turbo`, `grok-4.6`, `grok-4.5`, `deepseek-v4-flash` | Claude, GPT, GLM, Grok, DeepSeek via relay endpoint (list mirrors the relay's live `/v1/models`) |
+| **Duojie** (relay) | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra`, `kimi-k3`, `grok-4.7`, `glm-5.3`, `glm-5.3-flash`, `deepseek-v4-pro`, `deepseek-v4.1-flash` | Claude, GPT, Kimi, Grok, GLM, DeepSeek via relay endpoint (list mirrors the relay's live `/v1/models`) |
 | **OpenRouter** | `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4.8`, `claude-haiku-4.5`, `gpt-5.6-sol/terra/luna`, `gpt-5.5`, `gemini-3.8-flash`, `gemini-3.1-pro-preview`, `deepseek-v4-flash/pro`, `glm-5.3`, `grok-4.6`, `kimi-k3`, `minimax-m3` | 16 models from all major providers via single API key |
 | **Custom** | User-configurable | Any OpenAI-compatible endpoint (LM Studio, vLLM, etc.); configurable URL, API Key, model name, context limit, vision & FC support |
 

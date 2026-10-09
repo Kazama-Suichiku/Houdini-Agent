@@ -36,6 +36,7 @@ Item {
                         source: "" + modelData
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
+                        sourceSize: Qt.size(160, 160)
                     }
                 }
             }

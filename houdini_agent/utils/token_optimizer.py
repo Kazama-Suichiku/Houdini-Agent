@@ -81,11 +81,15 @@ def count_tokens(text: str, model: str = '') -> int:
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
     # ---- DeepSeek（官方标准时段价） ----
     'deepseek-v4-flash-vision-exp': {'input': 0.44, 'input_cache': 0.014, 'output': 1.32, 'reasoning': 1.32},
+    'deepseek-v4.1-flash':  {'input': 0.30,  'input_cache': 0.006, 'output': 1.20, 'reasoning': 1.20},
     'deepseek-v4-flash':    {'input': 0.44,  'input_cache': 0.014, 'output': 1.32, 'reasoning': 1.32},
     'deepseek-v4-pro':      {'input': 1.32,  'input_cache': 0.044, 'output': 3.96, 'reasoning': 3.96},
     'deepseek-chat':        {'input': 0.27,  'input_cache': 0.07,  'output': 1.10},
     'deepseek-reasoner':    {'input': 0.55,  'input_cache': 0.14,  'output': 2.19, 'reasoning': 2.19},
     # ---- OpenAI ----
+    'gpt-6-astra':          {'input': 10.00, 'input_cache': 1.00,  'output': 50.00, 'reasoning': 50.00},
+    'gpt-6.1-sol':          {'input': 2.00,  'input_cache': 0.10,  'output': 10.00, 'reasoning': 10.00},
+    'gpt-6-sol':            {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
     'gpt-5.6-sol-pro':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
     'gpt-5.6-sol':          {'input': 4.00,  'input_cache': 0.40,  'output': 20.00, 'reasoning': 20.00},
     'gpt-5.6-terra':        {'input': 2.00,  'input_cache': 0.20,  'output': 12.00, 'reasoning': 12.00},
@@ -98,6 +102,8 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'o3-mini':              {'input': 1.10,  'input_cache': 0.55,  'output': 4.40,  'reasoning': 4.40},
     'o4-mini':              {'input': 1.10,  'input_cache': 0.275, 'output': 4.40,  'reasoning': 4.40},
     # ---- Claude (Duojie / OpenRouter；OpenRouter 的 4.8 写法为 claude-opus-4.8) ----
+    'claude-opus-5-5':      {'input': 4.00,  'input_cache': 0.20,  'output': 20.00, 'reasoning': 20.00},
+    'claude-sonnet-5-5':    {'input': 2.00,  'input_cache': 0.10,  'output': 10.00, 'reasoning': 10.00},
     'claude-opus-5':        {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
     'claude-sonnet-5':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
     'claude-opus-4-8':      {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
@@ -126,10 +132,11 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'glm-5.3-flash':        {'input': 0.07,  'input_cache': 0.015, 'output': 0.25},
     'glm-5.3':              {'input': 1.40,  'input_cache': 0.14,  'output': 4.40},
     # ---- Grok ----
+    'grok-4.7':             {'input': 2.00,  'input_cache': 0.50,  'output': 6.00, 'reasoning': 6.00},
     'grok-4.6':             {'input': 2.00,  'input_cache': 0.50,  'output': 6.00, 'reasoning': 6.00},
     'grok-4.5':             {'input': 2.00,  'input_cache': 0.30,  'output': 6.00, 'reasoning': 6.00},
     # ---- Kimi ----
-    'kimi-k3':              {'input': 3.00,  'input_cache': 0.30,  'output': 15.00},
+    'kimi-k3':              {'input': 0.50,  'input_cache': 0.30,  'output': 12.00},
     'kimi-k2.5':            {'input': 2.00,  'input_cache': 0.50,  'output': 8.00},
     # ---- MiniMax ----
     'minimax-m3':           {'input': 0.30,  'input_cache': 0.06,  'output': 1.20},
