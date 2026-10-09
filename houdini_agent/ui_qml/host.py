@@ -47,6 +47,37 @@ def register_fonts():
     _FONTS_REGISTERED = True
 
 
+try:
+    from PySide6.QtCore import QTimer as _QTimer
+    from PySide6.QtQml import QQmlIncubationController as _QQmlIncubationController
+except ImportError:
+    from PySide2.QtCore import QTimer as _QTimer
+    from PySide2.QtQml import QQmlIncubationController as _QQmlIncubationController
+
+
+class _FrameIncubator(_QQmlIncubationController):
+    """有待创建的异步 QML 对象时，每 16ms 拿出 8ms 做增量创建，其余时间留给界面。"""
+
+    def __init__(self):
+        super().__init__()
+        self._timer = _QTimer()
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+    def incubatingObjectCountChanged(self, count):
+        if count > 0:
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+
+    def _tick(self):
+        if self.incubatingObjectCount() > 0:
+            self.incubateFor(8)
+        else:
+            self._timer.stop()
+
+
 def create_view(parent=None, controller=None, model=None):
     """Build the QQuickWidget. Returns the widget (with ._controller/._model)."""
     register_fonts()
@@ -56,6 +87,16 @@ def create_view(parent=None, controller=None, model=None):
         controller = Controller(model)
 
     view = QQuickWidget(parent)
+    # QQuickWidget 的离屏窗口没有渲染循环，引擎上也就没有孵化控制器；没有它
+    # Loader.asynchronous 会退化成同步创建。装一个分帧孵化器后，打开长会话时
+    # 较早的消息才能在后续帧里分批创建，界面不被冻住。
+    try:
+        if view.engine().incubationController() is None:
+            inc = _FrameIncubator()
+            view.engine().setIncubationController(inc)
+            view._incubator = inc   # 引擎不持有所有权，必须保活
+    except Exception as e:
+        print("[host] incubation controller setup failed:", e)
     view.engine().addImportPath(str(QML_DIR))
     ctx = view.rootContext()
     ctx.setContextProperty("chatModel", model)
