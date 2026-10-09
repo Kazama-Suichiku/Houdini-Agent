@@ -168,6 +168,7 @@ Rectangle {
         function onOpenFontDialog() { fontPopup.open() }
         function onOpenTokenDialog() { tokenPopup.st = controller.tokenStats(); tokenPopup.open() }
         function onOpenInfoDialog(title, body) { actionDialog.openInfo(title, body) }
+        function onOpenUpdateDialog(title, body) { actionDialog.openUpdate(title, body) }
         function onOpenApiKeyDialog(provider) { actionDialog.openApi(provider) }
         function onOpenCustomProviderDialog(url, key, model, anthropic, contextLimit, supportsVision) { actionDialog.openCustom(url, key, model, anthropic, contextLimit, supportsVision) }
         function onOpenConfirmDialog(title, body, token) { actionDialog.openConfirm(title, body, token) }
