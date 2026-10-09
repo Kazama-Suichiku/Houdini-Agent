@@ -241,7 +241,7 @@ UI_EN = {
     "选择图片": "Choose image", "自定义 Provider…": "Custom provider…",
     "压缩上下文": "Compress context", "已压缩上下文": "Context compressed",
     "新建会话": "New session", "字号…": "Font size…", "字号": "Font size",
-    "重置": "Reset", "关闭": "Close",
+    "重置": "Reset", "关闭": "Close", "稍后": "Later", "立即更新": "Update now",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -551,6 +551,7 @@ class Controller(QObject):
     _sigPreview = Signal(str, str)        # tool_name, code -> streaming code preview
     _sigPlanStream = Signal(str)          # accumulated create_plan json -> live plan card
     _sigInfo = Signal(str, str)           # title, body -> QML info dialog
+    _sigUpdateDialog = Signal(str, str)   # worker -> main: 检查更新发现新版本（带「立即更新」按钮的对话框）
     tokensChanged = Signal()
     pendingOpsChanged = Signal()
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
@@ -562,6 +563,7 @@ class Controller(QObject):
     openFontDialog = Signal()             # request the font-size slider popup
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
+    openUpdateDialog = Signal(str, str)    # title, body (QML)：检查更新发现新版本，对话框里直接给「立即更新」
     openApiKeyDialog = Signal(str)         # provider (QML)
     openCustomProviderDialog = Signal(str, str, str, bool, str, bool)  # url, key, model, anthropic, context_limit, supports_vision
     openConfirmDialog = Signal(str, str, str)  # title, body, token
@@ -750,6 +752,7 @@ class Controller(QObject):
         self._sigPreview.connect(self._ui_preview)
         self._sigPlanStream.connect(self._ui_plan_stream)
         self._sigInfo.connect(self._info)
+        self._sigUpdateDialog.connect(self._show_update_dialog)
         self._sigCtxRefresh.connect(self.refreshContext)
         self._sigUpdateState.connect(self._on_update_state)
         self._sigUpdateFound.connect(self._set_update)
@@ -1662,6 +1665,12 @@ class Controller(QObject):
                 self.toast.emit("上下文无需压缩")
 
     # ---- overflow helpers ----
+    def _show_update_dialog(self, title, text):
+        try:
+            self.openUpdateDialog.emit(self.tr(title), str(text)[:3000])
+        except Exception as e:
+            print("[controller] update dialog:", title, text, e)
+
     def _info(self, title, text):
         try:
             self.openInfoDialog.emit(self.tr(title), str(text)[:3000])
@@ -2267,16 +2276,16 @@ class Controller(QObject):
                         msg = "检查更新失败：%s" % r.get("error")
                     elif r.get("has_update"):
                         notes = r.get("release_notes") or r.get("release_name") or ""
-                        msg = (
-                            "发现新版本：%s\n"
-                            "当前版本：%s\n\n"
-                            "%s\n\n"
-                            "点主界面输入框上方横幅的「立即更新」即可自动下载安装；"
-                            "也可到 houdini-agent.com 手动下载。"
-                        ) % (r.get("remote_version", "?"), r.get("local_version", "?"), notes)
+                        msg = "发现新版本：%s\n当前版本：%s" % (
+                            r.get("remote_version", "?"), r.get("local_version", "?"))
+                        if notes:
+                            msg += "\n\n" + notes
                         if r.get("stale"):
                             msg += "\n\n（暂时连不上更新服务器，以上为最近一次成功检查的结果）"
+                        # 先置横幅状态（available），再弹带按钮的对话框；两个信号按发出顺序到主线程
                         self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
+                        self._sigUpdateDialog.emit("检查更新", msg)
+                        return
                     else:
                         msg = "已是最新版本。\n\n当前版本：%s\n最新 Release：%s" % (
                             r.get("local_version", "?"), r.get("remote_version", "?"))

@@ -14,6 +14,8 @@ Popup {
     property bool supportsVision: false
     function loc(s) { return controller ? (controller.lang, controller.tr(s)) : s }
     function openInfo(t, b) { mode = "info"; dialogTitle = t; body = b; open() }
+    // 检查更新发现新版本：正文同 info，按钮为「稍后」+「立即更新」（与横幅按钮同一入口）
+    function openUpdate(t, b) { mode = "update"; dialogTitle = t; body = b; open() }
     function openApi(p) { mode = "api"; provider = p; dialogTitle = "API Key · " + p; apiField.text = ""; open() }
     function openConfirm(t, b, token) { mode = "confirm"; dialogTitle = t; body = b; confirmToken = token; open() }
     function openCustom(url, key, model, isAnthropic, contextLimit, visionFlag) {
@@ -47,7 +49,7 @@ Popup {
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
         TextArea {
-            visible: dlg.mode === "info"
+            visible: dlg.mode === "info" || dlg.mode === "update"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(260, Math.max(90, contentHeight + 18))
             text: dlg.body
@@ -125,8 +127,20 @@ Popup {
                 onClicked: dlg.close()
             }
             Pill {
+                label: dlg.loc("稍后")
+                visible: dlg.mode === "update"
+                onClicked: dlg.close()
+            }
+            Pill {
+                label: dlg.loc("立即更新")
+                // 只在可更新时出现；正在下载 / 等待 / 安装时点了也不会重复触发
+                visible: dlg.mode === "update" && !!controller && controller.updateState === "available"
+                accent: true
+                onClicked: { if (controller) controller.startUpdate(); dlg.close() }
+            }
+            Pill {
                 label: dlg.loc("取消")
-                visible: dlg.mode !== "info"
+                visible: dlg.mode !== "info" && dlg.mode !== "update"
                 onClicked: { if (dlg.mode === "confirm" && controller) controller.cancelDialogConfirm(dlg.confirmToken); dlg.close() }
             }
             Pill {
