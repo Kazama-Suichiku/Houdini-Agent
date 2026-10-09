@@ -2,8 +2,9 @@
 """
 Houdini Agent - 自动更新模块
 
-通过 GitHub API 检查新版本，下载并覆盖本地文件，
-然后通知调用方重启插件窗口。
+检查新版本：优先读官网的版本清单 latest.json（国内可访问、无 API 限流，且与官网
+安装包同步发布），失败再退回 GitHub Releases API。打包版下载新安装包并校验
+大小 / sha256 后静默安装；源码模式（Houdini 内旧界面）下载源码覆盖。
 
 线程安全：check / download / apply 均可在后台线程调用，
 UI 回调通过 Qt Signal 回到主线程。
@@ -12,6 +13,7 @@ UI 回调通过 Qt Signal 回到主线程。
 import os
 import sys
 import json
+import hashlib
 import shutil
 import zipfile
 import tempfile
@@ -23,8 +25,13 @@ from typing import Tuple
 GITHUB_OWNER = "Kazama-Suichiku"
 GITHUB_REPO = "Houdini-Agent"
 
-# GitHub API 端点 — 基于 Release（而非 branch）
+# GitHub API 端点 — 基于 Release（而非 branch）。未登录每 IP 每小时仅 60 次，
+# 国内共用出口 / 代理下很容易被限流或超时，所以只作备用来源。
 _API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+
+# 官网版本清单（主来源）：发版时由 deploy/publish_manifest.py 在安装包上传之后写入，
+# 内容含版本号、说明首行、安装包直链及其 size / sha256。
+_MANIFEST_URL = "https://houdini-agent.com/download/latest.json"
 
 # 项目根目录（VERSION 文件所在目录）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -47,8 +54,15 @@ def _version_candidates():
         pass
     return roots
 
-# ETag 缓存文件（用于减少 GitHub API 计数、应对 403 限流）
-_ETAG_CACHE_FILE = _PROJECT_ROOT / "cache" / "update_cache.json"
+def _user_state_dir() -> Path:
+    """用户级可写目录。打包版装在 Program Files 时安装目录不可写，缓存必须放这里。"""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(base) / "HoudiniAgent"
+
+
+# 更新检查缓存（GitHub ETag + release 数据 + 官网清单）。以前放在安装目录的 cache/ 下，
+# 装在 Program Files 时写不进去，缓存永远为空。
+_ETAG_CACHE_FILE = _user_state_dir() / "update_cache.json"
 
 # 更新时需要保留（不覆盖）的路径
 _PRESERVE_PATHS = frozenset({
@@ -145,39 +159,11 @@ def _save_etag_cache(data: dict):
 # 检查更新
 # ==========================================================
 
-# 模块级缓存：最新 release 的 zipball_url（check_update 写入，download_and_apply 读取）
+# 模块级缓存：最新版源码包地址（check_update 写入，download_and_apply 读取）
 _cached_zipball_url: str = ""
 
 
-def check_update(timeout: float = 8.0) -> dict:
-    """检查 GitHub Releases 上是否有新版本
-    
-    使用 ETag 缓存机制:
-    - 首次请求：记录 ETag + 完整 release 数据
-    - 后续请求：发送 If-None-Match → 304 不计入限流配额
-    - 遇到 403 限流：降级使用缓存数据
-    
-    Returns:
-        {
-            'has_update': bool,
-            'local_version': str,
-            'remote_version': str,   # Release tag（如 'v1.2.1' → '1.2.1'）
-            'release_name': str,     # Release 标题
-            'release_notes': str,    # Release 说明（首行）
-            'error': str,            # 出错信息（成功为 ''）
-        }
-    """
-    global _cached_zipball_url
-    
-    result = {
-        'has_update': False,
-        'local_version': get_local_version(),
-        'remote_version': '',
-        'release_name': '',
-        'release_notes': '',
-        'error': '',
-    }
-    
+def _requests():
     try:
         import requests  # type: ignore
     except ImportError:
@@ -185,90 +171,156 @@ def check_update(timeout: float = 8.0) -> dict:
         if lib_dir not in sys.path:
             sys.path.insert(0, lib_dir)
         import requests  # type: ignore
-    
-    # 加载 ETag 缓存
-    etag_cache = _load_etag_cache()
-    
+    return requests
+
+
+def _first_line(text) -> str:
+    """说明的首个非空行，去掉 Markdown 标题符号（旧对话框会原样显示 "## xxx"）。"""
+    for line in str(text or "").splitlines():
+        line = line.strip().lstrip("#").strip()
+        if line:
+            return line
+    return ""
+
+
+def _valid_manifest(m) -> bool:
+    return (isinstance(m, dict) and isinstance(m.get("version"), str) and m["version"].strip()
+            and isinstance(m.get("installer"), dict) and m["installer"].get("url"))
+
+
+def _fetch_manifest(requests, timeout):
+    """官网版本清单。返回 (manifest | None, 错误描述)。"""
     try:
-        headers = {"Accept": "application/vnd.github.v3+json"}
-        
-        # 如果有缓存的 ETag，使用条件请求（304 不计入 API 配额）
-        cached_etag = etag_cache.get("etag", "")
-        if cached_etag:
-            headers["If-None-Match"] = cached_etag
-        
-        resp = requests.get(_API_LATEST_RELEASE, headers=headers, timeout=timeout)
-        
-        if resp.status_code == 304:
-            # 304 Not Modified: Release 数据未变，使用缓存
-            data = etag_cache.get("release_data", {})
-            if not data:
-                result['error'] = "缓存数据异常，请稍后重试"
-                return result
-        elif resp.status_code == 404:
-            result['error'] = "暂无 Release 版本"
-            return result
-        elif resp.status_code == 403:
-            # 403: API 限流 — 降级使用缓存
-            cached_data = etag_cache.get("release_data", {})
-            if cached_data:
-                data = cached_data
-                # 不报错，静默使用缓存（但在 release_notes 中提示）
-            else:
-                result['error'] = "GitHub API 限流 (403)，请等待几分钟后重试"
-                return result
-        elif resp.status_code != 200:
-            result['error'] = f"GitHub API 返回 {resp.status_code}"
-            return result
-        else:
-            # 200 OK: 解析新数据并更新缓存
-            data = resp.json()
-            new_etag = resp.headers.get("ETag", "")
-            _save_etag_cache({
-                "etag": new_etag,
-                "release_data": data,
-            })
-        
-        # 解析 release 数据
-        tag = data.get("tag_name", "")
-        remote_ver = tag.lstrip("vV")  # 去掉前缀 v/V
-        result['remote_version'] = remote_ver
-        result['release_name'] = data.get("name", "") or tag
-        
-        # Release notes（取首行作为摘要）
-        body = data.get("body", "") or ""
-        result['release_notes'] = body.split("\n")[0].strip() if body else ""
-        
-        # 缓存下载地址（zipball_url 由 GitHub 自动提供）
-        _cached_zipball_url = data.get("zipball_url", "")
-        
-        # 比较版本 — 如果 remote_version 为空，视为解析失败
-        if not remote_ver:
-            result['error'] = "无法解析远程版本号"
-            return result
-        
-        result['has_update'] = _version_gt(remote_ver, result['local_version'])
-        
+        resp = requests.get(_MANIFEST_URL, timeout=timeout,
+                            headers={"Cache-Control": "no-cache", "Accept": "application/json"})
+        if resp.status_code != 200:
+            return None, "官网版本清单返回 %s" % resp.status_code
+        m = resp.json()
+        if not _valid_manifest(m):
+            return None, "官网版本清单格式异常"
+        return m, ""
     except Exception as e:
-        # 网络异常时尝试降级到缓存
-        cached_data = etag_cache.get("release_data", {})
-        if cached_data:
-            tag = cached_data.get("tag_name", "")
-            remote_ver = tag.lstrip("vV")
-            if remote_ver:
-                result['remote_version'] = remote_ver
-                result['release_name'] = cached_data.get("name", "") or tag
-                body = cached_data.get("body", "") or ""
-                result['release_notes'] = body.split("\n")[0].strip() if body else ""
-                _cached_zipball_url = cached_data.get("zipball_url", "")
-                result['has_update'] = _version_gt(remote_ver, result['local_version'])
-                return result
-        
-        if 'Timeout' in type(e).__name__:
-            result['error'] = "连接 GitHub 超时，请检查网络"
+        return None, "官网版本清单不可达（%s）" % type(e).__name__
+
+
+def _fetch_github(requests, cache, timeout):
+    """GitHub latest release。返回 (release_data | None, 错误描述)。
+    304 = 确认未变化，返回缓存数据（视为最新结果）；403 / 超时等返回 None，交给上层判断。"""
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if cache.get("etag") and cache.get("release_data"):
+        headers["If-None-Match"] = cache["etag"]
+    try:
+        resp = requests.get(_API_LATEST_RELEASE, headers=headers, timeout=timeout)
+    except Exception as e:
+        if "Timeout" in type(e).__name__:
+            return None, "连接 GitHub 超时"
+        return None, "连接 GitHub 失败（%s）" % type(e).__name__
+    if resp.status_code == 304:
+        return cache.get("release_data") or None, ""
+    if resp.status_code == 403:
+        return None, "GitHub API 限流 (403)"
+    if resp.status_code == 404:
+        return None, "暂无 Release 版本"
+    if resp.status_code != 200:
+        return None, "GitHub API 返回 %s" % resp.status_code
+    data = resp.json()
+    cache["etag"] = resp.headers.get("ETag", "")
+    cache["release_data"] = data
+    return data, ""
+
+
+def _release_version(data) -> str:
+    return str((data or {}).get("tag_name", "") or "").lstrip("vV")
+
+
+def _fill_from_manifest(result, m):
+    global _cached_zipball_url
+    result["remote_version"] = m["version"].strip().lstrip("vV")
+    result["release_name"] = m.get("name") or ("v" + result["remote_version"])
+    result["release_notes"] = _first_line(m.get("notes", ""))
+    result["source"] = "manifest"
+    _cached_zipball_url = m.get("source_zip") or _cached_zipball_url
+
+
+def _fill_from_release(result, data):
+    global _cached_zipball_url
+    result["remote_version"] = _release_version(data)
+    result["release_name"] = data.get("name", "") or data.get("tag_name", "")
+    result["release_notes"] = _first_line(data.get("body", ""))
+    result["source"] = "github"
+    _cached_zipball_url = data.get("zipball_url", "") or _cached_zipball_url
+
+
+def check_update(timeout: float = 8.0) -> dict:
+    """检查是否有新版本：官网清单 → GitHub API → 本地缓存。
+
+    两个来源都失败时才用缓存：缓存里有更新的版本就照常提示（标记 stale）；
+    否则如实报错，不再拿旧数据声称"已是最新版本"。
+
+    Returns:
+        {
+            'has_update': bool,
+            'local_version': str,
+            'remote_version': str,
+            'release_name': str,
+            'release_notes': str,    # 说明首行（已去掉 Markdown 标题符号）
+            'error': str,            # 出错信息（成功为 ''）
+            'source': str,           # manifest | github | cache
+            'stale': bool,           # True = 网络失败，结果来自缓存
+        }
+    """
+    result = {
+        'has_update': False,
+        'local_version': get_local_version(),
+        'remote_version': '',
+        'release_name': '',
+        'release_notes': '',
+        'error': '',
+        'source': '',
+        'stale': False,
+    }
+    requests = _requests()
+    cache = _load_etag_cache()
+    errors = []
+
+    m, err = _fetch_manifest(requests, timeout)
+    if m:
+        cache["manifest"] = m
+        _save_etag_cache(cache)
+        _fill_from_manifest(result, m)
+    else:
+        errors.append(err)
+        data, err = _fetch_github(requests, cache, timeout)
+        if data:
+            _save_etag_cache(cache)
+            _fill_from_release(result, data)
         else:
-            result['error'] = f"检查更新失败: {e}"
-    
+            errors.append(err)
+
+    if not result["remote_version"]:
+        # 两个来源都失败：退回缓存里版本更高的那份
+        cand = []
+        if _valid_manifest(cache.get("manifest")):
+            cand.append(("m", cache["manifest"]["version"].strip().lstrip("vV")))
+        if _release_version(cache.get("release_data")):
+            cand.append(("g", _release_version(cache.get("release_data"))))
+        cand.sort(key=lambda c: _parse_version(c[1]), reverse=True)
+        if cand and _version_gt(cand[0][1], result["local_version"]):
+            if cand[0][0] == "m":
+                _fill_from_manifest(result, cache["manifest"])
+            else:
+                _fill_from_release(result, cache["release_data"])
+            result["source"] = "cache"
+            result["stale"] = True
+        else:
+            result["error"] = "无法连接更新服务器：%s。暂时无法确认是否有新版本，请稍后重试" % (
+                "；".join(e for e in errors if e) or "未知错误")
+            return result
+
+    if not result["remote_version"]:
+        result["error"] = "无法解析远程版本号"
+        return result
+    result["has_update"] = _version_gt(result["remote_version"], result["local_version"])
     return result
 
 
@@ -293,16 +345,67 @@ def get_installer_url(release_data=None) -> str:
     return _STABLE_INSTALLER_URL
 
 
+def installer_sources(cache=None) -> list:
+    """按优先级列出可下载的安装包来源 [{'url','size','sha256','label'}]，只包含"最新已知版本"的来源：
+    官网清单（带 sha256）→ GitHub 资产（带 size）→ 官网稳定链接（用清单的 sha256 校验，
+    挡住稳定链接还没换成新版的情况）。"""
+    cache = cache if cache is not None else _load_etag_cache()
+    m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
+    rel = cache.get("release_data") or {}
+    mv = m["version"].strip().lstrip("vV") if m else ""
+    rv = _release_version(rel)
+    target = mv if _parse_version(mv or "0") >= _parse_version(rv or "0") else rv
+    out = []
+    if m and mv == target:
+        inst = m["installer"]
+        out.append({"url": inst["url"], "size": int(inst.get("size") or 0),
+                    "sha256": str(inst.get("sha256") or "").lower(), "label": "官网"})
+    if rv and rv == target:
+        for a in (rel.get("assets") or []):
+            name = str(a.get("name") or "")
+            if name.startswith("HoudiniAgent-Setup") and name.endswith(".exe") and a.get("browser_download_url"):
+                sha = ""
+                if m and mv == rv:
+                    sha = str(m["installer"].get("sha256") or "").lower()
+                out.append({"url": str(a["browser_download_url"]), "size": int(a.get("size") or 0),
+                            "sha256": sha, "label": "GitHub"})
+                break
+    if not any(o["url"] == _STABLE_INSTALLER_URL for o in out):
+        sha = str(m["installer"].get("sha256") or "").lower() if (m and mv == target) else ""
+        size = int(m["installer"].get("size") or 0) if (m and mv == target) else 0
+        out.append({"url": _STABLE_INSTALLER_URL, "size": size, "sha256": sha, "label": "官网稳定链接"})
+    return out
+
+
+def _download_one(requests, src, target, _p):
+    """下载单个来源并校验。成功返回 ''，失败返回原因。"""
+    resp = requests.get(src["url"], stream=True, timeout=60)
+    resp.raise_for_status()
+    total = int(resp.headers.get("content-length", 0)) or src.get("size") or 0
+    h = hashlib.sha256()
+    done = 0
+    with open(target, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if total > 0:
+                    _p(min(99, done * 100 / total))
+    if done < 1024 * 1024:      # 装不进 1MB 的一定不是安装包（挡 404 页面之类）
+        return "下载内容异常（%d 字节）" % done
+    if src.get("size") and done != src["size"]:
+        return "文件大小不符（%d / %d）" % (done, src["size"])
+    if src.get("sha256") and h.hexdigest() != src["sha256"]:
+        return "校验值不符（可能下载到了旧版安装包）"
+    return ""
+
+
 def download_installer(progress_callback=None, url=None) -> dict:
-    """把新版安装包下载到 %TEMP%。progress_callback(percent: int)。
+    """把新版安装包下载到 %TEMP% 并校验。progress_callback(percent: int)。
+    url=None 时按 installer_sources() 依次尝试，前一个失败或校验不通过就换下一个。
     Returns: {'success': bool, 'path': str, 'error': str}"""
-    try:
-        import requests  # type: ignore
-    except ImportError:
-        lib_dir = str(_PROJECT_ROOT / "lib")
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
-        import requests  # type: ignore
+    requests = _requests()
 
     def _p(pct):
         if progress_callback:
@@ -311,25 +414,24 @@ def download_installer(progress_callback=None, url=None) -> dict:
             except Exception:
                 pass
 
+    sources = [{"url": url, "size": 0, "sha256": "", "label": url}] if url else installer_sources()
     target = os.path.join(tempfile.gettempdir(), "HoudiniAgent-Setup-Update.exe")
-    try:
-        resp = requests.get(url or get_installer_url(), stream=True, timeout=60)
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        done = 0
-        with open(target, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=65536):
-                if chunk:
-                    f.write(chunk)
-                    done += len(chunk)
-                    if total > 0:
-                        _p(done * 100 / total)
-        if done < 1024 * 1024:      # 装不进 1MB 的一定不是安装包（挡 404 页面之类）
-            return {'success': False, 'path': '', 'error': '下载内容异常（%d 字节）' % done}
-        _p(100)
-        return {'success': True, 'path': target, 'error': ''}
-    except Exception as e:
-        return {'success': False, 'path': '', 'error': str(e)}
+    errors = []
+    for src in sources:
+        _p(0)
+        try:
+            err = _download_one(requests, src, target, _p)
+        except Exception as e:
+            err = str(e) or type(e).__name__
+        if not err:
+            _p(100)
+            return {'success': True, 'path': target, 'error': ''}
+        errors.append("%s：%s" % (src.get("label") or src["url"], err))
+        try:
+            os.remove(target)
+        except Exception:
+            pass
+    return {'success': False, 'path': '', 'error': "；".join(errors) or "没有可用的下载地址"}
 
 
 def launch_installer(path) -> bool:
