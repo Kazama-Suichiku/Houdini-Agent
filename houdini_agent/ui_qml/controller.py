@@ -276,6 +276,10 @@ UI_EN = {
     "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录":
         "Local port 1455 is in use (maybe another Codex sign-in). Close it and retry, or sign in with a code.",
     "登录没有完成": "Sign-in did not complete", "出错了：": "Error: ",
+    "退出 ChatGPT 订阅登录？": "Sign out of ChatGPT plan?",
+    "将删除这台电脑上保存的 ChatGPT 订阅登录凭据：": "This removes the ChatGPT plan credentials saved on this computer: ",
+    "OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。":
+        "Your OpenAI account is not affected. To fully revoke access, remove Codex in ChatGPT's security settings on the web.",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -1169,6 +1173,8 @@ class Controller(QObject):
                 pass
             label = (self.tr("账号：") + (accs[0].get("email") or "ChatGPT")) if accs else self.tr("登录 ChatGPT 订阅…")
             items += [{"sep": True}, {"label": label, "val": "__sub_account__", "checked": False}]
+            if accs:
+                items.append({"label": self.tr("退出登录"), "val": "__sub_logout__", "checked": False})
         return items
 
     # ---- slots from QML ----
@@ -1202,6 +1208,9 @@ class Controller(QObject):
     def setModel(self, v):
         if v == "__sub_account__":
             self.openSubscriptionDialog.emit()
+            return False
+        if v == "__sub_logout__":
+            self._confirm_sub_logout()
             return False
         if self._running:
             self.toast.emit("当前正在运行，模型切换将在本轮结束后再操作")
@@ -2528,6 +2537,17 @@ class Controller(QObject):
             manager.cancel_login()
         except Exception:
             pass
+
+    def _confirm_sub_logout(self):
+        try:
+            from houdini_agent.subscription import manager
+            accs = manager.accounts()
+        except Exception:
+            accs = []
+        who = ", ".join(a.get("email") or "ChatGPT" for a in accs)
+        body = (self.tr("将删除这台电脑上保存的 ChatGPT 订阅登录凭据：") + who + "\n\n"
+                + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。"))
+        self._request_confirm("退出 ChatGPT 订阅登录？", body, lambda: self.subscriptionLogout(""))
 
     @Slot(str)
     def subscriptionLogout(self, file_name):
@@ -5896,7 +5916,16 @@ class Controller(QObject):
         self._think_text += t
         self._ensure_think()
         self._think_block["text"] = self._think_text
+        self._think_block["html"] = self._think_html(self._think_text)
         self._flush()
+
+    @staticmethod
+    def _think_html(text):
+        """思考内容 → StyledText：转义 + **标题** 加粗（Codex 推理摘要用它分段）。"""
+        import re as _re
+        h = _esc(text.strip("\n"))
+        h = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", h)
+        return h.replace("\n", "<br>")
 
     @Slot(str)
     def _ui_content(self, t):
@@ -6023,6 +6052,9 @@ class Controller(QObject):
     @classmethod
     def _md_html(cls, text):
         import re as _re
+        # 数学公式先抽成占位符（避免 _ * 被当成 Markdown），最后换回渲染好的富文本
+        from houdini_agent.ui_qml.mathrender import extract_math, restore_math
+        text, maths = extract_math(text)
         lines = text.split("\n")
         out = []
         i, n = 0, len(lines)
@@ -6064,7 +6096,7 @@ class Controller(QObject):
             else:
                 out.append(cls._inline(line))
             i += 1
-        return "<br>".join(out)
+        return restore_math("<br>".join(out), maths)
 
     @staticmethod
     def _highlight(code, lang):

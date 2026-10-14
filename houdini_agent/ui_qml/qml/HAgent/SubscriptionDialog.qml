@@ -78,6 +78,7 @@ Popup {
                         }
                         Pill {
                             label: dlg.loc("退出登录"); visible: !dlg.busy
+                            dashed: true        // 常显边框，一眼看得出是按钮
                             onClicked: if (controller) controller.subscriptionLogout(modelData.file)
                         }
                     }

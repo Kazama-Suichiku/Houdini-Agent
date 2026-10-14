@@ -190,14 +190,24 @@ Rectangle {
                 }
 
                 Rectangle {
+                    id: sendBtn
                     width: Math.round(32 * Theme.scale); height: Math.round(32 * Theme.scale)
                     radius: Theme.radSm
                     property bool busy: controller ? controller.running : false
-                    color: busy ? "transparent" : Theme.accent
+                    // 运行中：有底色 + 强调色边框的停止按钮（以前透明底 + 文字 "■"，像个空洞且图标偏下）
+                    color: busy ? Theme.surface2 : Theme.accent
                     border.width: busy ? 1 : 0
-                    border.color: Theme.border
+                    border.color: Theme.accentLine
                     Layout.alignment: Qt.AlignVCenter
-                    Text { anchors.centerIn: parent; text: parent.busy ? "■" : "↑"; color: parent.busy ? Theme.text : Theme.bg; font.pixelSize: Theme.fLg }
+                    Text { anchors.centerIn: parent; visible: !sendBtn.busy; text: "↑"; color: Theme.bg; font.pixelSize: Theme.fLg }
+                    // 停止图标直接画方块，保证几何居中（字符 "■" 受字体基线影响会偏下、偏小）
+                    Rectangle {
+                        visible: sendBtn.busy
+                        anchors.centerIn: parent
+                        width: Math.round(11 * Theme.scale); height: width
+                        radius: 2
+                        color: Theme.accent
+                    }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         onClicked: { if (controller && controller.running) controller.stop(); else composer.submit() }

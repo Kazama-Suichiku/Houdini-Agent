@@ -54,7 +54,9 @@ Item {
                 visible: !tb.collapsed
                 width: parent.width
                 leftPadding: 13; rightPadding: 13; topPadding: 11; bottomPadding: 12
-                text: tb.block.text || ""
+                // html：controller 转好的 StyledText（**标题** 加粗）；老会话没有 html 时按纯文本显示
+                textFormat: tb.block.html ? Text.StyledText : Text.PlainText
+                text: tb.block.html || tb.block.text || ""
                 wrapMode: Text.Wrap
                 color: Theme.textMute
                 font.family: Theme.fontBody
