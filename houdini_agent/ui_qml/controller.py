@@ -704,8 +704,10 @@ class Controller(QObject):
         self._meshy_bg_lock = threading.Lock()
         self._bg_galleries = {}         # token -> 后台跑完待呈现/可交互的概念图画廊数据
         self._pending_bg_galleries = [] # agent 忙时排队待弹出的画廊 token
-        self._token_stats = {"input": 0, "output": 0, "reasoning": 0,
-                             "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
+        # 用量按会话记（随会话持久化），_load_active 时绑定到当前会话的 usage
+        self._token_stats = self._new_token_stats()
+        self._ctx_anchor = None     # 最近一次请求的真实上下文：{"tokens", "hist_len"}
+        self._ctx_ratio = 1.0       # 字符估算的校准系数（真实 / 估算），每轮结束更新
         self._call_records = []
         self._ctx_text = "0 / 200k"
         self._token_text = "0 tokens"
@@ -780,6 +782,7 @@ class Controller(QObject):
         self._sessions = []     # [{id, title, rows, history}]
         self._active = 0
         self._add_session()
+        self._bind_usage(self._sessions[0])
 
         # streaming UI updates (queued onto main thread)
         self._sigThink.connect(self._ui_think)
@@ -892,6 +895,7 @@ class Controller(QObject):
         except Exception:
             pass
         self.refreshContext()
+        self._refresh_tokens()      # 后端是异步挂上的：之前算出的上下文是 0，这里补算
         if announce:
             self.toast.emit("已连接 Houdini Bridge")
 
@@ -1688,11 +1692,34 @@ class Controller(QObject):
                 self.modelChanged.emit()
         if self._session:
             self._session.history = copy.deepcopy(s.get("history", []))
+        self._bind_usage(s)
         self._reset_run_state()
         self._plan_row = None
         self._plan_payload = None
         self._plan_idmap = {}
         self._refresh_tokens()
+
+    @staticmethod
+    def _new_token_stats():
+        return {"input": 0, "output": 0, "reasoning": 0,
+                "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
+
+    def _bind_usage(self, s, reset=False):
+        """让 _token_stats / _ctx_anchor 指向会话 s 自己的用量记录（原地累加，随会话保存）。"""
+        u = s.get("usage")
+        if reset or not isinstance(u, dict):
+            u = s["usage"] = {}
+        stats = u.get("stats")
+        if not isinstance(stats, dict):
+            stats = u["stats"] = {}
+        for k, v in self._new_token_stats().items():
+            if not isinstance(stats.get(k), (int, float)):
+                stats[k] = v
+        self._token_stats = stats
+        a = u.get("ctx")
+        self._ctx_anchor = a if isinstance(a, dict) and a.get("tokens") else None
+        if self._ctx_anchor and self._ctx_anchor.get("ratio"):
+            self._ctx_ratio = float(self._ctx_anchor["ratio"])
 
     @Slot(result="QVariantList")
     def sessionItems(self):
@@ -1779,8 +1806,10 @@ class Controller(QObject):
             self._session.reset()
         self._sessions[self._active]["rows"] = []
         self._sessions[self._active]["history"] = []
+        self._bind_usage(self._sessions[self._active], reset=True)
         self._reset_run_state()
         self._plan_row = None
+        self._refresh_tokens()
         self._save_all()
         self.toast.emit(self.tr("清空对话"))
 
@@ -1856,6 +1885,8 @@ class Controller(QObject):
         elif action == "optimize":
             if self._session and len(self._session.history) > 24:
                 self._session.history = self._session.history[-24:]
+                self._ctx_anchor = None     # 真实用量对应的是压缩前的 history
+                self._sessions[self._active].setdefault("usage", {}).pop("ctx", None)
                 self._refresh_tokens()
                 self.toast.emit(self.tr("已压缩上下文"))
             else:
@@ -3201,7 +3232,8 @@ class Controller(QObject):
                     continue
                 data = {"id": s["id"], "title": s["title"], "rows": s["rows"], "history": s["history"],
                         "provider": s.get("provider", self._provider),
-                        "model": s.get("model", self._model_name)}
+                        "model": s.get("model", self._model_name),
+                        "usage": s.get("usage") or {}}
                 (self._cache_dir / ("session_%s.json" % s["id"])).write_text(
                     json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
                 saved[s["id"]] = sig
@@ -3233,7 +3265,8 @@ class Controller(QObject):
                     loaded.append({"id": d.get("id", sid), "title": d.get("title", "新对话"),
                                    "rows": d.get("rows", []), "history": d.get("history", []),
                                    "provider": d.get("provider", entry.get("provider", self._provider)),
-                                   "model": d.get("model", entry.get("model", self._model_name))})
+                                   "model": d.get("model", entry.get("model", self._model_name)),
+                                   "usage": d.get("usage") if isinstance(d.get("usage"), dict) else {}})
             if loaded:
                 self._sessions = loaded
                 self._active = min(int(manifest.get("active", 0)), len(loaded) - 1)
@@ -3534,6 +3567,7 @@ class Controller(QObject):
             if isinstance(result, dict) and not result.get("ok", True):
                 err = str(result.get("error") or result.get("final_content") or "AI request failed")
                 self._log_external("Worker result error: " + err[:1000])
+                self._accumulate_usage(result)      # 出错前已完成的请求也照实计入
                 self._sigDone.emit(err)
                 return
             self._accumulate_usage(result)
@@ -3559,10 +3593,31 @@ class Controller(QObject):
         recs = result.get("call_records")
         if isinstance(recs, list):
             self._call_records.extend(recs)
-            s["requests"] += max(1, len(recs))
-        else:
+            s["requests"] += len(recs) if recs else (1 if u else 0)
+        elif u:
             s["requests"] += 1
+        self._update_ctx_anchor(recs)
         # note: _refresh_tokens() is invoked on the main thread in _ui_done
+
+    def _update_ctx_anchor(self, recs):
+        """用本轮最后一次 API 调用的真实用量锚定上下文占用：
+        prompt_tokens 是模型实际看到的全部输入（系统提示/工具定义/历史/本轮工具结果），
+        再加上它的回复（推理 token 不回传，扣掉），就是此刻 history 的真实 token 数。"""
+        last = None
+        for r in reversed(recs or []):
+            if isinstance(r, dict) and r.get("input_tokens"):
+                last = r
+                break
+        if not last or not self._session or not self._sessions:
+            return
+        out = int(last.get("output_tokens") or 0)
+        reason = int(last.get("reasoning_tokens") or 0)
+        if 0 < reason <= out:
+            out -= reason
+        anchor = {"tokens": int(last["input_tokens"]) + out,
+                  "hist_len": len(getattr(self._session, "history", []) or [])}
+        self._ctx_anchor = anchor
+        self._sessions[self._active].setdefault("usage", {})["ctx"] = anchor
 
     # ---- tool executor (called by AIClient on the worker thread) ----
     def _tool_executor(self, tool_name, **kwargs):
@@ -5346,6 +5401,25 @@ class Controller(QObject):
     def _estimate_ctx(self):
         if not self._session:
             return 0
+        actual = self._anchored_ctx()
+        if actual is not None:
+            return actual
+        return int(self._heuristic_ctx() * self._ctx_ratio)
+
+    def _calibrate_ctx(self):
+        """刚拿到真实用量时，用"真实/估算"比例校准估算（没有锚点的新会话、压缩后都靠它）。"""
+        a = self._ctx_anchor
+        if not a or a.get("calibrated") or not self._session:
+            return
+        a["calibrated"] = True
+        if len(getattr(self._session, "history", []) or []) != a.get("hist_len"):
+            return
+        h = self._heuristic_ctx()
+        if h > 0:
+            self._ctx_ratio = a["ratio"] = round(min(2.0, max(0.2, float(a["tokens"]) / h)), 3)
+
+    def _heuristic_ctx(self):
+        """按字符估算整份请求（系统提示 + 工具 + 历史 + 检索上下文 + 待发图片）的 token 数。"""
         try:
             msgs = self._session.build_messages(self._show_thinking and not self._sub_kind())
         except Exception:
@@ -5375,6 +5449,30 @@ class Controller(QObject):
             for t in tools:
                 est += len(json.dumps(t, ensure_ascii=False, default=str)) // 4 + 30
         return max(0, int(est))
+
+    def _anchored_ctx(self):
+        """有真实用量锚点时：锚点 + 之后新增消息/待发图片的估算；history 被裁剪或清空则返回 None。"""
+        a = self._ctx_anchor
+        if not a:
+            return None
+        hist = getattr(self._session, "history", None) or []
+        n = int(a.get("hist_len") or 0)
+        if n <= 0 or len(hist) < n:
+            return None
+        extra = list(hist[n:])
+        if self._pending_images:
+            extra.append({"role": "user", "content": [
+                {"type": "text", "text": ""},
+                *({"type": "image_url", "image_url": {"url": "data:%s;base64,<pending>" % mt}}
+                  for _b64, mt in self._pending_images),
+            ]})
+        add = 0
+        if extra:
+            try:
+                add = self._session.client._estimate_messages_tokens(extra, None)
+            except Exception:
+                add = sum(len(json.dumps(m, ensure_ascii=False, default=str)) // 3 + 4 for m in extra)
+        return max(0, int(a["tokens"]) + int(add))
 
     @staticmethod
     def _fmt_k(n):
@@ -6046,6 +6144,7 @@ class Controller(QObject):
                 self._think_block["dur"] = ""
         # re-render the final answer as markdown + highlighted code blocks
         self._finalize_answer()
+        self._calibrate_ctx()
         self._refresh_tokens()
         if err:
             self._log_chat("ERROR", err)
