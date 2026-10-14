@@ -76,6 +76,43 @@ def codex_efforts(model) -> list:
 
 def codex_default_effort(model) -> str:
     return CODEX_DEFAULT_EFFORT.get(str(model or ""), "medium")
+
+
+# Claude 订阅（CPA 的 Claude Code OAuth）。注意：Anthropic 不允许第三方产品使用 Claude 订阅，
+# 服务端可能拒绝或限制账号；界面上会向用户说明，是否使用由用户自己决定。
+CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
+                 "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"]
+CLAUDE_CONTEXT = {m: 1000000 for m in CLAUDE_MODELS}     # CPA 内置目录 context_length
+CLAUDE_DEFAULT_CONTEXT = 200000
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+
+# 订阅类型：provider key（界面里的供应商）→ CPA 凭据类型
+KINDS = {"codex": "codex", "claude_sub": "claude"}
+
+
+def kind_of(provider):
+    """供应商是否是订阅类型；是则返回 CPA 凭据类型（codex / claude），否则 None。"""
+    return KINDS.get(str(provider or ""))
+
+
+def default_models(kind) -> list:
+    return list(CLAUDE_MODELS if kind == "claude" else CODEX_MODELS)
+
+
+def model_context(kind, model) -> int:
+    if kind == "claude":
+        return CLAUDE_CONTEXT.get(str(model or ""), CLAUDE_DEFAULT_CONTEXT)
+    return CODEX_CONTEXT.get(str(model or ""), CODEX_DEFAULT_CONTEXT)
+
+
+def effort_levels(kind, model) -> list:
+    return list(CLAUDE_EFFORTS) if kind == "claude" else codex_efforts(model)
+
+
+def default_effort(kind, model) -> str:
+    return "medium" if kind == "claude" else codex_default_effort(model)
+
+
 _HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review"}
 
 
@@ -83,6 +120,11 @@ def _is_chat_model(model_id) -> bool:
     """CPA 的 /v1/models 还会列出 gpt-image-* 等图片生成模型，不能用来对话。"""
     m = str(model_id or "")
     return bool(m) and m not in _HIDDEN_MODELS and not m.startswith("gpt-image")
+
+
+def _model_kind(model_id) -> str:
+    """CPA 把所有已登录渠道的模型合在一个 /v1/models 里，按名字分回各订阅。"""
+    return "claude" if str(model_id or "").startswith("claude-") else "codex"
 
 _DEFAULT_PORT = 18317          # 避开 CPA 默认 8317，免得和用户自己跑的 CPA 冲突
 _LOGIN_TIMEOUT = 15 * 60
@@ -390,8 +432,8 @@ class CPAManager:
                     pass
 
     # ---------------------------------------------------------------- accounts
-    def accounts(self) -> list:
-        """已登录的 Codex 账号：[{file, email, plan}]，不含任何 token。"""
+    def accounts(self, kind="codex") -> list:
+        """已登录的账号（kind = codex / claude）：[{file, email, plan}]，不含任何 token。"""
         out = []
         if not self.auth_dir.is_dir():
             return out
@@ -402,23 +444,24 @@ class CPAManager:
                 continue
             if not isinstance(d, dict):
                 continue
-            if str(d.get("type", "")).lower() != "codex" and not f.name.lower().startswith("codex"):
+            ftype = str(d.get("type", "")).lower()
+            if ftype != kind and not (not ftype and f.name.lower().startswith(kind)):
                 continue
             claims = _decode_jwt_claims(d.get("id_token", ""))
             auth = claims.get("https://api.openai.com/auth") or {}
             out.append({
                 "file": f.name,
                 "email": d.get("email") or claims.get("email") or "",
-                "plan": auth.get("chatgpt_plan_type") or d.get("plan_type") or "",
+                "plan": auth.get("chatgpt_plan_type") or d.get("plan_type") or d.get("subscription_type") or "",
             })
         return out
 
-    def logged_in(self) -> bool:
-        return bool(self.accounts())
+    def logged_in(self, kind="codex") -> bool:
+        return bool(self.accounts(kind))
 
-    def logout(self, file_name=None) -> int:
+    def logout(self, file_name=None, kind="codex") -> int:
         n = 0
-        for acc in self.accounts():
+        for acc in self.accounts(kind):
             if file_name and acc["file"] != file_name:
                 continue
             try:
@@ -429,37 +472,47 @@ class CPAManager:
         return n
 
     # ---------------------------------------------------------------- models
-    def cached_models(self) -> list:
-        st = self._load_state()
-        models = [m for m in (st.get("models") or []) if _is_chat_model(m)]
-        return models or list(CODEX_MODELS)
+    def _models_key(self, kind):
+        return "models" if kind == "codex" else "models_" + kind     # codex 沿用旧键，兼容已有缓存
 
-    def refresh_models(self) -> list:
-        """从本机服务拉取模型（需已登录且服务在跑），按推荐顺序排列并缓存。"""
+    def cached_models(self, kind="codex") -> list:
+        st = self._load_state()
+        models = [m for m in (st.get(self._models_key(kind)) or [])
+                  if _is_chat_model(m) and _model_kind(m) == kind]
+        return models or default_models(kind)
+
+    def refresh_models(self, kind="codex") -> list:
+        """从本机服务拉取模型（需已登录且服务在跑），只取该订阅的模型，按推荐顺序排列并缓存。"""
         r = _requests().get(self.base_url() + "/models", timeout=5,
                             headers={"Authorization": "Bearer " + self.client_key()},
                             proxies={"http": None, "https": None})
         r.raise_for_status()
         ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
-        ids = [i for i in ids if _is_chat_model(i)]
-        ordered = [m for m in CODEX_MODELS if m in ids] + sorted(i for i in ids if i not in CODEX_MODELS)
+        ids = [i for i in ids if _is_chat_model(i) and _model_kind(i) == kind]
+        prefer = default_models(kind)
+        ordered = [m for m in prefer if m in ids] + sorted(i for i in ids if i not in prefer)
         if ordered:
             st = self._load_state()
-            st["models"] = ordered
+            st[self._models_key(kind)] = ordered
             self._save_state()
-        return ordered or self.cached_models()
+        return ordered or self.cached_models(kind)
 
     # ---------------------------------------------------------------- login
-    def login(self, device=False, on_event=None):
-        """阻塞执行一次 Codex 登录（调用方放后台线程）。
-        on_event(kind, data)：kind = "url"（浏览器登录链接）/ "device"（{"url","code"}）/ "log"。
-        返回 {"ok": bool, "message": str}。"""
+    def login(self, device=False, on_event=None, kind="codex"):
+        """阻塞执行一次登录（调用方放后台线程）。kind = codex / claude（Claude 只有浏览器登录）。
+        on_event(event, data)：event = "url"（浏览器登录链接）/ "device"（{"url","code"}）。
+        返回 {"ok": bool, "code": ..., "message": str}。"""
         if not self.installed():
             raise CPAError("订阅组件尚未安装")
         self.write_config()
-        before = {a["file"] for a in self.accounts()}
+        before = {a["file"] for a in self.accounts(kind)}
         before_mtime = {f.name: f.stat().st_mtime for f in self.auth_dir.glob("*.json")}
-        flags = ["-codex-device-login", "-no-browser"] if device else ["-codex-login", "-no-browser"]
+        if kind == "claude":
+            flags = ["-claude-login", "-no-browser"]
+            callback_port = "54545"
+        else:
+            flags = ["-codex-device-login", "-no-browser"] if device else ["-codex-login", "-no-browser"]
+            callback_port = "1455"
         proc = subprocess.Popen(
             [str(self.exe), "-config", str(self.config_path)] + flags,
             cwd=str(self.base), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -483,7 +536,8 @@ class CPAManager:
                     continue
                 tail.append(line)
                 del tail[:-20]
-                if line.startswith("https://auth.openai.com/") and "authorize" in line:
+                # 授权链接：Codex 在 auth.openai.com，Claude 在 claude.ai
+                if line.startswith("https://") and "authorize" in line:
                     emit("url", line)
                 m = re.search(r"Codex device URL:\s*(\S+)", line)
                 if m:
@@ -509,7 +563,7 @@ class CPAManager:
                 self._login = None
         if cancelled:
             return {"ok": False, "code": "cancelled", "message": "已取消登录"}
-        after = self.accounts()
+        after = self.accounts(kind)
         changed = [a for a in after if a["file"] not in before or
                    (self.auth_dir / a["file"]).stat().st_mtime != before_mtime.get(a["file"])]
         if changed:
@@ -518,8 +572,9 @@ class CPAManager:
             return {"ok": True, "code": "ok", "who": who, "plan": a["plan"],
                     "message": "已登录 %s%s" % (who, ("（%s）" % a["plan"]) if a["plan"] else "")}
         text = "\n".join(tail[-6:])
-        if re.search(r"1455|address already in use|bind", text, re.I):
-            return {"ok": False, "code": "port", "message": "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录"}
+        if re.search(callback_port + r"|address already in use|bind", text, re.I):
+            return {"ok": False, "code": "port", "port": callback_port,
+                    "message": "本机 %s 端口被占用，请关闭占用它的程序后重试" % callback_port}
         detail = "exit %s%s" % (proc.returncode, (": " + tail[-1]) if tail else "")
         return {"ok": False, "code": "failed", "detail": detail, "message": "登录没有完成（%s）" % detail}
 

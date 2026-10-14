@@ -175,7 +175,7 @@ def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr, effort=
     from houdini_agent.utils.ai_client import AIClient
     import houdini_agent.subscription as sub
     monkeypatch.setattr(sub, "manager", mgr)
-    monkeypatch.setattr(mgr, "logged_in", lambda: True)
+    monkeypatch.setattr(mgr, "logged_in", lambda *a, **k: True)
     monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
     c = AIClient()
     c._api_keys["deepseek"] = "sk-test"
@@ -228,4 +228,54 @@ def test_sessions_can_skip_think_tag_prompt_and_controller_does_for_codex():
         assert re.search(r"def run\([^)]*think_tags=True", src, re.S), mod
         assert "self.build_messages(enable_thinking and think_tags)" in src, mod
     ctl = open(os.path.join(root, "controller.py"), encoding="utf-8").read()
-    assert 'think_tags=(provider != "codex")' in ctl
+    assert 'think_tags=(self._sub_kind(provider) is None)' in ctl
+
+
+# ---------------------------------------------------------------- Claude subscription
+def test_accounts_and_models_are_split_by_kind(mgr):
+    mgr.auth_dir.mkdir(parents=True)
+    (mgr.auth_dir / "codex-a.json").write_text(json.dumps({"type": "codex", "email": "a@x"}), encoding="utf-8")
+    (mgr.auth_dir / "claude-b.json").write_text(json.dumps({"type": "claude", "email": "b@y",
+                                                              "access_token": "SECRET"}), encoding="utf-8")
+    assert [a["email"] for a in mgr.accounts("codex")] == ["a@x"]
+    assert [a["email"] for a in mgr.accounts("claude")] == ["b@y"]
+    assert "SECRET" not in json.dumps(mgr.accounts("claude"))
+    assert mgr.logout(kind="claude") == 1
+    assert mgr.logged_in("codex") and not mgr.logged_in("claude")
+    st = mgr._load_state()
+    st["models"] = ["gpt-6.1-sol", "claude-opus-5-5"]          # 混在一起也能分开
+    st["models_claude"] = ["claude-sonnet-5-5", "gpt-5.5"]
+    assert mgr.cached_models("codex") == ["gpt-6.1-sol"]
+    assert mgr.cached_models("claude") == ["claude-sonnet-5-5"]
+
+
+def test_kind_helpers():
+    assert cpa.kind_of("codex") == "codex" and cpa.kind_of("claude_sub") == "claude"
+    assert cpa.kind_of("deepseek") is None
+    assert cpa.default_models("claude")[0] == "claude-opus-5-5"
+    assert cpa.effort_levels("claude", "claude-opus-5-5") == ["low", "medium", "high", "xhigh", "max"]
+    assert cpa.default_effort("claude", "claude-opus-5-5") == "medium"
+    assert cpa.model_context("claude", "claude-opus-5-5") == 1000000
+    assert cpa.model_context("codex", "gpt-6.1-sol") == 500000
+
+
+def test_claude_sub_provider_routes_to_local_cpa(mgr, monkeypatch):
+    from houdini_agent.utils.ai_client_providers import AIClientProvidersMixin
+    import houdini_agent.subscription as sub
+    monkeypatch.setattr(sub, "manager", mgr)
+    c = AIClientProvidersMixin()
+    c._api_keys = {}
+    assert c.has_api_key("claude_sub") is False
+    with pytest.raises(RuntimeError):
+        c._get_api_url("claude_sub", "claude-opus-5-5")
+    mgr.auth_dir.mkdir(parents=True, exist_ok=True)
+    (mgr.auth_dir / "claude-u.json").write_text(json.dumps({"type": "claude", "email": "u@y"}), encoding="utf-8")
+    monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
+    assert c.has_api_key("claude_sub") is True and c.has_api_key("codex") is False
+    assert c._get_api_url("claude_sub", "claude-opus-5-5").endswith("/v1/chat/completions")
+    assert c._get_vendor_name("claude_sub") == "Claude 订阅"
+
+
+def test_claude_sub_requests_effort_and_thinking(monkeypatch, mgr):
+    p = _capture_payload("claude_sub", "claude-opus-5-5", True, monkeypatch, mgr, effort="high")
+    assert p.get("reasoning_effort") == "high" and p.get("reasoning") == {"summary": "detailed"}

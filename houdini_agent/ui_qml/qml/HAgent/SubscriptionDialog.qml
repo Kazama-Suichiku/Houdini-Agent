@@ -15,7 +15,7 @@ Popup {
     property bool showMsg: busy || (!loggedIn && (st.message || "").length > 0)
     function loc(s) { return controller ? (controller.lang, controller.tr(s)) : s }
     function refresh() { if (controller) st = controller.subscriptionStatus() }
-    function show() { refresh(); open() }
+    function show() { if (controller) controller.subscriptionDialogOpened(); refresh(); open() }
 
     Connections {
         target: controller
@@ -37,11 +37,21 @@ Popup {
 
         Text {
             Layout.fillWidth: true
-            text: dlg.loc("ChatGPT 订阅")
+            text: dlg.st.title || dlg.loc("ChatGPT 订阅")
             color: Theme.textBright
             font.family: Theme.fontDisplay; font.pixelSize: Theme.fLg; font.weight: Font.Medium
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+        // ---- Claude 订阅：登录前必须知道的风险（一句话）
+        Text {
+            visible: dlg.st.kind === "claude"
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.warn
+            font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+            text: dlg.loc("Anthropic 不允许第三方工具使用 Claude 订阅，账号可能被限制，风险自负。")
+        }
 
         // ---- 未登录：一句说明
         Text {
@@ -131,7 +141,7 @@ Popup {
                 onClicked: if (controller) controller.subscriptionLogin(false)
             }
             Pill {
-                visible: !dlg.loggedIn && !dlg.busy
+                visible: !dlg.loggedIn && !dlg.busy && dlg.st.kind !== "claude"   // Claude 只有浏览器登录
                 label: dlg.loc("设备码登录")
                 onClicked: if (controller) controller.subscriptionLogin(true)
             }

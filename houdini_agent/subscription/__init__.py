@@ -18,7 +18,13 @@ from .cpa import (  # noqa: F401
     CPA_VERSION,
     CODEX_MODELS,
     CODEX_CONTEXT,
+    CLAUDE_MODELS,
     codex_efforts,
     codex_default_effort,
+    kind_of,
+    default_models,
+    model_context,
+    effort_levels,
+    default_effort,
     manager,
 )

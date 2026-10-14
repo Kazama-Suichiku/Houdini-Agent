@@ -621,10 +621,11 @@ class AIClientStreamingMixin:
             if tools:
                 payload['tool_stream'] = True
 
-        # ChatGPT 订阅（Codex via 本机 CPA）：推理强度由用户在顶栏选择（set_reasoning）。
-        # CPA 只有在请求带推理强度时才向 Codex 请求摘要；auto 级别下 gpt-6.1-sol 等几乎不返回，
-        # detailed 才会稳定流式返回（→ reasoning_content）。关闭 Think 时显式不要摘要。
-        if provider == 'codex':
+        # 订阅渠道（ChatGPT / Claude via 本机 CPA）：推理强度由用户在顶栏选择（set_reasoning）。
+        # Codex：CPA 只有在请求带推理强度时才请求摘要；auto 级别下 gpt-6.1-sol 等几乎不返回，
+        # detailed 才会稳定流式返回（→ reasoning_content）。Claude：推理强度只控制深度，
+        # 是否返回思考内容要靠显式的 reasoning.summary。关闭 Think 时显式不要摘要。
+        if self._sub_kind(provider):
             payload['reasoning_effort'] = self._REASONING_EFFORT or 'medium'
             want_summary = enable_thinking and self._REASONING_SUMMARY
             payload['reasoning'] = {'summary': 'detailed' if want_summary else 'none'}

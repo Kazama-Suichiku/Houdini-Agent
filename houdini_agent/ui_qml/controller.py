@@ -58,13 +58,16 @@ MODEL_MAP = {
     # ChatGPT 订阅（本机 CPA + Codex OAuth）；实际列表登录后从 CPA 拉取，见 _provider_model_names
     "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
               "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+    # Claude 订阅（本机 CPA + Claude Code OAuth）；Anthropic 不允许第三方使用订阅，登录框里会提示风险
+    "claude_sub": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
+                   "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"],
     "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
     "glm": ["glm-4.7"],
     "custom": [],
 }
 PROVIDER_LABELS = {
     "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
-    "codex": "ChatGPT 订阅",
+    "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
 CONTEXT_LIMITS = {
@@ -254,6 +257,14 @@ UI_EN = {
     "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
     "请先登录 ChatGPT 订阅": "Sign in to your ChatGPT plan first",
     "登录后即可使用订阅额度，无需 API key。": "Sign in to use your plan's allowance. No API key needed.",
+    "Claude 订阅": "Claude plan", "登录 Claude 订阅…": "Sign in to Claude plan…",
+    "请先登录 Claude 订阅": "Sign in to your Claude plan first",
+    "退出 Claude 订阅登录？": "Sign out of Claude plan?",
+    "已在浏览器打开登录页，登录并授权后会自动完成。": "The sign-in page is open in your browser. Sign in and authorize to finish.",
+    "本机端口被占用，请关闭占用它的程序后重试：": "A local port is in use. Close the program using it and retry: ",
+    "将删除这台电脑上保存的登录凭据：": "This removes the sign-in credentials saved on this computer: ",
+    "Anthropic 不允许第三方工具使用 Claude 订阅，账号可能被限制，风险自负。":
+        "Anthropic does not allow third-party tools to use Claude plans. Your account may be restricted; use at your own risk.",
     "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
         "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
         "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
@@ -990,21 +1001,27 @@ class Controller(QObject):
     def _get_show_thinking(self): return self._show_thinking
     showThinking = Property(bool, _get_show_thinking, notify=showThinkingChanged)
 
-    # ---- 推理强度（目前只有 ChatGPT 订阅渠道支持选择） ----
+    # ---- 推理强度（目前只有订阅渠道 ChatGPT / Claude 支持选择） ----
     _EFFORT_LABELS = {"low": "低", "medium": "中", "high": "高", "xhigh": "很高", "max": "最高", "ultra": "极限"}
 
+    def _sub_kind(self, provider=None):
+        """供应商是否是订阅渠道；是则返回 CPA 凭据类型（codex / claude）。"""
+        from houdini_agent.subscription import kind_of
+        return kind_of(self._provider if provider is None else provider)
+
     def _effort_levels(self):
-        if self._provider != "codex":
+        kind = self._sub_kind()
+        if not kind:
             return []
-        from houdini_agent.subscription import codex_efforts
-        return codex_efforts(self._model_name)
+        from houdini_agent.subscription import effort_levels
+        return effort_levels(kind, self._model_name)
 
     def _current_effort(self):
         levels = self._effort_levels()
         if not levels:
             return ""
-        from houdini_agent.subscription import codex_default_effort
-        v = self._effort_by_model.get(self._model_name) or codex_default_effort(self._model_name)
+        from houdini_agent.subscription import default_effort
+        v = self._effort_by_model.get(self._model_name) or default_effort(self._sub_kind(), self._model_name)
         return v if v in levels else (levels[1] if len(levels) > 1 else levels[0])
 
     def _get_reasoning_effort(self):
@@ -1019,9 +1036,9 @@ class Controller(QObject):
 
     @Slot(result="QVariantList")
     def effortItems(self):
-        from houdini_agent.subscription import codex_default_effort
+        from houdini_agent.subscription import default_effort
         cur = self._current_effort()
-        dflt = codex_default_effort(self._model_name)
+        dflt = default_effort(self._sub_kind(), self._model_name)
         en = self._lang == "en"
         out = []
         for v in self._effort_levels():
@@ -1150,7 +1167,7 @@ class Controller(QObject):
             if k == "custom":
                 continue
             label = self.tr(PROVIDER_LABELS.get(k, k))
-            if k == "codex" and not self._sub_logged_in():
+            if self._sub_kind(k) and not self._sub_logged_in(k):
                 label += " · " + self.tr("未登录")
             items.append({"label": label, "val": k, "checked": k == self._provider})
         if self._custom_providers:
@@ -1165,14 +1182,17 @@ class Controller(QObject):
     def modelItems(self):
         models = self._provider_model_names(self._provider)
         items = [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
-        if self._provider == "codex":
+        kind = self._sub_kind()
+        if kind:
             accs = []
             try:
                 from houdini_agent.subscription import manager
-                accs = manager.accounts()
+                accs = manager.accounts(kind)
             except Exception:
                 pass
-            label = (self.tr("账号：") + (accs[0].get("email") or "ChatGPT")) if accs else self.tr("登录 ChatGPT 订阅…")
+            brand = "Claude" if kind == "claude" else "ChatGPT"
+            label = ((self.tr("账号：") + (accs[0].get("email") or brand)) if accs
+                     else self.tr("登录 %s 订阅…" % brand))
             items += [{"sep": True}, {"label": label, "val": "__sub_account__", "checked": False}]
             if accs:
                 items.append({"label": self.tr("退出登录"), "val": "__sub_logout__", "checked": False})
@@ -1201,13 +1221,15 @@ class Controller(QObject):
         self.providerChanged.emit()
         self.tokensChanged.emit()
         self._save_prefs()
-        if v == "codex" and not self._sub_logged_in():
+        if self._sub_kind(v) and not self._sub_logged_in(v):
+            self._sub_dialog_provider = v
             self.openSubscriptionDialog.emit()
         return True
 
     @Slot(str, result=bool)
     def setModel(self, v):
         if v == "__sub_account__":
+            self._sub_dialog_provider = self._provider
             self.openSubscriptionDialog.emit()
             return False
         if v == "__sub_logout__":
@@ -1315,7 +1337,8 @@ class Controller(QObject):
 
     @Slot(str)
     def openProviderApiKey(self, provider):
-        if (provider or self._provider) == "codex":
+        if self._sub_kind(provider or self._provider):
+            self._sub_dialog_provider = provider or self._provider
             self.openSubscriptionDialog.emit()
             return
         try:
@@ -2176,7 +2199,8 @@ class Controller(QObject):
         if not self._session:
             self.toast.emit("AI 后端尚未就绪，请稍候几秒再试")
             return
-        if self._provider == "codex":
+        if self._sub_kind():
+            self._sub_dialog_provider = self._provider
             self.openSubscriptionDialog.emit()
             return
         try:
@@ -2442,24 +2466,43 @@ class Controller(QObject):
             self.toast.emit("创建 Wrangle 失败：%s" % e)
             return False
 
-    # ---- ChatGPT 订阅（本机 CPA + Codex OAuth） ----
+    # ---- 订阅登录（本机 CPA：ChatGPT 走 Codex OAuth，Claude 走 Claude Code OAuth） ----
     # 后台线程只发 (str, str) 信号回主线程（PySide6 跨线程 Signal(dict) 会崩，见 memory）。
-    def _sub_logged_in(self):
+    def _sub_logged_in(self, provider=None):
+        kind = self._sub_kind(provider)
+        if not kind:
+            return False
         try:
             from houdini_agent.subscription import manager
-            return manager.logged_in()
+            return manager.logged_in(kind)
         except Exception:
             return False
 
+    def _sub_target(self):
+        """订阅对话框 / 退出登录作用的供应商：最近一次打开对话框时指定的，否则当前供应商。"""
+        p = getattr(self, "_sub_dialog_provider", "") or ""
+        if not self._sub_kind(p):
+            p = self._provider if self._sub_kind() else "codex"
+        return p
+
+    @Slot()
+    def subscriptionDialogOpened(self):
+        """对话框每次打开：不在登录流程中时清掉上一次的提示（两种订阅共用一份状态）。"""
+        if not self._sub.get("busy"):
+            self._sub.update(message="", loginUrl="", deviceUrl="", deviceCode="")
+
     @Slot(result="QVariantMap")
     def subscriptionStatus(self):
+        target = self._sub_target()
+        kind = self._sub_kind(target)
+        base = dict(self._sub, kind=kind, title=self.tr(PROVIDER_LABELS.get(target, target)))
         try:
             from houdini_agent.subscription import manager, CPA_VERSION
-            accounts = manager.accounts()
+            accounts = manager.accounts(kind)
             installed = manager.installed()
         except Exception as e:
-            return dict(self._sub, installed=False, version="", accounts=[], error=str(e))
-        return dict(self._sub, installed=installed, version=CPA_VERSION,
+            return dict(base, installed=False, version="", accounts=[], error=str(e))
+        return dict(base, installed=installed, version=CPA_VERSION,
                     accounts=[{"email": a["email"], "plan": a["plan"], "file": a["file"]} for a in accounts])
 
     def _sub_set(self, **kw):
@@ -2480,7 +2523,7 @@ class Controller(QObject):
             self._sub_set(phase=d.get("phase", ""), message=self.tr(d.get("message", "")) + d.get("suffix", ""))
         elif kind == "url":
             self._sub_set(phase="login", loginUrl=d.get("url", ""),
-                          message=self.tr("已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。"))
+                          message=self.tr("已在浏览器打开登录页，登录并授权后会自动完成。"))
         elif kind == "device":
             self._sub_set(phase="login", deviceUrl=d.get("url", ""), deviceCode=d.get("code", ""),
                           message=self.tr("在浏览器打开的页面里输入下面的验证码，授权后会自动完成。"))
@@ -2490,8 +2533,9 @@ class Controller(QObject):
             self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="", message=msg)
             if ok:
                 self.toast.emit(msg or self.tr("已登录"))
-                names = self._provider_model_names("codex")
-                if self._provider == "codex" and names and self._model_name not in names:
+                target = self._sub_target()
+                names = self._provider_model_names(target)
+                if self._provider == target and names and self._model_name not in names:
                     self._model_name = names[0]
                     self.modelChanged.emit()
                 self.providerChanged.emit()     # 让顶栏 / 供应商面板重新读取登录状态
@@ -2508,7 +2552,7 @@ class Controller(QObject):
         if code == "timeout":
             return self.tr("登录超时（15 分钟内未完成授权）")
         if code == "port":
-            return self.tr("本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录")
+            return self.tr("本机端口被占用，请关闭占用它的程序后重试：") + str(d.get("port") or "")
         if code == "failed":
             return self.tr("登录没有完成") + ((" (%s)" if en else "（%s）") % d.get("detail") if d.get("detail") else "")
         return self.tr("出错了：") + str(d.get("message") or "")
@@ -2519,6 +2563,8 @@ class Controller(QObject):
             return
         self._sub_set(busy=True, phase="install", progress=0, message=self.tr("正在准备订阅组件…"),
                       loginUrl="", deviceUrl="", deviceCode="")
+
+        sub_kind = self._sub_kind(self._sub_target())
 
         def emit(kind, data):
             self._sigSub.emit(kind, json.dumps(data, ensure_ascii=False))
@@ -2538,12 +2584,13 @@ class Controller(QObject):
                         webbrowser.open(data.get("url", ""))
                         emit("device", data)
 
-                res = manager.login(device=bool(device), on_event=on_event)
+                res = manager.login(device=bool(device) and sub_kind == "codex", on_event=on_event,
+                                    kind=sub_kind)
                 if res.get("ok"):
                     emit("phase", {"phase": "start", "message": "登录成功，正在启动本机订阅服务…"})
                     manager.ensure_running()
                     try:
-                        manager.refresh_models()
+                        manager.refresh_models(sub_kind)
                     except Exception:
                         pass
                 emit("done", res)
@@ -2561,21 +2608,25 @@ class Controller(QObject):
             pass
 
     def _confirm_sub_logout(self):
+        self._sub_dialog_provider = self._provider
+        kind = self._sub_kind()
         try:
             from houdini_agent.subscription import manager
-            accs = manager.accounts()
+            accs = manager.accounts(kind)
         except Exception:
             accs = []
-        who = ", ".join(a.get("email") or "ChatGPT" for a in accs)
-        body = (self.tr("将删除这台电脑上保存的 ChatGPT 订阅登录凭据：") + who + "\n\n"
-                + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。"))
-        self._request_confirm("退出 ChatGPT 订阅登录？", body, lambda: self.subscriptionLogout(""))
+        brand = "Claude" if kind == "claude" else "ChatGPT"
+        who = ", ".join(a.get("email") or brand for a in accs)
+        body = self.tr("将删除这台电脑上保存的登录凭据：") + who
+        if kind == "codex":
+            body += "\n\n" + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。")
+        self._request_confirm("退出 %s 订阅登录？" % brand, body, lambda: self.subscriptionLogout(""))
 
     @Slot(str)
     def subscriptionLogout(self, file_name):
         try:
             from houdini_agent.subscription import manager
-            n = manager.logout(file_name or None)
+            n = manager.logout(file_name or None, kind=self._sub_kind(self._sub_target()))
         except Exception as e:
             self.toast.emit("退出登录失败：%s" % e)
             return
@@ -2584,11 +2635,13 @@ class Controller(QObject):
 
     @Slot()
     def subscriptionRefreshModels(self):
+        sub_kind = self._sub_kind(self._sub_target())
+
         def work():
             try:
                 from houdini_agent.subscription import manager
                 manager.ensure_running()
-                models = manager.refresh_models()
+                models = manager.refresh_models(sub_kind)
                 self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：",
                                                        "suffix": ", ".join(models)}, ensure_ascii=False))
             except Exception as e:
@@ -2815,10 +2868,11 @@ class Controller(QObject):
         p = self._custom_provider(key)
         if p is not None:
             return [m.get("name") for m in (p.get("models") or []) if m.get("name")]
-        if key == "codex":
+        kind = self._sub_kind(key)
+        if kind:
             try:
                 from houdini_agent.subscription import manager
-                return manager.cached_models()
+                return manager.cached_models(kind)
             except Exception:
                 pass
         return MODEL_MAP.get(key, [])
@@ -2835,19 +2889,19 @@ class Controller(QObject):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return self._to_int(meta.get("context"), 128000) or 128000
-        if self._provider == "codex":
-            # Codex 渠道的窗口与同名模型的 API 直连不同（多为 272K）
-            from houdini_agent.subscription import CODEX_CONTEXT
-            from houdini_agent.subscription.cpa import CODEX_DEFAULT_CONTEXT
-            return CODEX_CONTEXT.get(self._model_name, CODEX_DEFAULT_CONTEXT)
+        kind = self._sub_kind()
+        if kind:
+            # 订阅渠道的窗口与同名模型的 API 直连不同（Codex 多为 272K），按订阅目录取
+            from houdini_agent.subscription import model_context
+            return model_context(kind, self._model_name)
         return CONTEXT_LIMITS.get(self._model_name, 128000)
 
     def _active_model_vision(self):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return bool(meta.get("vision"))
-        if self._provider == "codex":
-            return True     # Codex 目录里的模型都支持图片输入
+        if self._sub_kind():
+            return True     # Codex / Claude 订阅目录里的模型都支持图片输入
         return self._model_name in VISION_MODELS
 
     def _apply_custom_provider(self, p):
@@ -3239,8 +3293,9 @@ class Controller(QObject):
             if self._running:
                 self.toast.emit("当前正在运行，先停止或等待完成后再发送")
             return False
-        if self._provider == "codex" and self._session and not self._sub_logged_in():
-            self.toast.emit(self.tr("请先登录 ChatGPT 订阅"))
+        if self._sub_kind() and self._session and not self._sub_logged_in():
+            self.toast.emit(self.tr("请先登录 %s" % PROVIDER_LABELS.get(self._provider, "")))
+            self._sub_dialog_provider = self._provider
             self.openSubscriptionDialog.emit()
             return False
         # name the session from its first user message
@@ -3298,7 +3353,7 @@ class Controller(QObject):
         if self._is_custom_key(self._provider):
             self._apply_custom_provider(self._custom_provider(self._provider))
             prov_arg = "custom"
-        if self._provider == "codex":
+        if self._sub_kind():
             try:
                 self._session.client.set_reasoning(self._current_effort(), summary=self._show_thinking)
             except Exception as e:
@@ -3470,8 +3525,8 @@ class Controller(QObject):
                  "on_iteration_start": lambda i: self._sigStatus.emit("generating")},
                 context_limit=(context_limit if context_limit else CONTEXT_LIMITS.get(model, 128000)),
                 enable_thinking=True,
-                # ChatGPT 订阅走 Codex 原生推理摘要，不再要求模型在正文里写 <think>
-                think_tags=(provider != "codex"),
+                # 订阅渠道（ChatGPT / Claude）走原生推理，不再要求模型在正文里写 <think>
+                think_tags=(self._sub_kind(provider) is None),
                 supports_vision=supports_vision,
                 tools=tools, max_iter=max_iter,
                 images=images, rag=True, memory=self._memory_enabled,
@@ -5292,7 +5347,7 @@ class Controller(QObject):
         if not self._session:
             return 0
         try:
-            msgs = self._session.build_messages(self._show_thinking and self._provider != "codex")
+            msgs = self._session.build_messages(self._show_thinking and not self._sub_kind())
         except Exception:
             msgs = copy.deepcopy(getattr(self._session, "history", []) or [])
         try:
