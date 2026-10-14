@@ -159,3 +159,56 @@ def test_image_generation_models_are_not_offered_for_chat(mgr):
     assert mgr.cached_models() == ["gpt-6.1-sol", "gpt-5.5"]
     st["models"] = ["gpt-image-2"]
     assert mgr.cached_models() == cpa.CODEX_MODELS
+
+
+# ---------------------------------------------------------------- reasoning summaries
+class _CapturePost:
+    def __init__(self):
+        self.payloads = []
+
+    def post(self, url, json=None, **kw):
+        self.payloads.append(json)
+        raise RuntimeError("stop after capture")
+
+
+def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr):
+    from houdini_agent.utils.ai_client import AIClient
+    import houdini_agent.subscription as sub
+    monkeypatch.setattr(sub, "manager", mgr)
+    monkeypatch.setattr(mgr, "logged_in", lambda: True)
+    monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
+    c = AIClient()
+    c._api_keys["deepseek"] = "sk-test"
+    cap = _CapturePost()
+    c._http_session = cap
+    c._max_retries = 1
+    list(c.chat_stream([{"role": "user", "content": "hi"}], model=model, provider=provider,
+                       enable_thinking=enable_thinking))
+    return cap.payloads[0] if cap.payloads else {}
+
+
+def test_codex_requests_detailed_reasoning_summary_when_thinking(monkeypatch, mgr):
+    p = _capture_payload("codex", "gpt-6.1-sol", True, monkeypatch, mgr)
+    assert p.get("reasoning_effort") == "medium"
+    assert p.get("reasoning") == {"summary": "detailed"}
+
+
+def test_no_summary_request_when_thinking_off_or_other_provider(monkeypatch, mgr):
+    p = _capture_payload("codex", "gpt-6.1-sol", False, monkeypatch, mgr)
+    assert "reasoning" not in p and "reasoning_effort" not in p
+    p = _capture_payload("deepseek", "deepseek-v4-flash", True, monkeypatch, mgr)
+    assert "reasoning" not in p
+
+
+def test_sessions_can_skip_think_tag_prompt_and_controller_does_for_codex():
+    import inspect
+    from houdini_agent.ui_qml import controller as ctl
+    for mod in ("agent_session", "bridge_session"):
+        try:
+            m = __import__("houdini_agent.ui_qml." + mod, fromlist=["x"])
+        except Exception:
+            continue
+        cls = [v for v in vars(m).values() if inspect.isclass(v) and hasattr(v, "build_messages")]
+        assert cls and "think_tags" in inspect.signature(cls[0].run).parameters
+    src = inspect.getsource(ctl.Controller._worker)
+    assert 'think_tags=(provider != "codex")' in src

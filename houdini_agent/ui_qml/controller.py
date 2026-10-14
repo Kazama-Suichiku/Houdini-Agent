@@ -3277,6 +3277,8 @@ class Controller(QObject):
                  "on_iteration_start": lambda i: self._sigStatus.emit("generating")},
                 context_limit=(context_limit if context_limit else CONTEXT_LIMITS.get(model, 128000)),
                 enable_thinking=True,
+                # ChatGPT 订阅走 Codex 原生推理摘要，不再要求模型在正文里写 <think>
+                think_tags=(provider != "codex"),
                 supports_vision=supports_vision,
                 tools=tools, max_iter=max_iter,
                 images=images, rag=True, memory=self._memory_enabled,
@@ -5097,7 +5099,7 @@ class Controller(QObject):
         if not self._session:
             return 0
         try:
-            msgs = self._session.build_messages(self._show_thinking)
+            msgs = self._session.build_messages(self._show_thinking and self._provider != "codex")
         except Exception:
             msgs = copy.deepcopy(getattr(self._session, "history", []) or [])
         try:
