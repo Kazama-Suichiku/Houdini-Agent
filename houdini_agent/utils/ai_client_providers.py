@@ -320,7 +320,7 @@ class AIClientProvidersMixin:
             'deepseek': 'deepseek-v4-flash',
             'glm': 'glm-4.7',
             'duojie': 'claude-opus-5-5',
-            'openrouter': 'anthropic/claude-sonnet-5',
+            'openrouter': 'anthropic/claude-sonnet-5.5',
             'codex': 'gpt-6.1-sol',
             'claude_sub': 'claude-opus-5-5',
         }

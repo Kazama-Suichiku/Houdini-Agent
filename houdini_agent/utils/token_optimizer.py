@@ -90,6 +90,7 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'gpt-6-astra':          {'input': 10.00, 'input_cache': 1.00,  'output': 50.00, 'reasoning': 50.00},
     'gpt-6.1-sol':          {'input': 2.00,  'input_cache': 0.10,  'output': 10.00, 'reasoning': 10.00},
     'gpt-6-sol':            {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
+    'gpt-6-luna':           {'input': 0.10,  'input_cache': 0.01,  'output': 0.50,  'reasoning': 0.50},
     'gpt-5.6-sol-pro':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
     'gpt-5.6-sol':          {'input': 4.00,  'input_cache': 0.40,  'output': 20.00, 'reasoning': 20.00},
     'gpt-5.6-terra':        {'input': 2.00,  'input_cache': 0.20,  'output': 12.00, 'reasoning': 12.00},
@@ -104,6 +105,7 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     # ---- Claude (Duojie / OpenRouter；OpenRouter 的 4.8 写法为 claude-opus-4.8) ----
     'claude-opus-5-5':      {'input': 4.00,  'input_cache': 0.20,  'output': 20.00, 'reasoning': 20.00},
     'claude-sonnet-5-5':    {'input': 2.00,  'input_cache': 0.10,  'output': 10.00, 'reasoning': 10.00},
+    'claude-haiku-5-5':     {'input': 0.10,  'input_cache': 0.01,  'output': 0.50},
     'claude-opus-5':        {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
     'claude-sonnet-5':      {'input': 2.00,  'input_cache': 0.20,  'output': 10.00, 'reasoning': 10.00},
     'claude-opus-4-8':      {'input': 5.00,  'input_cache': 0.50,  'output': 25.00, 'reasoning': 25.00},
@@ -124,6 +126,7 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     'gemini-3-flash':       {'input': 0.50,  'input_cache': 0.125, 'output': 3.00},
     'gemini-3.1-pro':       {'input': 2.00,  'input_cache': 0.20,  'output': 12.00},
     'gemini-3.8-flash':     {'input': 0.75,  'input_cache': 0.075, 'output': 3.75},
+    'gemini-4-argon':       {'input': 2.00,  'input_cache': 0.10,  'output': 10.00, 'reasoning': 10.00},
     # ---- GLM (智谱清言) ----
     'glm-4.7':              {'input': 0.50,  'input_cache': 0.50,  'output': 0.50},
     'glm-5-turbo':          {'input': 1.20,  'input_cache': 0.24,  'output': 4.00},
@@ -166,15 +169,16 @@ def _match_pricing(model: str) -> Dict[str, float]:
     lowered = {k.lower(): v for k, v in MODEL_PRICING.items()}
     if m in lowered:
         return lowered[m]
-    # 前缀匹配（如 claude-sonnet-4-5-xxx → claude-sonnet-4-5）
-    for key in sorted(lowered.keys(), key=len, reverse=True):
-        if m.startswith(key):
-            return lowered[key]
-    # 版本号写法归一（OpenRouter claude-haiku-4.5 ↔ Anthropic claude-haiku-4-5）
+    # 版本号写法归一后的精确匹配（OpenRouter claude-opus-5.5 ↔ claude-opus-5-5）。
+    # 必须先于前缀匹配，否则 claude-opus-5.5 会被前缀 claude-opus-5 抢走
     normalized = {k.replace('.', '-'): v for k, v in lowered.items()}
     mn = m.replace('.', '-')
     if mn in normalized:
         return normalized[mn]
+    # 前缀匹配（如 claude-sonnet-4-5-xxx → claude-sonnet-4-5）
+    for key in sorted(lowered.keys(), key=len, reverse=True):
+        if m.startswith(key):
+            return lowered[key]
     for key in sorted(normalized.keys(), key=len, reverse=True):
         if mn.startswith(key):
             return normalized[key]
