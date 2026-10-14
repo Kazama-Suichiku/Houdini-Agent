@@ -63,6 +63,19 @@ def test_display_math_has_no_extra_blank_lines_around_it():
     assert out.startswith("首先，") and out.endswith("因此")
 
 
+def test_rerender_stored_history_html():
+    from houdini_agent.ui_qml.mathrender import rerender_html
+    # 加公式渲染之前保存的回答：<br> 分行、> 已转义、公式还是源码
+    stored = (r"首先，<br>\[<br>e=\sum_{n=0}^{6}\frac1{n!}<br>&gt;2.718.<br>\]<br>"
+              r"对任意 \(x&gt;0\)，有<br><b>结论</b>")
+    out = rerender_html(stored)
+    assert "\\frac" not in out and "\\[" not in out and "\\(" not in out
+    assert "<b>结论</b>" in out and out.startswith("首先，")
+    assert "&gt;0" in out                                  # 行内公式里的 > 仍是转义后的
+    assert rerender_html(out) == out                       # 已渲染的不会二次处理
+    assert rerender_html("普通回答<br>没有公式") == "普通回答<br>没有公式"
+
+
 def test_dollar_without_math_markers_is_left_alone():
     t, maths = extract_math("价格是 $5 到 $10")
     assert maths == [] and t == "价格是 $5 到 $10"

@@ -1615,6 +1615,26 @@ class Controller(QObject):
         except Exception:
             pass
 
+    def _upgrade_stored_blocks(self, blocks):
+        """历史消息是保存时就转好的富文本：加载时补上后来才有的渲染（就地修改）。
+        - 回答里的 LaTeX 公式（加公式渲染之前保存的会话）
+        - 思考块的 **标题** 加粗（以前只存了纯文本）"""
+        try:
+            from houdini_agent.ui_qml.mathrender import rerender_html
+        except Exception:
+            rerender_html = None
+        for b in blocks or []:
+            if not isinstance(b, dict):
+                continue
+            kind = b.get("kind")
+            if kind == "prose" and rerender_html and b.get("html"):
+                try:
+                    b["html"] = rerender_html(b["html"])
+                except Exception as e:
+                    print("[controller] re-render math failed:", e)
+            elif kind == "thinking" and b.get("text") and not b.get("html"):
+                b["html"] = self._think_html(b["text"])
+
     def _load_active(self):
         # 切换/新建会话时清掉上一会话残留的附带图片，避免它泄漏到新会话的图生图里。
         self._last_attached_images = []
@@ -1624,6 +1644,7 @@ class Controller(QObject):
         for it in rows:
             if it.get("type") == "ai":
                 blocks = (it.get("payload", {}) or {}).get("blocks", [])
+                self._upgrade_stored_blocks(blocks)
                 it["payload"] = {"bm": BlockModel(blocks)}
         self._model.load(rows)
         p, m = s.get("provider"), s.get("model")

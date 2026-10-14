@@ -338,11 +338,13 @@ _INLINE_RE = re.compile(r"\\\((.+?)\\\)", re.S)
 _DOLLAR_RE = re.compile(r"(?<![\w$\\])\$(?=\S)([^$\n]{1,200}?)(?<=\S)\$(?![\w$])")
 
 
-def extract_math(text):
+def extract_math(text, clean=None):
     """Replace math spans with placeholders. Returns (text, [html, ...]).
-    Display math becomes its own paragraph (surrounded by newlines)."""
+    Display math becomes its own paragraph (surrounded by newlines).
+    clean：可选，渲染前先处理公式原文（重渲染历史富文本时用来去标签、反转义）。"""
     rendered = []
     codes = []
+    clean = clean or (lambda s: s)
 
     def keep_code(m):
         codes.append(m.group(0))
@@ -351,18 +353,18 @@ def extract_math(text):
     text = re.sub(r"`[^`\n]+`", keep_code, text)
 
     def disp(m):
-        rendered.append(latex_to_html(m.group(1) if m.group(1) is not None else m.group(2), display=True))
+        rendered.append(latex_to_html(clean(m.group(1) if m.group(1) is not None else m.group(2)), display=True))
         return "\n" + (_DPH % (len(rendered) - 1)) + "\n"
 
     def inline(m):
-        rendered.append(latex_to_html(m.group(1), display=False))
+        rendered.append(latex_to_html(clean(m.group(1)), display=False))
         return _PH % (len(rendered) - 1)
 
     def dollar(m):
         body = m.group(1)
         if not re.search(r"\\[A-Za-z]|\^|_\{", body):
             return m.group(0)
-        rendered.append(latex_to_html(body, display=False))
+        rendered.append(latex_to_html(clean(body), display=False))
         return _PH % (len(rendered) - 1)
 
     text = _DISPLAY_RE.sub(disp, text)
@@ -376,3 +378,24 @@ def restore_math(html, rendered):
     # 独立公式本身是块级 div（自带上下间距），去掉它前后由空行转成的 <br>，否则上下各空一大段
     html = _DPH_AROUND_RE.sub(r"\1", html)
     return _PH_RE.sub(lambda m: rendered[int(m.group(1))], html)
+
+
+_HAS_MATH_RE = re.compile(r"\\\[|\\\(|\$")
+
+
+def _clean_stored(body):
+    """历史富文本里的公式原文：<br> 已在外面换回换行；这里去掉 Markdown 插进来的标签并反转义。"""
+    import html as _html
+    return _html.unescape(re.sub(r"<[^>]+>", "", body))
+
+
+def rerender_html(stored):
+    """老会话的回答是保存时就转好的富文本，公式仍是 LaTeX 源码。加载历史时用它补渲染：
+    只处理公式片段，其余富文本原样保留；已渲染过的内容里没有分隔符，不会被二次处理。"""
+    if not stored or "\x00" in stored or not _HAS_MATH_RE.search(stored):
+        return stored
+    text = stored.replace("<br>", "\n")
+    text, maths = extract_math(text, clean=_clean_stored)
+    if not maths:
+        return stored
+    return restore_math(text.replace("\n", "<br>"), maths)
