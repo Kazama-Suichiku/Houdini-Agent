@@ -57,6 +57,25 @@ CODEX_MODELS = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
 # Codex 渠道的上下文窗口与 API 直连不同（同名模型直连多为 1M），单独维护
 CODEX_CONTEXT = {"gpt-6.1-sol": 500000}
 CODEX_DEFAULT_CONTEXT = 272000
+
+# 各模型支持的推理强度与默认档（CPA 内置 Codex 目录的 supported_reasoning_levels / default_reasoning_level）
+_EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
+CODEX_EFFORTS = {
+    "gpt-6.1-sol": _EFFORT_ORDER, "gpt-6-astra": _EFFORT_ORDER, "gpt-6-sol": _EFFORT_ORDER,
+    "gpt-5.6-sol": _EFFORT_ORDER, "gpt-5.6-terra": _EFFORT_ORDER,
+    "gpt-6-luna": _EFFORT_ORDER[:5], "gpt-5.6-luna": _EFFORT_ORDER[:5],
+    "gpt-5.5": _EFFORT_ORDER[:4],
+}
+CODEX_DEFAULT_EFFORT = {"gpt-6.1-sol": "low", "gpt-5.6-sol": "low"}
+
+
+def codex_efforts(model) -> list:
+    """模型支持的推理强度（目录外的新模型保守给 low / medium / high）。"""
+    return list(CODEX_EFFORTS.get(str(model or ""), _EFFORT_ORDER[:3]))
+
+
+def codex_default_effort(model) -> str:
+    return CODEX_DEFAULT_EFFORT.get(str(model or ""), "medium")
 _HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review"}
 
 

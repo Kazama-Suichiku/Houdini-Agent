@@ -621,11 +621,13 @@ class AIClientStreamingMixin:
             if tools:
                 payload['tool_stream'] = True
 
-        # ChatGPT 订阅（Codex via 本机 CPA）：只有带上推理强度，CPA 才会向 Codex 请求推理摘要；
-        # 摘要级别 auto 时 gpt-6.1-sol 等几乎不返回，detailed 才会稳定流式返回（→ reasoning_content）
-        if provider == 'codex' and enable_thinking:
-            payload['reasoning_effort'] = 'medium'
-            payload['reasoning'] = {'summary': 'detailed'}
+        # ChatGPT 订阅（Codex via 本机 CPA）：推理强度由用户在顶栏选择（set_reasoning）。
+        # CPA 只有在请求带推理强度时才向 Codex 请求摘要；auto 级别下 gpt-6.1-sol 等几乎不返回，
+        # detailed 才会稳定流式返回（→ reasoning_content）。关闭 Think 时显式不要摘要。
+        if provider == 'codex':
+            payload['reasoning_effort'] = self._REASONING_EFFORT or 'medium'
+            want_summary = enable_thinking and self._REASONING_SUMMARY
+            payload['reasoning'] = {'summary': 'detailed' if want_summary else 'none'}
 
         # DeepSeek V4 thinking 参数（v4-flash / v4-pro 显式启用思考）
         if provider == 'deepseek' and enable_thinking and 'deepseek-v4' in model.lower():

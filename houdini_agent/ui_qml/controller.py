@@ -249,6 +249,8 @@ UI_EN = {
     "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
     "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
     "刷新模型": "Refresh models", "复制": "Copy",
+    "推理": "Effort", "低": "Low", "中": "Medium", "高": "High", "很高": "Very high",
+    "最高": "Max", "极限": "Ultra", "默认": "default",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -533,6 +535,7 @@ _TPL_HOU = [
 class Controller(QObject):
     providerChanged = Signal()
     modelChanged = Signal()
+    effortChanged = Signal()       # 推理强度可选项 / 当前值变化（换供应商、换模型、手动选择）
     sceneChanged = Signal()
     showThinkingChanged = Signal()
     runningChanged = Signal()
@@ -764,6 +767,16 @@ class Controller(QObject):
         self._sigInfo.connect(self._info)
         self._sigUpdateDialog.connect(self._show_update_dialog)
         self._sigSub.connect(self._on_sub_event)
+        self.providerChanged.connect(self.effortChanged)
+        self.modelChanged.connect(self.effortChanged)
+        self._effort_by_model = {}      # model -> 用户选的推理强度（QSettings 持久化）
+        try:
+            _raw = QSettings("HoudiniAI", "Assistant").value("reasoning_effort", "")
+            _d = json.loads(_raw) if _raw else {}
+            if isinstance(_d, dict):
+                self._effort_by_model = {str(k): str(v) for k, v in _d.items()}
+        except Exception:
+            pass
         self._sub = {"busy": False, "phase": "", "message": "", "progress": 0,
                      "loginUrl": "", "deviceUrl": "", "deviceCode": ""}
         self._sigCtxRefresh.connect(self.refreshContext)
@@ -942,6 +955,58 @@ class Controller(QObject):
 
     def _get_show_thinking(self): return self._show_thinking
     showThinking = Property(bool, _get_show_thinking, notify=showThinkingChanged)
+
+    # ---- 推理强度（目前只有 ChatGPT 订阅渠道支持选择） ----
+    _EFFORT_LABELS = {"low": "低", "medium": "中", "high": "高", "xhigh": "很高", "max": "最高", "ultra": "极限"}
+
+    def _effort_levels(self):
+        if self._provider != "codex":
+            return []
+        from houdini_agent.subscription import codex_efforts
+        return codex_efforts(self._model_name)
+
+    def _current_effort(self):
+        levels = self._effort_levels()
+        if not levels:
+            return ""
+        from houdini_agent.subscription import codex_default_effort
+        v = self._effort_by_model.get(self._model_name) or codex_default_effort(self._model_name)
+        return v if v in levels else (levels[1] if len(levels) > 1 else levels[0])
+
+    def _get_reasoning_effort(self):
+        return self._current_effort()
+
+    def _get_reasoning_effort_label(self):
+        v = self._current_effort()
+        return ("%s · %s" % (self.tr("推理"), self.tr(self._EFFORT_LABELS.get(v, v)))) if v else ""
+
+    reasoningEffort = Property(str, _get_reasoning_effort, notify=effortChanged)
+    reasoningEffortLabel = Property(str, _get_reasoning_effort_label, notify=effortChanged)
+
+    @Slot(result="QVariantList")
+    def effortItems(self):
+        from houdini_agent.subscription import codex_default_effort
+        cur = self._current_effort()
+        dflt = codex_default_effort(self._model_name)
+        out = []
+        for v in self._effort_levels():
+            label = self.tr(self._EFFORT_LABELS.get(v, v)) + "  " + v
+            if v == dflt:
+                label += "（%s）" % self.tr("默认")
+            out.append({"label": label, "val": v, "checked": v == cur})
+        return out
+
+    @Slot(str)
+    def setReasoningEffort(self, v):
+        if v not in self._effort_levels():
+            return
+        self._effort_by_model[self._model_name] = v
+        try:
+            QSettings("HoudiniAI", "Assistant").setValue("reasoning_effort",
+                                                         json.dumps(self._effort_by_model))
+        except Exception:
+            pass
+        self.effortChanged.emit()
 
     def _get_running(self): return self._running
     running = Property(bool, _get_running, notify=runningChanged)
@@ -3110,6 +3175,11 @@ class Controller(QObject):
         if self._is_custom_key(self._provider):
             self._apply_custom_provider(self._custom_provider(self._provider))
             prov_arg = "custom"
+        if self._provider == "codex":
+            try:
+                self._session.client.set_reasoning(self._current_effort(), summary=self._show_thinking)
+            except Exception as e:
+                print("[controller] set reasoning failed:", e)
         ctx_limit = self._active_model_context()
         threading.Thread(
             target=self._worker,

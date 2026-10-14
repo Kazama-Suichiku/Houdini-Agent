@@ -171,7 +171,7 @@ class _CapturePost:
         raise RuntimeError("stop after capture")
 
 
-def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr):
+def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr, effort=None, summary=True):
     from houdini_agent.utils.ai_client import AIClient
     import houdini_agent.subscription as sub
     monkeypatch.setattr(sub, "manager", mgr)
@@ -179,6 +179,8 @@ def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr):
     monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
     c = AIClient()
     c._api_keys["deepseek"] = "sk-test"
+    if effort is not None:
+        c.set_reasoning(effort, summary=summary)
     cap = _CapturePost()
     c._http_session = cap
     c._max_retries = 1
@@ -187,28 +189,43 @@ def _capture_payload(provider, model, enable_thinking, monkeypatch, mgr):
     return cap.payloads[0] if cap.payloads else {}
 
 
-def test_codex_requests_detailed_reasoning_summary_when_thinking(monkeypatch, mgr):
+def test_codex_requests_detailed_reasoning_summary_by_default(monkeypatch, mgr):
     p = _capture_payload("codex", "gpt-6.1-sol", True, monkeypatch, mgr)
     assert p.get("reasoning_effort") == "medium"
     assert p.get("reasoning") == {"summary": "detailed"}
 
 
-def test_no_summary_request_when_thinking_off_or_other_provider(monkeypatch, mgr):
-    p = _capture_payload("codex", "gpt-6.1-sol", False, monkeypatch, mgr)
-    assert "reasoning" not in p and "reasoning_effort" not in p
-    p = _capture_payload("deepseek", "deepseek-v4-flash", True, monkeypatch, mgr)
-    assert "reasoning" not in p
+def test_codex_uses_user_effort_and_skips_summary_when_think_off(monkeypatch, mgr):
+    p = _capture_payload("codex", "gpt-6.1-sol", True, monkeypatch, mgr, effort="xhigh", summary=False)
+    assert p.get("reasoning_effort") == "xhigh"
+    assert p.get("reasoning") == {"summary": "none"}
+    p = _capture_payload("codex", "gpt-6.1-sol", False, monkeypatch, mgr, effort="high")
+    assert p.get("reasoning_effort") == "high" and p.get("reasoning") == {"summary": "none"}
+
+
+def test_other_providers_unaffected(monkeypatch, mgr):
+    p = _capture_payload("deepseek", "deepseek-v4-flash", True, monkeypatch, mgr, effort="xhigh")
+    assert "reasoning" not in p and p.get("reasoning_effort") != "xhigh"
+
+
+def test_effort_levels_per_model():
+    assert cpa.codex_efforts("gpt-6.1-sol") == ["low", "medium", "high", "xhigh", "max", "ultra"]
+    assert cpa.codex_efforts("gpt-6-luna")[-1] == "max"
+    assert cpa.codex_efforts("gpt-5.5")[-1] == "xhigh"
+    assert cpa.codex_efforts("some-new-model") == ["low", "medium", "high"]
+    assert cpa.codex_default_effort("gpt-6.1-sol") == "low"
+    assert cpa.codex_default_effort("gpt-6-astra") == "medium"
+    assert all(m in cpa.CODEX_EFFORTS for m in cpa.CODEX_MODELS)
 
 
 def test_sessions_can_skip_think_tag_prompt_and_controller_does_for_codex():
-    import inspect
-    from houdini_agent.ui_qml import controller as ctl
-    for mod in ("agent_session", "bridge_session"):
-        try:
-            m = __import__("houdini_agent.ui_qml." + mod, fromlist=["x"])
-        except Exception:
-            continue
-        cls = [v for v in vars(m).values() if inspect.isclass(v) and hasattr(v, "build_messages")]
-        assert cls and "think_tags" in inspect.signature(cls[0].run).parameters
-    src = inspect.getsource(ctl.Controller._worker)
-    assert 'think_tags=(provider != "codex")' in src
+    # 纯文本检查：controller / 会话依赖 PySide6，CI 没装，不能 import
+    import os
+    import re
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "houdini_agent", "ui_qml")
+    for mod in ("agent_session.py", "bridge_session.py"):
+        src = open(os.path.join(root, mod), encoding="utf-8").read()
+        assert re.search(r"def run\([^)]*think_tags=True", src, re.S), mod
+        assert "self.build_messages(enable_thinking and think_tags)" in src, mod
+    ctl = open(os.path.join(root, "controller.py"), encoding="utf-8").read()
+    assert 'think_tags=(provider != "codex")' in ctl

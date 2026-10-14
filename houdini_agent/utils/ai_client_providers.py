@@ -38,6 +38,10 @@ class AIClientProvidersMixin:
     # 统一走 OpenAI 协议，此集合留空（协议适配层仍供 Custom provider 使用）
     _DUOJIE_ANTHROPIC_MODELS = frozenset()
 
+    # ChatGPT 订阅（codex）推理设置：由 UI 在每轮开始前写入（set_reasoning）
+    _REASONING_EFFORT: str = ''
+    _REASONING_SUMMARY: bool = True
+
     # Custom provider 运行时配置
     _CUSTOM_API_URL: str = ''
     _CUSTOM_SUPPORTS_FC: bool = True
@@ -224,6 +228,12 @@ class AIClientProvidersMixin:
             'custom': 'Custom',
         }
         return names.get(provider, provider)
+
+    def set_reasoning(self, effort: str = '', summary: bool = True):
+        """ChatGPT 订阅的推理强度（low / medium / high / xhigh / max / ultra，空 = medium）
+        与是否请求推理摘要（关闭 Think 时不请求，省掉生成摘要的开销）。"""
+        self._REASONING_EFFORT = (effort or '').strip().lower()
+        self._REASONING_SUMMARY = bool(summary)
 
     def set_custom_provider(self, api_url: str, api_key: str = '', supports_fc: bool = True,
                             anthropic_protocol: bool = False):
