@@ -22,13 +22,14 @@ Popup {
 
     parent: Overlay.overlay
     anchors.centerIn: parent
-    width: Math.min(460, parent ? parent.width - 36 : 460)
+    width: Math.min(540, parent ? parent.width - 36 : 540)
     padding: 18
     modal: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle { color: Theme.bg; border.color: Theme.border; border.width: 1; radius: Theme.radSm }
 
     contentItem: ColumnLayout {
+        width: dlg.availableWidth
         spacing: 12
 
         Text {
@@ -44,27 +45,26 @@ Popup {
             wrapMode: Text.Wrap
             color: Theme.textDim
             font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-            text: "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。"
-                  + "登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。"
+            text: dlg.loc("用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。")
         }
 
         // ---- 状态
         GridLayout {
             Layout.fillWidth: true
             columns: 2; columnSpacing: 12; rowSpacing: 6
-            Text { text: "组件"; color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
+            Text { text: dlg.loc("组件"); color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
             Text {
                 Layout.fillWidth: true; wrapMode: Text.Wrap
                 color: Theme.text; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                text: dlg.st.installed ? ("CLIProxyAPI " + (dlg.st.version || "") + " 已安装")
-                                       : "未安装（首次登录时自动下载，约 24 MB）"
+                text: dlg.st.installed ? ("CLIProxyAPI " + (dlg.st.version || "") + " " + dlg.loc("已安装"))
+                                       : dlg.loc("未安装（首次登录时自动下载，约 24 MB）")
             }
-            Text { text: "账号"; color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
+            Text { text: dlg.loc("账号"); color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
                 Text {
                     visible: !dlg.loggedIn
-                    text: "未登录"; color: Theme.textDim; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                    text: dlg.loc("未登录"); color: Theme.textDim; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
                 }
                 Repeater {
                     model: dlg.st.accounts || []
@@ -74,7 +74,7 @@ Popup {
                         Text {
                             Layout.fillWidth: true; elide: Text.ElideRight
                             color: Theme.textBright; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                            text: (modelData.email || "ChatGPT 账号") + (modelData.plan ? ("  ·  " + modelData.plan) : "")
+                            text: (modelData.email || dlg.loc("ChatGPT 账号")) + (modelData.plan ? ("  ·  " + modelData.plan) : "")
                         }
                         Pill {
                             label: dlg.loc("退出登录"); visible: !dlg.busy
@@ -111,7 +111,7 @@ Popup {
                         font.letterSpacing: 2
                     }
                     Pill { label: dlg.loc("复制"); onClicked: if (controller) controller.copyToClipboard(dlg.st.deviceCode) }
-                    Pill { label: "打开页面"; onClicked: if (controller) controller.openExternalUrl(dlg.st.deviceUrl) }
+                    Pill { label: dlg.loc("打开页面"); onClicked: if (controller) controller.openExternalUrl(dlg.st.deviceUrl) }
                 }
                 // 浏览器没自动打开时的兜底链接
                 RowLayout {
@@ -119,11 +119,11 @@ Popup {
                     spacing: 10
                     Text {
                         Layout.fillWidth: true
-                        text: "浏览器没有打开？"
+                        text: dlg.loc("浏览器没有打开？")
                         color: Theme.textDim; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
                     }
-                    Pill { label: "复制登录链接"; onClicked: if (controller) controller.copyToClipboard(dlg.st.loginUrl) }
-                    Pill { label: "再次打开"; onClicked: if (controller) controller.openExternalUrl(dlg.st.loginUrl) }
+                    Pill { label: dlg.loc("复制登录链接"); onClicked: if (controller) controller.copyToClipboard(dlg.st.loginUrl) }
+                    Pill { label: dlg.loc("再次打开"); onClicked: if (controller) controller.openExternalUrl(dlg.st.loginUrl) }
                 }
             }
         }
@@ -133,23 +133,24 @@ Popup {
             wrapMode: Text.Wrap
             color: Theme.textMute
             font.family: Theme.fontBody; font.pixelSize: Theme.fMicro
-            text: "用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。"
+            text: dlg.loc("用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。")
         }
 
-        // ---- 按钮
-        RowLayout {
+        // ---- 按钮：右对齐，放不下时自动换行（英文按钮文字更长）。
+        // RightToLeft 下先声明的排在最右，所以这里按「右 → 左」的顺序写。
+        Flow {
             Layout.fillWidth: true
+            layoutDirection: Qt.RightToLeft
             spacing: 8
             Pill {
-                visible: dlg.loggedIn && !dlg.busy
-                label: dlg.loc("刷新模型")
-                onClicked: if (controller) controller.subscriptionRefreshModels()
+                label: dlg.loc("关闭")
+                onClicked: dlg.close()
             }
-            Item { Layout.fillWidth: true }
             Pill {
-                visible: dlg.busy
-                label: dlg.loc("取消登录")
-                onClicked: if (controller) controller.subscriptionCancelLogin()
+                visible: !dlg.busy
+                label: dlg.loggedIn ? dlg.loc("再登录一个账号") : dlg.loc("浏览器登录")
+                accent: true
+                onClicked: if (controller) controller.subscriptionLogin(false)
             }
             Pill {
                 visible: !dlg.busy
@@ -157,14 +158,14 @@ Popup {
                 onClicked: if (controller) controller.subscriptionLogin(true)
             }
             Pill {
-                visible: !dlg.busy
-                label: dlg.loggedIn ? "再登录一个账号" : dlg.loc("浏览器登录")
-                accent: true
-                onClicked: if (controller) controller.subscriptionLogin(false)
+                visible: dlg.busy
+                label: dlg.loc("取消登录")
+                onClicked: if (controller) controller.subscriptionCancelLogin()
             }
             Pill {
-                label: dlg.loc("关闭")
-                onClicked: dlg.close()
+                visible: dlg.loggedIn && !dlg.busy
+                label: dlg.loc("刷新模型")
+                onClicked: if (controller) controller.subscriptionRefreshModels()
             }
         }
     }

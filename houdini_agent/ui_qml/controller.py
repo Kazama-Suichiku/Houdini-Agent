@@ -250,7 +250,32 @@ UI_EN = {
     "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
     "刷新模型": "Refresh models", "复制": "Copy",
     "推理": "Effort", "低": "Low", "中": "Medium", "高": "High", "很高": "Very high",
-    "最高": "Max", "极限": "Ultra", "默认": "default",
+    "最高": "Max", "极限": "Ultra", "默认": "default", "未登录": "signed out",
+    "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
+    "请先登录 ChatGPT 订阅": "Sign in to your ChatGPT plan first",
+    "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
+        "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
+        "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
+    "组件": "Component", "账号": "Account", "已安装": "installed", "ChatGPT 账号": "ChatGPT account",
+    "未安装（首次登录时自动下载，约 24 MB）": "Not installed (downloaded on first sign-in, about 24 MB)",
+    "打开页面": "Open page", "浏览器没有打开？": "Browser didn't open?", "复制登录链接": "Copy sign-in link",
+    "再次打开": "Open again", "再登录一个账号": "Add another account",
+    "用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。":
+        "Usage counts against your ChatGPT plan. OpenAI currently allows plans in third-party tools, "
+        "but this is not a contractual term and may change.",
+    "正在下载订阅组件…": "Downloading the subscription component…",
+    "已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。":
+        "The OpenAI sign-in page is open in your browser. Sign in and authorize to finish.",
+    "在浏览器打开的页面里输入下面的验证码，授权后会自动完成。":
+        "Enter the code below on the page opened in your browser. It finishes once you authorize.",
+    "正在准备订阅组件…": "Preparing the subscription component…", "正在发起登录…": "Starting sign-in…",
+    "登录成功，正在启动本机订阅服务…": "Signed in, starting the local subscription service…",
+    "已退出登录": "Signed out", "可用模型：": "Available models: ", "刷新模型失败：": "Failed to refresh models: ",
+    "已登录 ": "Signed in as ", "已登录": "Signed in", "已取消登录": "Sign-in cancelled",
+    "登录超时（15 分钟内未完成授权）": "Sign-in timed out (not authorized within 15 minutes)",
+    "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录":
+        "Local port 1455 is in use (maybe another Codex sign-in). Close it and retry, or sign in with a code.",
+    "登录没有完成": "Sign-in did not complete", "出错了：": "Error: ",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -769,6 +794,10 @@ class Controller(QObject):
         self._sigSub.connect(self._on_sub_event)
         self.providerChanged.connect(self.effortChanged)
         self.modelChanged.connect(self.effortChanged)
+        self.langChanged.connect(self.effortChanged)
+        # 换供应商 / 模型后立刻刷新底部上下文上限（以前要等一轮结束才更新，会显示旧模型的上限）
+        self.providerChanged.connect(self._schedule_ctx_refresh)
+        self.modelChanged.connect(self._schedule_ctx_refresh)
         self._effort_by_model = {}      # model -> 用户选的推理强度（QSettings 持久化）
         try:
             _raw = QSettings("HoudiniAI", "Assistant").value("reasoning_effort", "")
@@ -947,7 +976,7 @@ class Controller(QObject):
         p = self._custom_provider(self._provider)
         if p is not None:
             return p.get("name", "Custom")
-        return PROVIDER_LABELS.get(self._provider, self._provider)
+        return self.tr(PROVIDER_LABELS.get(self._provider, self._provider))
     providerLabel = Property(str, _get_provider_label, notify=providerChanged)
 
     def _get_model(self): return self._model_name
@@ -988,13 +1017,25 @@ class Controller(QObject):
         from houdini_agent.subscription import codex_default_effort
         cur = self._current_effort()
         dflt = codex_default_effort(self._model_name)
+        en = self._lang == "en"
         out = []
         for v in self._effort_levels():
-            label = self.tr(self._EFFORT_LABELS.get(v, v)) + "  " + v
+            label = self.tr(self._EFFORT_LABELS.get(v, v))   # 只显示当前界面语言
             if v == dflt:
-                label += "（%s）" % self.tr("默认")
+                label += (" (%s)" if en else "（%s）") % self.tr("默认")
             out.append({"label": label, "val": v, "checked": v == cur})
         return out
+
+    def _schedule_ctx_refresh(self):
+        if not self._session:
+            return
+        t = getattr(self, "_ctx_refresh_timer", None)
+        if t is None:
+            t = self._ctx_refresh_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(0)
+            t.timeout.connect(self._refresh_tokens)
+        t.start()
 
     @Slot(str)
     def setReasoningEffort(self, v):
@@ -1099,8 +1140,14 @@ class Controller(QObject):
     @Slot(result="QVariantList")
     def providerItems(self):
         # 内置 provider（不含已废弃的单一 "custom"）+ 自定义供应商
-        items = [{"label": PROVIDER_LABELS.get(k, k), "val": k, "checked": k == self._provider}
-                 for k in MODEL_MAP.keys() if k != "custom"]
+        items = []
+        for k in MODEL_MAP.keys():
+            if k == "custom":
+                continue
+            label = self.tr(PROVIDER_LABELS.get(k, k))
+            if k == "codex" and not self._sub_logged_in():
+                label += " · " + self.tr("未登录")
+            items.append({"label": label, "val": k, "checked": k == self._provider})
         if self._custom_providers:
             items.append({"sep": True})
             for p in self._custom_providers:
@@ -1112,7 +1159,17 @@ class Controller(QObject):
     @Slot(result="QVariantList")
     def modelItems(self):
         models = self._provider_model_names(self._provider)
-        return [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
+        items = [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
+        if self._provider == "codex":
+            accs = []
+            try:
+                from houdini_agent.subscription import manager
+                accs = manager.accounts()
+            except Exception:
+                pass
+            label = (self.tr("账号：") + (accs[0].get("email") or "ChatGPT")) if accs else self.tr("登录 ChatGPT 订阅…")
+            items += [{"sep": True}, {"label": label, "val": "__sub_account__", "checked": False}]
+        return items
 
     # ---- slots from QML ----
     @Slot(str, result=bool)
@@ -1137,10 +1194,15 @@ class Controller(QObject):
         self.providerChanged.emit()
         self.tokensChanged.emit()
         self._save_prefs()
+        if v == "codex" and not self._sub_logged_in():
+            self.openSubscriptionDialog.emit()
         return True
 
     @Slot(str, result=bool)
     def setModel(self, v):
+        if v == "__sub_account__":
+            self.openSubscriptionDialog.emit()
+            return False
         if self._running:
             self.toast.emit("当前正在运行，模型切换将在本轮结束后再操作")
             return False
@@ -2381,32 +2443,50 @@ class Controller(QObject):
             d = {}
         if kind == "progress":
             self._sub_set(phase="install", progress=int(d.get("p", 0)),
-                          message="正在下载订阅组件… %d%%" % int(d.get("p", 0)))
+                          message="%s %d%%" % (self.tr("正在下载订阅组件…"), int(d.get("p", 0))))
         elif kind == "phase":
-            self._sub_set(phase=d.get("phase", ""), message=d.get("message", ""))
+            # message 是翻译表里的固定句子，suffix 是不需要翻译的附加内容（模型名、错误原文）
+            self._sub_set(phase=d.get("phase", ""), message=self.tr(d.get("message", "")) + d.get("suffix", ""))
         elif kind == "url":
             self._sub_set(phase="login", loginUrl=d.get("url", ""),
-                          message="已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。")
+                          message=self.tr("已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。"))
         elif kind == "device":
             self._sub_set(phase="login", deviceUrl=d.get("url", ""), deviceCode=d.get("code", ""),
-                          message="在浏览器打开的页面里输入下面的验证码，授权后会自动完成。")
+                          message=self.tr("在浏览器打开的页面里输入下面的验证码，授权后会自动完成。"))
         elif kind == "done":
             ok = bool(d.get("ok"))
-            self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="",
-                          message=d.get("message", ""))
+            msg = self._sub_result_text(d)
+            self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="", message=msg)
             if ok:
-                self.toast.emit(d.get("message", "") or self.tr("已登录"))
+                self.toast.emit(msg or self.tr("已登录"))
                 names = self._provider_model_names("codex")
                 if self._provider == "codex" and names and self._model_name not in names:
                     self._model_name = names[0]
                     self.modelChanged.emit()
                 self.providerChanged.emit()     # 让顶栏 / 供应商面板重新读取登录状态
 
+    def _sub_result_text(self, d):
+        """按当前界面语言组织登录结果（manager 返回结果类型 code，不在底层写死文案）。"""
+        code = d.get("code") or ("ok" if d.get("ok") else "error")
+        en = self._lang == "en"
+        if code == "ok":
+            plan = d.get("plan") or ""
+            return self.tr("已登录 ") + (d.get("who") or "") + ((" (%s)" if en else "（%s）") % plan if plan else "")
+        if code == "cancelled":
+            return self.tr("已取消登录")
+        if code == "timeout":
+            return self.tr("登录超时（15 分钟内未完成授权）")
+        if code == "port":
+            return self.tr("本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录")
+        if code == "failed":
+            return self.tr("登录没有完成") + ((" (%s)" if en else "（%s）") % d.get("detail") if d.get("detail") else "")
+        return self.tr("出错了：") + str(d.get("message") or "")
+
     @Slot(bool)
     def subscriptionLogin(self, device):
         if self._sub.get("busy"):
             return
-        self._sub_set(busy=True, phase="install", progress=0, message="正在准备订阅组件…",
+        self._sub_set(busy=True, phase="install", progress=0, message=self.tr("正在准备订阅组件…"),
                       loginUrl="", deviceUrl="", deviceCode="")
 
         def emit(kind, data):
@@ -2437,7 +2517,7 @@ class Controller(QObject):
                         pass
                 emit("done", res)
             except Exception as e:
-                emit("done", {"ok": False, "message": str(e)})
+                emit("done", {"ok": False, "code": "error", "message": str(e)})
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2457,7 +2537,8 @@ class Controller(QObject):
         except Exception as e:
             self.toast.emit("退出登录失败：%s" % e)
             return
-        self._sub_set(message="已退出登录" if n else "")
+        self._sub_set(message=self.tr("已退出登录") if n else "")
+        self.providerChanged.emit()     # 供应商菜单的「未登录」标记跟着变
 
     @Slot()
     def subscriptionRefreshModels(self):
@@ -2466,11 +2547,11 @@ class Controller(QObject):
                 from houdini_agent.subscription import manager
                 manager.ensure_running()
                 models = manager.refresh_models()
-                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：%s" % "、".join(models)},
-                                                      ensure_ascii=False))
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：",
+                                                       "suffix": ", ".join(models)}, ensure_ascii=False))
             except Exception as e:
-                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "刷新模型失败：%s" % e},
-                                                      ensure_ascii=False))
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "刷新模型失败：",
+                                                       "suffix": str(e)}, ensure_ascii=False))
         threading.Thread(target=work, daemon=True).start()
 
     @Slot(str)

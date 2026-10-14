@@ -501,25 +501,27 @@ class CPAManager:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-            return {"ok": False, "message": "登录超时（15 分钟内未完成授权）"}
+            return {"ok": False, "code": "timeout", "message": "登录超时（15 分钟内未完成授权）"}
         finally:
             t.join(timeout=2)
             with self._lock:
                 cancelled = bool(self._login and self._login.get("cancelled"))
                 self._login = None
         if cancelled:
-            return {"ok": False, "message": "已取消登录"}
+            return {"ok": False, "code": "cancelled", "message": "已取消登录"}
         after = self.accounts()
         changed = [a for a in after if a["file"] not in before or
                    (self.auth_dir / a["file"]).stat().st_mtime != before_mtime.get(a["file"])]
         if changed:
             a = changed[0]
             who = a["email"] or a["file"]
-            return {"ok": True, "message": "已登录 %s%s" % (who, ("（%s）" % a["plan"]) if a["plan"] else "")}
+            return {"ok": True, "code": "ok", "who": who, "plan": a["plan"],
+                    "message": "已登录 %s%s" % (who, ("（%s）" % a["plan"]) if a["plan"] else "")}
         text = "\n".join(tail[-6:])
         if re.search(r"1455|address already in use|bind", text, re.I):
-            return {"ok": False, "message": "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录"}
-        return {"ok": False, "message": "登录没有完成（退出码 %s）%s" % (proc.returncode, ("：" + tail[-1]) if tail else "")}
+            return {"ok": False, "code": "port", "message": "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录"}
+        detail = "exit %s%s" % (proc.returncode, (": " + tail[-1]) if tail else "")
+        return {"ok": False, "code": "failed", "detail": detail, "message": "登录没有完成（%s）" % detail}
 
     def cancel_login(self):
         with self._lock:

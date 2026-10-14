@@ -126,7 +126,8 @@ Rectangle {
 
         Pill {
             id: provPill
-            label: controller ? controller.providerLabel : "Provider"
+            // 读一次 controller.lang：切换界面语言时重新取（providerLabel 只在换供应商时通知）
+            label: controller ? (controller.lang, controller.providerLabel) : "Provider"
             caret: true; elideLabel: true
             Layout.fillWidth: true
             Layout.minimumWidth: 0
