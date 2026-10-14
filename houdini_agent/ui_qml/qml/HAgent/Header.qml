@@ -49,6 +49,19 @@ Rectangle {
         anchors.right: parent.right; anchors.rightMargin: 15
         anchors.verticalCenter: parent.verticalCenter
         spacing: 9
+        // 推理强度：只在当前模型支持选择时出现（目前为 ChatGPT 订阅）
+        Pill {
+            id: effortPill
+            visible: !!controller && controller.reasoningEffort.length > 0
+            label: controller ? controller.reasoningEffortLabel : ""
+            caret: true
+            onClicked: {
+                if (controller) effortMenu.items = controller.effortItems()
+                effortMenu.x = header.menuX(effortPill, effortMenu.menuWidth)
+                effortMenu.y = header.menuY(effortPill)
+                effortMenu.open()
+            }
+        }
         Pill {
             label: "Think"
             active: controller ? controller.showThinking : true
@@ -113,7 +126,8 @@ Rectangle {
 
         Pill {
             id: provPill
-            label: controller ? controller.providerLabel : "Provider"
+            // 读一次 controller.lang：切换界面语言时重新取（providerLabel 只在换供应商时通知）
+            label: controller ? (controller.lang, controller.providerLabel) : "Provider"
             caret: true; elideLabel: true
             Layout.fillWidth: true
             Layout.minimumWidth: 0
@@ -158,6 +172,12 @@ Rectangle {
         checkable: true
         menuWidth: 230
         onPicked: function(val) { if (controller) controller.setModel(val) }
+    }
+    MenuPopup {
+        id: effortMenu
+        checkable: true
+        menuWidth: 190
+        onPicked: function(val) { if (controller) controller.setReasoningEffort(val) }
     }
     MenuPopup {
         id: moreMenu

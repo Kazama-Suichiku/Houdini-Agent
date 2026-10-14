@@ -143,7 +143,8 @@ Item {
                                font.family: Theme.fontMono; font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel }
                         Pill { visible: !modelData.active; label: pm.loc("使用")
                                onClicked: if (controller) controller.selectProviderModel(modelData.key, "") }
-                        Pill { label: "API Key"; onClicked: if (controller) controller.openProviderApiKey(modelData.key) }
+                        Pill { label: (modelData.key === "codex" || modelData.key === "claude_sub") ? pm.loc("订阅登录") : "API Key"
+                               onClicked: if (controller) controller.openProviderApiKey(modelData.key) }
                     }
                     MouseArea { id: bma; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
                 }
