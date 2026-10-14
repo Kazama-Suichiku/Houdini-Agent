@@ -89,10 +89,22 @@ class AIClientProvidersMixin:
         # Custom: 只要配置了 URL 就算可用（Key 可选）
         if provider == 'custom':
             return bool(self._CUSTOM_API_URL)
+        # ChatGPT 订阅：以本机 CPA 是否登录了 Codex 账号为准
+        if provider == 'codex':
+            try:
+                from houdini_agent.subscription import manager
+                return manager.logged_in()
+            except Exception:
+                return False
         return bool(self._api_keys.get(provider))
 
     def _get_api_key(self, provider: str) -> Optional[str]:
-        return self._api_keys.get((provider or 'openai').lower())
+        provider = (provider or 'openai').lower()
+        if provider == 'codex':
+            # 本机 CPA 的客户端 key（不是 OpenAI 凭据；订阅凭据只留在 CPA 的 auth 目录）
+            from houdini_agent.subscription import manager
+            return manager.client_key()
+        return self._api_keys.get(provider)
 
     def set_api_key(self, key: str, persist: bool = False, provider: str = 'openai') -> bool:
         provider = (provider or 'openai').lower()
@@ -113,6 +125,16 @@ class AIClientProvidersMixin:
     def get_masked_key(self, provider: str = 'openai') -> str:
         provider = (provider or 'openai').lower()
         # Custom: 显示 URL 缩略
+        if provider == 'codex':
+            try:
+                from houdini_agent.subscription import manager
+                accs = manager.accounts()
+            except Exception:
+                accs = []
+            if not accs:
+                return 'Not Set'
+            who = accs[0].get('email') or 'ChatGPT'
+            return who[:16] + ('...' if len(who) > 16 else '')
         if provider == 'custom':
             if self._CUSTOM_API_URL:
                 url = self._CUSTOM_API_URL
@@ -181,6 +203,13 @@ class AIClientProvidersMixin:
             return self.DUOJIE_API_URL
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
+        elif provider == 'codex':
+            # 本机 CPA（ChatGPT 订阅）：没在跑就拉起；未安装 / 未登录时抛出明确错误
+            from houdini_agent.subscription import manager
+            if not manager.logged_in():
+                raise RuntimeError("ChatGPT 订阅尚未登录，请在供应商设置里点「登录」")
+            manager.ensure_running()
+            return manager.chat_url()
         elif provider == 'custom':
             raw = self._CUSTOM_API_URL or self.OPENAI_API_URL
             return self._normalize_chat_url(raw)
@@ -191,6 +220,7 @@ class AIClientProvidersMixin:
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
+            'codex': 'ChatGPT 订阅',
             'custom': 'Custom',
         }
         return names.get(provider, provider)
@@ -275,6 +305,7 @@ class AIClientProvidersMixin:
             'glm': 'glm-4.7',
             'duojie': 'claude-opus-5-5',
             'openrouter': 'anthropic/claude-sonnet-5',
+            'codex': 'gpt-6.1-sol',
         }
         return defaults.get(provider, 'gpt-5.6-sol')
 

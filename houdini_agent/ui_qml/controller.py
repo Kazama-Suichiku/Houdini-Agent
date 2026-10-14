@@ -55,12 +55,16 @@ MODEL_MAP = {
                    "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro",
                    "z-ai/glm-5.3", "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3"],
     "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+    # ChatGPT 订阅（本机 CPA + Codex OAuth）；实际列表登录后从 CPA 拉取，见 _provider_model_names
+    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+              "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
     "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
     "glm": ["glm-4.7"],
     "custom": [],
 }
 PROVIDER_LABELS = {
     "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
+    "codex": "ChatGPT 订阅",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
 CONTEXT_LIMITS = {
@@ -242,6 +246,9 @@ UI_EN = {
     "压缩上下文": "Compress context", "已压缩上下文": "Context compressed",
     "新建会话": "New session", "字号…": "Font size…", "字号": "Font size",
     "重置": "Reset", "关闭": "Close", "稍后": "Later", "立即更新": "Update now",
+    "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
+    "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
+    "刷新模型": "Refresh models", "复制": "Copy",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -552,6 +559,7 @@ class Controller(QObject):
     _sigPlanStream = Signal(str)          # accumulated create_plan json -> live plan card
     _sigInfo = Signal(str, str)           # title, body -> QML info dialog
     _sigUpdateDialog = Signal(str, str)   # worker -> main: 检查更新发现新版本（带「立即更新」按钮的对话框）
+    _sigSub = Signal(str, str)            # worker -> main: ChatGPT 订阅状态事件 (kind, json)
     tokensChanged = Signal()
     pendingOpsChanged = Signal()
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
@@ -564,6 +572,8 @@ class Controller(QObject):
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
     openUpdateDialog = Signal(str, str)    # title, body (QML)：检查更新发现新版本，对话框里直接给「立即更新」
+    openSubscriptionDialog = Signal()      # 打开「ChatGPT 订阅」登录对话框
+    subscriptionChanged = Signal()         # 订阅状态变化（QML 重新取 subscriptionStatus()）
     openApiKeyDialog = Signal(str)         # provider (QML)
     openCustomProviderDialog = Signal(str, str, str, bool, str, bool)  # url, key, model, anthropic, context_limit, supports_vision
     openConfirmDialog = Signal(str, str, str)  # title, body, token
@@ -753,6 +763,9 @@ class Controller(QObject):
         self._sigPlanStream.connect(self._ui_plan_stream)
         self._sigInfo.connect(self._info)
         self._sigUpdateDialog.connect(self._show_update_dialog)
+        self._sigSub.connect(self._on_sub_event)
+        self._sub = {"busy": False, "phase": "", "message": "", "progress": 0,
+                     "loginUrl": "", "deviceUrl": "", "deviceCode": ""}
         self._sigCtxRefresh.connect(self.refreshContext)
         self._sigUpdateState.connect(self._on_update_state)
         self._sigUpdateFound.connect(self._set_update)
@@ -1165,6 +1178,9 @@ class Controller(QObject):
 
     @Slot(str)
     def openProviderApiKey(self, provider):
+        if (provider or self._provider) == "codex":
+            self.openSubscriptionDialog.emit()
+            return
         try:
             self.openApiKeyDialog.emit(provider or self._provider)
         except Exception as e:
@@ -2002,6 +2018,9 @@ class Controller(QObject):
         if not self._session:
             self.toast.emit("AI 后端尚未就绪，请稍候几秒再试")
             return
+        if self._provider == "codex":
+            self.openSubscriptionDialog.emit()
+            return
         try:
             self.openApiKeyDialog.emit(self._provider)
         except Exception as e:
@@ -2265,6 +2284,139 @@ class Controller(QObject):
             self.toast.emit("创建 Wrangle 失败：%s" % e)
             return False
 
+    # ---- ChatGPT 订阅（本机 CPA + Codex OAuth） ----
+    # 后台线程只发 (str, str) 信号回主线程（PySide6 跨线程 Signal(dict) 会崩，见 memory）。
+    def _sub_logged_in(self):
+        try:
+            from houdini_agent.subscription import manager
+            return manager.logged_in()
+        except Exception:
+            return False
+
+    @Slot(result="QVariantMap")
+    def subscriptionStatus(self):
+        try:
+            from houdini_agent.subscription import manager, CPA_VERSION
+            accounts = manager.accounts()
+            installed = manager.installed()
+        except Exception as e:
+            return dict(self._sub, installed=False, version="", accounts=[], error=str(e))
+        return dict(self._sub, installed=installed, version=CPA_VERSION,
+                    accounts=[{"email": a["email"], "plan": a["plan"], "file": a["file"]} for a in accounts])
+
+    def _sub_set(self, **kw):
+        self._sub.update(kw)
+        self.subscriptionChanged.emit()
+
+    def _on_sub_event(self, kind, js):
+        """主线程：应用后台订阅流程的事件。"""
+        try:
+            d = json.loads(js) if js else {}
+        except Exception:
+            d = {}
+        if kind == "progress":
+            self._sub_set(phase="install", progress=int(d.get("p", 0)),
+                          message="正在下载订阅组件… %d%%" % int(d.get("p", 0)))
+        elif kind == "phase":
+            self._sub_set(phase=d.get("phase", ""), message=d.get("message", ""))
+        elif kind == "url":
+            self._sub_set(phase="login", loginUrl=d.get("url", ""),
+                          message="已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。")
+        elif kind == "device":
+            self._sub_set(phase="login", deviceUrl=d.get("url", ""), deviceCode=d.get("code", ""),
+                          message="在浏览器打开的页面里输入下面的验证码，授权后会自动完成。")
+        elif kind == "done":
+            ok = bool(d.get("ok"))
+            self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="",
+                          message=d.get("message", ""))
+            if ok:
+                self.toast.emit(d.get("message", "") or self.tr("已登录"))
+                names = self._provider_model_names("codex")
+                if self._provider == "codex" and names and self._model_name not in names:
+                    self._model_name = names[0]
+                    self.modelChanged.emit()
+                self.providerChanged.emit()     # 让顶栏 / 供应商面板重新读取登录状态
+
+    @Slot(bool)
+    def subscriptionLogin(self, device):
+        if self._sub.get("busy"):
+            return
+        self._sub_set(busy=True, phase="install", progress=0, message="正在准备订阅组件…",
+                      loginUrl="", deviceUrl="", deviceCode="")
+
+        def emit(kind, data):
+            self._sigSub.emit(kind, json.dumps(data, ensure_ascii=False))
+
+        def work():
+            try:
+                import webbrowser
+                from houdini_agent.subscription import manager
+                manager.install(progress=lambda p: emit("progress", {"p": p}))
+                emit("phase", {"phase": "login", "message": "正在发起登录…"})
+
+                def on_event(kind, data):
+                    if kind == "url":
+                        webbrowser.open(data)
+                        emit("url", {"url": data})
+                    elif kind == "device":
+                        webbrowser.open(data.get("url", ""))
+                        emit("device", data)
+
+                res = manager.login(device=bool(device), on_event=on_event)
+                if res.get("ok"):
+                    emit("phase", {"phase": "start", "message": "登录成功，正在启动本机订阅服务…"})
+                    manager.ensure_running()
+                    try:
+                        manager.refresh_models()
+                    except Exception:
+                        pass
+                emit("done", res)
+            except Exception as e:
+                emit("done", {"ok": False, "message": str(e)})
+
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot()
+    def subscriptionCancelLogin(self):
+        try:
+            from houdini_agent.subscription import manager
+            manager.cancel_login()
+        except Exception:
+            pass
+
+    @Slot(str)
+    def subscriptionLogout(self, file_name):
+        try:
+            from houdini_agent.subscription import manager
+            n = manager.logout(file_name or None)
+        except Exception as e:
+            self.toast.emit("退出登录失败：%s" % e)
+            return
+        self._sub_set(message="已退出登录" if n else "")
+
+    @Slot()
+    def subscriptionRefreshModels(self):
+        def work():
+            try:
+                from houdini_agent.subscription import manager
+                manager.ensure_running()
+                models = manager.refresh_models()
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：%s" % "、".join(models)},
+                                                      ensure_ascii=False))
+            except Exception as e:
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "刷新模型失败：%s" % e},
+                                                      ensure_ascii=False))
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot(str)
+    def openExternalUrl(self, url):
+        try:
+            import webbrowser
+            if url:
+                webbrowser.open(url)
+        except Exception:
+            pass
+
     def _check_update(self):
         self.toast.emit("正在检查更新…")
         def work():
@@ -2475,6 +2627,12 @@ class Controller(QObject):
         p = self._custom_provider(key)
         if p is not None:
             return [m.get("name") for m in (p.get("models") or []) if m.get("name")]
+        if key == "codex":
+            try:
+                from houdini_agent.subscription import manager
+                return manager.cached_models()
+            except Exception:
+                pass
         return MODEL_MAP.get(key, [])
 
     def _model_meta(self, key, model):
@@ -2489,12 +2647,19 @@ class Controller(QObject):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return self._to_int(meta.get("context"), 128000) or 128000
+        if self._provider == "codex":
+            # Codex 渠道的窗口与同名模型的 API 直连不同（多为 272K）
+            from houdini_agent.subscription import CODEX_CONTEXT
+            from houdini_agent.subscription.cpa import CODEX_DEFAULT_CONTEXT
+            return CODEX_CONTEXT.get(self._model_name, CODEX_DEFAULT_CONTEXT)
         return CONTEXT_LIMITS.get(self._model_name, 128000)
 
     def _active_model_vision(self):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return bool(meta.get("vision"))
+        if self._provider == "codex":
+            return True     # Codex 目录里的模型都支持图片输入
         return self._model_name in VISION_MODELS
 
     def _apply_custom_provider(self, p):
@@ -2885,6 +3050,10 @@ class Controller(QObject):
         if not text or self._running:
             if self._running:
                 self.toast.emit("当前正在运行，先停止或等待完成后再发送")
+            return False
+        if self._provider == "codex" and self._session and not self._sub_logged_in():
+            self.toast.emit(self.tr("请先登录 ChatGPT 订阅"))
+            self.openSubscriptionDialog.emit()
             return False
         # name the session from its first user message
         if self._sessions and self._sessions[self._active]["title"] == "新对话":
