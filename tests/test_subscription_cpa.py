@@ -151,3 +151,11 @@ def test_codex_provider_routes_to_local_cpa(mgr, monkeypatch):
     assert c._get_api_url("codex", "gpt-6-sol") == "http://127.0.0.1:%d/v1/chat/completions" % mgr.port
     assert c._get_vendor_name("codex") == "ChatGPT 订阅"
     assert c.get_masked_key("codex").startswith("u@x")
+
+
+def test_image_generation_models_are_not_offered_for_chat(mgr):
+    st = mgr._load_state()
+    st["models"] = ["gpt-6.1-sol", "gpt-image-2", "gpt-image-2.5-flare", "gpt-reserve", "gpt-5.5"]
+    assert mgr.cached_models() == ["gpt-6.1-sol", "gpt-5.5"]
+    st["models"] = ["gpt-image-2"]
+    assert mgr.cached_models() == cpa.CODEX_MODELS

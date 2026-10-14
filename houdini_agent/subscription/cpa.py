@@ -59,6 +59,12 @@ CODEX_CONTEXT = {"gpt-6.1-sol": 500000}
 CODEX_DEFAULT_CONTEXT = 272000
 _HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review"}
 
+
+def _is_chat_model(model_id) -> bool:
+    """CPA 的 /v1/models 还会列出 gpt-image-* 等图片生成模型，不能用来对话。"""
+    m = str(model_id or "")
+    return bool(m) and m not in _HIDDEN_MODELS and not m.startswith("gpt-image")
+
 _DEFAULT_PORT = 18317          # 避开 CPA 默认 8317，免得和用户自己跑的 CPA 冲突
 _LOGIN_TIMEOUT = 15 * 60
 
@@ -406,7 +412,8 @@ class CPAManager:
     # ---------------------------------------------------------------- models
     def cached_models(self) -> list:
         st = self._load_state()
-        return list(st.get("models") or CODEX_MODELS)
+        models = [m for m in (st.get("models") or []) if _is_chat_model(m)]
+        return models or list(CODEX_MODELS)
 
     def refresh_models(self) -> list:
         """从本机服务拉取模型（需已登录且服务在跑），按推荐顺序排列并缓存。"""
@@ -415,7 +422,7 @@ class CPAManager:
                             proxies={"http": None, "https": None})
         r.raise_for_status()
         ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
-        ids = [i for i in ids if i not in _HIDDEN_MODELS]
+        ids = [i for i in ids if _is_chat_model(i)]
         ordered = [m for m in CODEX_MODELS if m in ids] + sorted(i for i in ids if i not in CODEX_MODELS)
         if ordered:
             st = self._load_state()
