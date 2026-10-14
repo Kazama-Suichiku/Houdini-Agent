@@ -5,11 +5,14 @@ import HAgent
 
 // 「ChatGPT 订阅」登录：本机 CLIProxyAPI（CPA）+ Codex OAuth。
 // 状态全部来自 controller.subscriptionStatus()，变化时由 subscriptionChanged 通知刷新。
+// 只保留必要信息：已登录 = 账号 + 退出；未登录 = 一句说明 + 两种登录方式；过程提示只在登录中出现。
 Popup {
     id: dlg
     property var st: ({})
     property bool loggedIn: !!(st.accounts && st.accounts.length > 0)
     property bool busy: !!st.busy
+    // 已登录且不在登录流程中时不显示提示框（"已登录 xxx" 与账号行重复）
+    property bool showMsg: busy || (!loggedIn && (st.message || "").length > 0)
     function loc(s) { return controller ? (controller.lang, controller.tr(s)) : s }
     function refresh() { if (controller) st = controller.subscriptionStatus() }
     function show() { refresh(); open() }
@@ -22,7 +25,7 @@ Popup {
 
     parent: Overlay.overlay
     anchors.centerIn: parent
-    width: Math.min(540, parent ? parent.width - 36 : 540)
+    width: Math.min(440, parent ? parent.width - 36 : 440)
     padding: 18
     modal: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -40,55 +43,38 @@ Popup {
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
+        // ---- 未登录：一句说明
         Text {
+            visible: !dlg.loggedIn && !dlg.busy
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             color: Theme.textDim
             font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-            text: dlg.loc("用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。")
+            text: dlg.loc("登录后即可使用订阅额度，无需 API key。")
         }
 
-        // ---- 状态
-        GridLayout {
-            Layout.fillWidth: true
-            columns: 2; columnSpacing: 12; rowSpacing: 6
-            Text { text: dlg.loc("组件"); color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
-            Text {
-                Layout.fillWidth: true; wrapMode: Text.Wrap
-                color: Theme.text; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                text: dlg.st.installed ? ("CLIProxyAPI " + (dlg.st.version || "") + " " + dlg.loc("已安装"))
-                                       : dlg.loc("未安装（首次登录时自动下载，约 24 MB）")
-            }
-            Text { text: dlg.loc("账号"); color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
-            ColumnLayout {
-                Layout.fillWidth: true; spacing: 4
+        // ---- 已登录：账号 + 退出
+        Repeater {
+            model: dlg.st.accounts || []
+            delegate: RowLayout {
+                required property var modelData
+                Layout.fillWidth: true; spacing: 8
                 Text {
-                    visible: !dlg.loggedIn
-                    text: dlg.loc("未登录"); color: Theme.textDim; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                    Layout.fillWidth: true; elide: Text.ElideRight
+                    color: Theme.textBright; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
+                    text: (modelData.email || dlg.loc("ChatGPT 账号")) + (modelData.plan ? ("  ·  " + modelData.plan) : "")
                 }
-                Repeater {
-                    model: dlg.st.accounts || []
-                    delegate: RowLayout {
-                        required property var modelData
-                        Layout.fillWidth: true; spacing: 8
-                        Text {
-                            Layout.fillWidth: true; elide: Text.ElideRight
-                            color: Theme.textBright; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                            text: (modelData.email || dlg.loc("ChatGPT 账号")) + (modelData.plan ? ("  ·  " + modelData.plan) : "")
-                        }
-                        Pill {
-                            label: dlg.loc("退出登录"); visible: !dlg.busy
-                            dashed: true        // 常显边框，一眼看得出是按钮
-                            onClicked: if (controller) controller.subscriptionLogout(modelData.file)
-                        }
-                    }
+                Pill {
+                    label: dlg.loc("退出登录"); visible: !dlg.busy
+                    dashed: true        // 常显边框，一眼看得出是按钮
+                    onClicked: if (controller) controller.subscriptionLogout(modelData.file)
                 }
             }
         }
 
-        // ---- 进度 / 提示
+        // ---- 登录过程提示 / 错误
         Rectangle {
-            visible: (dlg.st.message || "").length > 0 || dlg.busy
+            visible: dlg.showMsg
             Layout.fillWidth: true
             implicitHeight: msgCol.implicitHeight + 20
             color: Theme.surface; border.color: Theme.borderSoft; radius: Theme.radSm
@@ -129,16 +115,7 @@ Popup {
             }
         }
 
-        Text {
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: Theme.textMute
-            font.family: Theme.fontBody; font.pixelSize: Theme.fMicro
-            text: dlg.loc("用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。")
-        }
-
-        // ---- 按钮：右对齐，放不下时自动换行（英文按钮文字更长）。
-        // RightToLeft 下先声明的排在最右，所以这里按「右 → 左」的顺序写。
+        // ---- 按钮：右对齐，放不下时自动换行；RightToLeft 下先声明的排在最右。
         Flow {
             Layout.fillWidth: true
             layoutDirection: Qt.RightToLeft
@@ -148,13 +125,13 @@ Popup {
                 onClicked: dlg.close()
             }
             Pill {
-                visible: !dlg.busy
-                label: dlg.loggedIn ? dlg.loc("再登录一个账号") : dlg.loc("浏览器登录")
+                visible: !dlg.loggedIn && !dlg.busy
+                label: dlg.loc("浏览器登录")
                 accent: true
                 onClicked: if (controller) controller.subscriptionLogin(false)
             }
             Pill {
-                visible: !dlg.busy
+                visible: !dlg.loggedIn && !dlg.busy
                 label: dlg.loc("设备码登录")
                 onClicked: if (controller) controller.subscriptionLogin(true)
             }
@@ -162,11 +139,6 @@ Popup {
                 visible: dlg.busy
                 label: dlg.loc("取消登录")
                 onClicked: if (controller) controller.subscriptionCancelLogin()
-            }
-            Pill {
-                visible: dlg.loggedIn && !dlg.busy
-                label: dlg.loc("刷新模型")
-                onClicked: if (controller) controller.subscriptionRefreshModels()
             }
         }
     }

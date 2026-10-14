@@ -253,6 +253,7 @@ UI_EN = {
     "最高": "Max", "极限": "Ultra", "默认": "default", "未登录": "signed out",
     "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
     "请先登录 ChatGPT 订阅": "Sign in to your ChatGPT plan first",
+    "登录后即可使用订阅额度，无需 API key。": "Sign in to use your plan's allowance. No API key needed.",
     "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
         "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
         "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
