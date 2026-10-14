@@ -366,8 +366,19 @@ class CPAManager:
             "    - %s" % q(st["key"]),
             "oauth:",
             "  auth-dir: %s" % q(self.auth_dir.as_posix()),
+            # 通常只有一个账号：上游偶发断流（empty_stream / 5xx）时 CPA 默认把它冷却 60 秒，
+            # 期间所有请求本地直接 503 "no auth available"。关掉临时错误冷却，改为原地重试。
+            # 配额（429）冷却保留——那是真的用完了。
+            "routing:",
+            "  retry:",
+            "    request-retry: 2",
+            "    max-retry-interval: 0",
+            "  cooldown:",
+            "    transient-error-cooldown-seconds: -1",
             "requests:",
             "  proxy-url: %s" % q(proxy),
+            "  streaming:",
+            "    bootstrap-retries: 2",       # 首字节前断开（empty_stream）自动重发
         ]
         self.config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self._save_state()

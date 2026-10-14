@@ -48,12 +48,12 @@ MODEL_MAP = {
                "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
                "kimi-k3", "grok-4.7", "glm-5.3", "glm-5.3-flash",
                "deepseek-v4-pro", "deepseek-v4.1-flash"],
-    "openrouter": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
-                   "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
-                   "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
-                   "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
-                   "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro",
-                   "z-ai/glm-5.3", "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3"],
+    "openrouter": ["anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
+                   "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
+                   "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
+                   "google/gemini-4-argon", "google/gemini-3.8-flash",
+                   "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro",
+                   "z-ai/glm-5.3", "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3"],
     "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
     # ChatGPT 订阅（本机 CPA + Codex OAuth）；实际列表登录后从 CPA 拉取，见 _provider_model_names
     "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
@@ -79,14 +79,15 @@ CONTEXT_LIMITS = {
     # OpenAI 直连
     "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000, "gpt-5.5": 1000000,
     # OpenRouter
-    "anthropic/claude-opus-5": 1000000, "anthropic/claude-sonnet-5": 1000000,
-    "anthropic/claude-opus-4.8": 1000000, "anthropic/claude-haiku-4.5": 200000,
-    "openai/gpt-5.6-sol": 1000000, "openai/gpt-5.6-terra": 1000000,
-    "openai/gpt-5.6-luna": 1000000, "openai/gpt-5.5": 1000000,
-    "google/gemini-3.8-flash": 1048576, "google/gemini-3.1-pro-preview": 1048576,
-    "deepseek/deepseek-v4-flash": 1048576, "deepseek/deepseek-v4-pro": 1048576,
-    "z-ai/glm-5.3": 1048576, "x-ai/grok-4.6": 500000,
-    "moonshotai/kimi-k3": 1048576, "minimax/minimax-m3": 1048576,
+    "anthropic/claude-opus-5.5": 1000000, "anthropic/claude-sonnet-5.5": 1000000,
+    "anthropic/claude-haiku-5.5": 1000000, "anthropic/claude-fable-5.1": 1000000,
+    "anthropic/claude-opus-5": 1000000, "openai/gpt-6.1-sol": 1050000,
+    "openai/gpt-6-astra": 1050000, "openai/gpt-6-luna": 1050000,
+    "openai/gpt-5.6-sol": 1050000, "google/gemini-4-argon": 1048576,
+    "google/gemini-3.8-flash": 1048576, "deepseek/deepseek-v4.1-flash": 1048576,
+    "deepseek/deepseek-v4-pro": 1048576, "z-ai/glm-5.3": 1048576,
+    "x-ai/grok-4.7": 500000, "moonshotai/kimi-k3": 1048576,
+    "minimax/minimax-m3": 1048576,
     # DeepSeek 直连（deepseek-v4-pro 也在 Duojie 上）
     "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
     # GLM 直连
@@ -99,12 +100,12 @@ VISION_MODELS = {
     "kimi-k3", "grok-4.7", "glm-5.3-flash", "deepseek-v4.1-flash",
     # OpenAI 直连
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
-    # OpenRouter
-    "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
-    "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
-    "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
-    "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
-    "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3",
+    # OpenRouter（deepseek-v4-pro / glm-5.3 只收文本）
+    "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
+    "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
+    "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
+    "google/gemini-4-argon", "google/gemini-3.8-flash", "deepseek/deepseek-v4.1-flash",
+    "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3",
     # DeepSeek 直连
     "deepseek-v4-flash-vision-exp",
 }
@@ -265,6 +266,11 @@ UI_EN = {
     "将删除这台电脑上保存的登录凭据：": "This removes the sign-in credentials saved on this computer: ",
     "Anthropic 不允许第三方工具使用 Claude 订阅，账号可能被限制，风险自负。":
         "Anthropic does not allow third-party tools to use Claude plans. Your account may be restricted; use at your own risk.",
+    "订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；如果一直这样，退出登录后重新登录。":
+        "The subscription account is temporarily unavailable, usually because the quota is used up or rate-limited. "
+        "Try again in a few minutes; if it persists, sign out and sign in again.",
+    "上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。":
+        "The upstream connection closed before any output, usually a temporary service hiccup. Just send again.",
     "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
         "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
         "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
@@ -6152,8 +6158,10 @@ class Controller(QObject):
             if self._pending_plan_confirm:
                 self._pending_plan_confirm = False
                 self.planConfirmFailed.emit(str(err))
+            hint = self._sub_error_hint(err)
             self._blocks.append({"kind": "prose",
-                                 "html": "<span style='color:#dd9999'>错误：" + _esc(err) + "</span>"})
+                                 "html": "<span style='color:#dd9999'>错误：" + _esc(err) + "</span>"
+                                         + ("<br><span style='color:#c9b27c'>" + _esc(hint) + "</span>" if hint else "")})
         elif self._plan_revision_mode:
             self._plan_revision_mode = False
             self.toast.emit("未收到修订后的计划，请换一种修改要求再试")
@@ -6173,6 +6181,18 @@ class Controller(QObject):
         # 本轮结束后，弹出排队中的后台概念图画廊（供用户挑选）
         if self._pending_bg_galleries:
             QTimer.singleShot(0, self._drain_pending_bg_galleries)
+
+    def _sub_error_hint(self, err):
+        """订阅渠道的 CPA 报错翻译成一句人话。"""
+        if not self._sub_kind():
+            return ""
+        e = str(err)
+        if "auth_unavailable" in e or "no auth available" in e:
+            return self.tr("订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；"
+                           "如果一直这样，退出登录后重新登录。")
+        if "empty_stream" in e:
+            return self.tr("上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。")
+        return ""
 
     # ---- markdown + code rendering of the final answer ----
     def _finalize_answer(self):

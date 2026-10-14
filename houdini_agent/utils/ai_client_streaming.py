@@ -671,7 +671,8 @@ class AIClientStreamingMixin:
                     json=payload,
                     headers=headers,
                     stream=True,
-                    timeout=(10, self._chunk_timeout),  # (连接超时, 读取超时)
+                    # (连接超时, 读取超时)；订阅渠道高推理档位在首字节前可能静默思考数分钟
+                    timeout=(10, max(self._chunk_timeout, 300) if self._sub_kind(provider) else self._chunk_timeout),
                     proxies={'http': None, 'https': None}
                 ) as response:
                     # 强制 UTF-8 编码（requests 对 text/event-stream 默认 ISO-8859-1，会导致中文乱码）
