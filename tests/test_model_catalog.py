@@ -66,8 +66,19 @@ class _FakeResponse:
 
 
 @pytest.fixture(autouse=True)
-def _clean_transport():
+def _isolated_catalog_env(monkeypatch):
+    """每个用例重置 transport，并注入假 API Key。
+
+    不能依赖本机环境变量：CI（或干净机器）没有 DUOJIE_API_KEY，
+    fetch_provider_models 会在鉴权检查处提前返回 None，导致 transport 注入失效。
+    """
     mc.reset_transport()
+    for var in ("DUOJIE_API_KEY", "DCC_AI_DUOJIE_API_KEY", "OPENAI_API_KEY",
+                "DEEPSEEK_API_KEY", "GLM_API_KEY", "ZHIPU_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    for var in ("DUOJIE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+                "GLM_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.setenv(var, "test-key")
     yield
     mc.reset_transport()
 
@@ -296,7 +307,7 @@ def test_merged_models_fallback_to_static(tmp_path):
     assert mc.merged_models("custom", cache_path=_cache_file(tmp_path)) == []
 
 
-def test_merged_models_openrouter_enrich_keeps_static_order(tmp_path):
+def test_merged_models_openrouter_enrich_keeps_static_order(tmp_path, monkeypatch):
     cp = _cache_file(tmp_path)
     payload = {"data": [
         {"id": "z-ai/glm-5.3", "context_length": 1048576, "architecture": {"input_modalities": ["text"]}},
@@ -310,7 +321,8 @@ def test_merged_models_openrouter_enrich_keeps_static_order(tmp_path):
     assert mc.merged_models("openrouter", cache_path=cp) == mc.STATIC_MODELS["openrouter"]
     # 元数据仍然生效
     assert mc.context_limit("vendor/model-0", "openrouter", cache_path=cp) == 65536
-    # OpenRouter 公开接口不需要 key 也能拉
+    # OpenRouter 公开接口不需要 key 也能拉（autouse 夹具注入了假 key，这里清掉）
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     calls = _set_transport_response(payload=payload)
     assert mc.fetch_provider_models("openrouter", cache_path=cp) is not None
     assert "Authorization" not in calls[0]["headers"]
@@ -425,7 +437,8 @@ def test_resolve_api_key_multi_env_and_ini_fallback(monkeypatch, isolated_paths)
     monkeypatch.delenv("DCC_AI_DUOJIE_API_KEY", raising=False)
     cu.save_config("ai", {"duojie_api_key": "ini-duojie-key"}, dcc_type="houdini")
     assert mc.resolve_api_key("duojie") == "ini-duojie-key"
-    # glm 的 ZHIPU_API_KEY 别名
+    # glm 的 ZHIPU_API_KEY 别名（autouse 夹具注入了 GLM_API_KEY，这里清掉才能测到别名）
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     assert mc.resolve_api_key("glm") == "zhipu-key"
 
