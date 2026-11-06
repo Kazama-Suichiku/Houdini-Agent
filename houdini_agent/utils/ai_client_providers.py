@@ -38,6 +38,10 @@ class AIClientProvidersMixin:
     # 统一走 OpenAI 协议，此集合留空（协议适配层仍供 Custom provider 使用）
     _DUOJIE_ANTHROPIC_MODELS = frozenset()
 
+    # ChatGPT 订阅（codex）推理设置：由 UI 在每轮开始前写入（set_reasoning）
+    _REASONING_EFFORT: str = ''
+    _REASONING_SUMMARY: bool = True
+
     # Custom provider 运行时配置
     _CUSTOM_API_URL: str = ''
     _CUSTOM_SUPPORTS_FC: bool = True
@@ -89,10 +93,28 @@ class AIClientProvidersMixin:
         # Custom: 只要配置了 URL 就算可用（Key 可选）
         if provider == 'custom':
             return bool(self._CUSTOM_API_URL)
+        # 订阅（ChatGPT / Claude）：以本机 CPA 是否登录了对应账号为准
+        kind = self._sub_kind(provider)
+        if kind:
+            try:
+                from houdini_agent.subscription import manager
+                return manager.logged_in(kind)
+            except Exception:
+                return False
         return bool(self._api_keys.get(provider))
 
+    @staticmethod
+    def _sub_kind(provider):
+        """订阅供应商（codex / claude_sub）→ CPA 凭据类型；其它返回 None。"""
+        return {'codex': 'codex', 'claude_sub': 'claude'}.get((provider or '').lower())
+
     def _get_api_key(self, provider: str) -> Optional[str]:
-        return self._api_keys.get((provider or 'openai').lower())
+        provider = (provider or 'openai').lower()
+        if self._sub_kind(provider):
+            # 本机 CPA 的客户端 key（不是 OpenAI / Anthropic 凭据；订阅凭据只留在 CPA 的 auth 目录）
+            from houdini_agent.subscription import manager
+            return manager.client_key()
+        return self._api_keys.get(provider)
 
     def set_api_key(self, key: str, persist: bool = False, provider: str = 'openai') -> bool:
         provider = (provider or 'openai').lower()
@@ -113,6 +135,16 @@ class AIClientProvidersMixin:
     def get_masked_key(self, provider: str = 'openai') -> str:
         provider = (provider or 'openai').lower()
         # Custom: 显示 URL 缩略
+        if self._sub_kind(provider):
+            try:
+                from houdini_agent.subscription import manager
+                accs = manager.accounts(self._sub_kind(provider))
+            except Exception:
+                accs = []
+            if not accs:
+                return 'Not Set'
+            who = accs[0].get('email') or ('Claude' if provider == 'claude_sub' else 'ChatGPT')
+            return who[:16] + ('...' if len(who) > 16 else '')
         if provider == 'custom':
             if self._CUSTOM_API_URL:
                 url = self._CUSTOM_API_URL
@@ -181,6 +213,13 @@ class AIClientProvidersMixin:
             return self.DUOJIE_API_URL
         elif provider == 'openrouter':
             return self.OPENROUTER_API_URL
+        elif self._sub_kind(provider):
+            # 本机 CPA（ChatGPT / Claude 订阅）：没在跑就拉起；未登录时抛出明确错误
+            from houdini_agent.subscription import manager
+            if not manager.logged_in(self._sub_kind(provider)):
+                raise RuntimeError("%s尚未登录，请在模型菜单里点「登录」" % self._get_vendor_name(provider))
+            manager.ensure_running()
+            return manager.chat_url()
         elif provider == 'custom':
             raw = self._CUSTOM_API_URL or self.OPENAI_API_URL
             return self._normalize_chat_url(raw)
@@ -191,9 +230,16 @@ class AIClientProvidersMixin:
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
+            'codex': 'ChatGPT 订阅', 'claude_sub': 'Claude 订阅',
             'custom': 'Custom',
         }
         return names.get(provider, provider)
+
+    def set_reasoning(self, effort: str = '', summary: bool = True):
+        """ChatGPT 订阅的推理强度（low / medium / high / xhigh / max / ultra，空 = medium）
+        与是否请求推理摘要（关闭 Think 时不请求，省掉生成摘要的开销）。"""
+        self._REASONING_EFFORT = (effort or '').strip().lower()
+        self._REASONING_SUMMARY = bool(summary)
 
     def set_custom_provider(self, api_url: str, api_key: str = '', supports_fc: bool = True,
                             anthropic_protocol: bool = False):
@@ -274,7 +320,9 @@ class AIClientProvidersMixin:
             'deepseek': 'deepseek-v4-flash',
             'glm': 'glm-4.7',
             'duojie': 'claude-opus-5-5',
-            'openrouter': 'anthropic/claude-sonnet-5',
+            'openrouter': 'anthropic/claude-sonnet-5.5',
+            'codex': 'gpt-6.1-sol',
+            'claude_sub': 'claude-opus-5-5',
         }
         return defaults.get(provider, 'gpt-5.6-sol')
 

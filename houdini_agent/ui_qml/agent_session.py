@@ -72,6 +72,7 @@ class AgentSession:
     # ---- run one user turn ----
     def run(self, user_text, model, provider, mode, callbacks, context_limit=128000,
             enable_thinking=True, supports_vision=False, tools=None, max_iter=None,
+            think_tags=True,
             images=None, rag=True, memory=False):
         self.client.reset_stop()
         incoming_images = images or []
@@ -83,7 +84,8 @@ class AgentSession:
         else:
             content = user_text
         self.history.append({"role": "user", "content": content})
-        messages = self.build_messages(enable_thinking)
+        # think_tags=False：模型有原生推理摘要（如 ChatGPT 订阅），不再要求正文里写 <think>
+        messages = self.build_messages(enable_thinking and think_tags)
 
         # inject RAG / long-term memory as system context (right after the prompt)
         extra = self._context_messages(user_text, rag, memory)

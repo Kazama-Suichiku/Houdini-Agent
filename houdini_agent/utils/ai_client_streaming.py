@@ -621,6 +621,15 @@ class AIClientStreamingMixin:
             if tools:
                 payload['tool_stream'] = True
 
+        # 订阅渠道（ChatGPT / Claude via 本机 CPA）：推理强度由用户在顶栏选择（set_reasoning）。
+        # Codex：CPA 只有在请求带推理强度时才请求摘要；auto 级别下 gpt-6.1-sol 等几乎不返回，
+        # detailed 才会稳定流式返回（→ reasoning_content）。Claude：推理强度只控制深度，
+        # 是否返回思考内容要靠显式的 reasoning.summary。关闭 Think 时显式不要摘要。
+        if self._sub_kind(provider):
+            payload['reasoning_effort'] = self._REASONING_EFFORT or 'medium'
+            want_summary = enable_thinking and self._REASONING_SUMMARY
+            payload['reasoning'] = {'summary': 'detailed' if want_summary else 'none'}
+
         # DeepSeek V4 thinking 参数（v4-flash / v4-pro 显式启用思考）
         if provider == 'deepseek' and enable_thinking and 'deepseek-v4' in model.lower():
             payload['thinking'] = {'type': 'enabled'}
@@ -662,7 +671,8 @@ class AIClientStreamingMixin:
                     json=payload,
                     headers=headers,
                     stream=True,
-                    timeout=(10, self._chunk_timeout),  # (连接超时, 读取超时)
+                    # (连接超时, 读取超时)；订阅渠道高推理档位在首字节前可能静默思考数分钟
+                    timeout=(10, max(self._chunk_timeout, 300) if self._sub_kind(provider) else self._chunk_timeout),
                     proxies={'http': None, 'https': None}
                 ) as response:
                     # 强制 UTF-8 编码（requests 对 text/event-stream 默认 ISO-8859-1，会导致中文乱码）

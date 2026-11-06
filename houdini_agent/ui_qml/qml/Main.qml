@@ -157,6 +157,7 @@ Rectangle {
     FontPopup { id: fontPopup }
     TokenPopup { id: tokenPopup }
     ActionDialog { id: actionDialog }
+    SubscriptionDialog { id: subscriptionDialog }
     ManagementPanel { id: managementPanel }
     SettingsWindow { id: settingsWindow }
     TemplateLibrary { id: templateLibrary }
@@ -169,6 +170,7 @@ Rectangle {
         function onOpenTokenDialog() { tokenPopup.st = controller.tokenStats(); tokenPopup.open() }
         function onOpenInfoDialog(title, body) { actionDialog.openInfo(title, body) }
         function onOpenUpdateDialog(title, body) { actionDialog.openUpdate(title, body) }
+        function onOpenSubscriptionDialog() { subscriptionDialog.show() }
         function onOpenApiKeyDialog(provider) { actionDialog.openApi(provider) }
         function onOpenCustomProviderDialog(url, key, model, anthropic, contextLimit, supportsVision) { actionDialog.openCustom(url, key, model, anthropic, contextLimit, supportsVision) }
         function onOpenConfirmDialog(title, body, token) { actionDialog.openConfirm(title, body, token) }

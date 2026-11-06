@@ -31,6 +31,8 @@ Item {
         ignoreUnknownSignals: true
         function onCustomProvidersChanged() { pm.reload() }
         function onProviderChanged() { pm.reload() }
+        function onModelsChanged() { pm.reload() }
+        function onModelsRefreshingChanged() { /* 绑定即可，无需 reload */ }
     }
 
     function startAdd() {
@@ -123,9 +125,22 @@ Item {
                 wrapMode: Text.Wrap
             }
 
-            // 内置供应商
-            Text { text: pm.loc("内置供应商"); color: Theme.textMute; font.family: Theme.fontMono
-                   font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel; bottomPadding: 8 }
+            // 内置供应商（标题行右侧：手动刷新入口 + 更新时间）
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                Text { Layout.fillWidth: true; text: pm.loc("内置供应商"); color: Theme.textMute
+                       font.family: Theme.fontMono; font.pixelSize: Theme.fMicro
+                       font.letterSpacing: Theme.trackLabel; bottomPadding: 8 }
+                Pill { label: (controller && controller.modelsRefreshing) ? pm.loc("刷新中…") : pm.loc("刷新模型")
+                       enabled: !(controller && controller.modelsRefreshing)
+                       opacity: enabled ? 1.0 : 0.45
+                       onClicked: if (controller) controller.refreshModels() }
+            }
+            Text { Layout.bottomMargin: 6
+                   text: (controller && controller.modelsUpdatedAt)
+                         ? pm.loc("模型更新于") + " " + controller.modelsUpdatedAt
+                         : pm.loc("尚未自动刷新")
+                   color: Theme.textMute; font.family: Theme.fontMono; font.pixelSize: Theme.fMicro }
             Repeater {
                 model: pm.builtins
                 delegate: Rectangle {
@@ -143,7 +158,8 @@ Item {
                                font.family: Theme.fontMono; font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel }
                         Pill { visible: !modelData.active; label: pm.loc("使用")
                                onClicked: if (controller) controller.selectProviderModel(modelData.key, "") }
-                        Pill { label: "API Key"; onClicked: if (controller) controller.openProviderApiKey(modelData.key) }
+                        Pill { label: (modelData.key === "codex" || modelData.key === "claude_sub") ? pm.loc("订阅登录") : "API Key"
+                               onClicked: if (controller) controller.openProviderApiKey(modelData.key) }
                     }
                     MouseArea { id: bma; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
                 }

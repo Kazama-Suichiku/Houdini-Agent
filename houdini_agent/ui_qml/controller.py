@@ -37,70 +37,23 @@ except ImportError:  # Houdini <= 20.5 (Qt5)
     )
     import random
 
+from houdini_agent.utils import model_catalog as catalog
+
 
 ROLE_TYPE = Qt.UserRole + 1
 ROLE_PAYLOAD = Qt.UserRole + 2
 
 # Real provider keys + model ids (kept in sync with ui/header.py _model_map)
-# 2026-09 对齐：Duojie 以 /v1/models 实时清单为准；OpenRouter/OpenAI/DeepSeek 以官方目录为准
-MODEL_MAP = {
-    "duojie": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
-               "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
-               "kimi-k3", "grok-4.7", "glm-5.3", "glm-5.3-flash",
-               "deepseek-v4-pro", "deepseek-v4.1-flash"],
-    "openrouter": ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
-                   "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
-                   "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
-                   "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
-                   "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro",
-                   "z-ai/glm-5.3", "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3"],
-    "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
-    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
-    "glm": ["glm-4.7"],
-    "custom": [],
-}
+# 静态兜底取自 model_catalog；三份目录保持可变 —— refreshModels() 后台拉取
+# 各 provider 的 /v1/models 后就地更新（custom / codex / claude_sub 不参与拉取）
+MODEL_MAP = {k: list(v) for k, v in catalog.STATIC_MODELS.items()}
 PROVIDER_LABELS = {
     "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
+    "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
-CONTEXT_LIMITS = {
-    # Duojie（中转；Claude 走 200K 保守值）
-    "claude-opus-5-5": 200000, "claude-sonnet-5-5": 200000, "claude-sonnet-5": 200000,
-    "gpt-6.1-sol": 1000000, "gpt-6-sol": 1000000, "gpt-6-astra": 1000000,
-    "kimi-k3": 1048576, "grok-4.7": 500000,
-    "glm-5.3": 1048576, "glm-5.3-flash": 1048576, "deepseek-v4.1-flash": 1048576,
-    # OpenAI 直连
-    "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000, "gpt-5.5": 1000000,
-    # OpenRouter
-    "anthropic/claude-opus-5": 1000000, "anthropic/claude-sonnet-5": 1000000,
-    "anthropic/claude-opus-4.8": 1000000, "anthropic/claude-haiku-4.5": 200000,
-    "openai/gpt-5.6-sol": 1000000, "openai/gpt-5.6-terra": 1000000,
-    "openai/gpt-5.6-luna": 1000000, "openai/gpt-5.5": 1000000,
-    "google/gemini-3.8-flash": 1048576, "google/gemini-3.1-pro-preview": 1048576,
-    "deepseek/deepseek-v4-flash": 1048576, "deepseek/deepseek-v4-pro": 1048576,
-    "z-ai/glm-5.3": 1048576, "x-ai/grok-4.6": 500000,
-    "moonshotai/kimi-k3": 1048576, "minimax/minimax-m3": 1048576,
-    # DeepSeek 直连（deepseek-v4-pro 也在 Duojie 上）
-    "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
-    # GLM 直连
-    "glm-4.7": 200000,
-}
-VISION_MODELS = {
-    # Duojie
-    "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
-    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
-    "kimi-k3", "grok-4.7", "glm-5.3-flash", "deepseek-v4.1-flash",
-    # OpenAI 直连
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
-    # OpenRouter
-    "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
-    "anthropic/claude-opus-4.8", "anthropic/claude-haiku-4.5",
-    "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna", "openai/gpt-5.5",
-    "google/gemini-3.8-flash", "google/gemini-3.1-pro-preview",
-    "x-ai/grok-4.6", "moonshotai/kimi-k3", "minimax/minimax-m3",
-    # DeepSeek 直连
-    "deepseek-v4-flash-vision-exp",
-}
+CONTEXT_LIMITS = dict(catalog.STATIC_CONTEXT)
+VISION_MODELS = set(catalog.STATIC_VISION)
 # tools safe to run off the Qt main thread (no hou.* access)
 BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
            "list_skills", "search_memory", "execute_shell"}
@@ -242,6 +195,57 @@ UI_EN = {
     "压缩上下文": "Compress context", "已压缩上下文": "Context compressed",
     "新建会话": "New session", "字号…": "Font size…", "字号": "Font size",
     "重置": "Reset", "关闭": "Close", "稍后": "Later", "立即更新": "Update now",
+    "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
+    "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
+    "刷新模型": "Refresh models", "复制": "Copy",
+    "模型列表已更新": "Model list updated",
+    "模型列表刷新失败，已沿用本地列表": "Failed to refresh models; using the local list",
+    "刷新中…": "Refreshing…", "模型更新于": "Models updated at", "尚未自动刷新": "Not refreshed yet",
+    "推理": "Effort", "低": "Low", "中": "Medium", "高": "High", "很高": "Very high",
+    "最高": "Max", "极限": "Ultra", "默认": "default", "未登录": "signed out",
+    "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
+    "请先登录 ChatGPT 订阅": "Sign in to your ChatGPT plan first",
+    "登录后即可使用订阅额度，无需 API key。": "Sign in to use your plan's allowance. No API key needed.",
+    "Claude 订阅": "Claude plan", "登录 Claude 订阅…": "Sign in to Claude plan…",
+    "请先登录 Claude 订阅": "Sign in to your Claude plan first",
+    "退出 Claude 订阅登录？": "Sign out of Claude plan?",
+    "已在浏览器打开登录页，登录并授权后会自动完成。": "The sign-in page is open in your browser. Sign in and authorize to finish.",
+    "本机端口被占用，请关闭占用它的程序后重试：": "A local port is in use. Close the program using it and retry: ",
+    "将删除这台电脑上保存的登录凭据：": "This removes the sign-in credentials saved on this computer: ",
+    "Anthropic 不允许第三方工具使用 Claude 订阅，账号可能被限制，风险自负。":
+        "Anthropic does not allow third-party tools to use Claude plans. Your account may be restricted; use at your own risk.",
+    "订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；如果一直这样，退出登录后重新登录。":
+        "The subscription account is temporarily unavailable, usually because the quota is used up or rate-limited. "
+        "Try again in a few minutes; if it persists, sign out and sign in again.",
+    "上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。":
+        "The upstream connection closed before any output, usually a temporary service hiccup. Just send again.",
+    "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
+        "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
+        "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
+    "组件": "Component", "账号": "Account", "已安装": "installed", "ChatGPT 账号": "ChatGPT account",
+    "未安装（首次登录时自动下载，约 24 MB）": "Not installed (downloaded on first sign-in, about 24 MB)",
+    "打开页面": "Open page", "浏览器没有打开？": "Browser didn't open?", "复制登录链接": "Copy sign-in link",
+    "再次打开": "Open again", "再登录一个账号": "Add another account",
+    "用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。":
+        "Usage counts against your ChatGPT plan. OpenAI currently allows plans in third-party tools, "
+        "but this is not a contractual term and may change.",
+    "正在下载订阅组件…": "Downloading the subscription component…",
+    "已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。":
+        "The OpenAI sign-in page is open in your browser. Sign in and authorize to finish.",
+    "在浏览器打开的页面里输入下面的验证码，授权后会自动完成。":
+        "Enter the code below on the page opened in your browser. It finishes once you authorize.",
+    "正在准备订阅组件…": "Preparing the subscription component…", "正在发起登录…": "Starting sign-in…",
+    "登录成功，正在启动本机订阅服务…": "Signed in, starting the local subscription service…",
+    "已退出登录": "Signed out", "可用模型：": "Available models: ", "刷新模型失败：": "Failed to refresh models: ",
+    "已登录 ": "Signed in as ", "已登录": "Signed in", "已取消登录": "Sign-in cancelled",
+    "登录超时（15 分钟内未完成授权）": "Sign-in timed out (not authorized within 15 minutes)",
+    "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录":
+        "Local port 1455 is in use (maybe another Codex sign-in). Close it and retry, or sign in with a code.",
+    "登录没有完成": "Sign-in did not complete", "出错了：": "Error: ",
+    "退出 ChatGPT 订阅登录？": "Sign out of ChatGPT plan?",
+    "将删除这台电脑上保存的 ChatGPT 订阅登录凭据：": "This removes the ChatGPT plan credentials saved on this computer: ",
+    "OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。":
+        "Your OpenAI account is not affected. To fully revoke access, remove Codex in ChatGPT's security settings on the web.",
     "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
     "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
     "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
@@ -526,6 +530,7 @@ _TPL_HOU = [
 class Controller(QObject):
     providerChanged = Signal()
     modelChanged = Signal()
+    effortChanged = Signal()       # 推理强度可选项 / 当前值变化（换供应商、换模型、手动选择）
     sceneChanged = Signal()
     showThinkingChanged = Signal()
     runningChanged = Signal()
@@ -552,6 +557,8 @@ class Controller(QObject):
     _sigPlanStream = Signal(str)          # accumulated create_plan json -> live plan card
     _sigInfo = Signal(str, str)           # title, body -> QML info dialog
     _sigUpdateDialog = Signal(str, str)   # worker -> main: 检查更新发现新版本（带「立即更新」按钮的对话框）
+    _sigSub = Signal(str, str)            # worker -> main: ChatGPT 订阅状态事件 (kind, json)
+    _sigModels = Signal(str)              # worker -> main: 模型目录刷新结果 (json -> _on_models_refreshed)
     tokensChanged = Signal()
     pendingOpsChanged = Signal()
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
@@ -564,6 +571,8 @@ class Controller(QObject):
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
     openUpdateDialog = Signal(str, str)    # title, body (QML)：检查更新发现新版本，对话框里直接给「立即更新」
+    openSubscriptionDialog = Signal()      # 打开「ChatGPT 订阅」登录对话框
+    subscriptionChanged = Signal()         # 订阅状态变化（QML 重新取 subscriptionStatus()）
     openApiKeyDialog = Signal(str)         # provider (QML)
     openCustomProviderDialog = Signal(str, str, str, bool, str, bool)  # url, key, model, anthropic, context_limit, supports_vision
     openConfirmDialog = Signal(str, str, str)  # title, body, token
@@ -574,6 +583,8 @@ class Controller(QObject):
     openPluginsDialog = Signal()
     openMemoryDialog = Signal()
     openSettingsDialog = Signal()         # request the unified settings window
+    modelsChanged = Signal()              # 模型目录已更新（MODEL_MAP 被后台刷新改写）
+    modelsRefreshingChanged = Signal()    # 刷新开始/结束
 
     # worker -> main thread (queued)
     _sigThink = Signal(str)
@@ -650,8 +661,10 @@ class Controller(QObject):
         self._meshy_bg_lock = threading.Lock()
         self._bg_galleries = {}         # token -> 后台跑完待呈现/可交互的概念图画廊数据
         self._pending_bg_galleries = [] # agent 忙时排队待弹出的画廊 token
-        self._token_stats = {"input": 0, "output": 0, "reasoning": 0,
-                             "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
+        # 用量按会话记（随会话持久化），_load_active 时绑定到当前会话的 usage
+        self._token_stats = self._new_token_stats()
+        self._ctx_anchor = None     # 最近一次请求的真实上下文：{"tokens", "hist_len"}
+        self._ctx_ratio = 1.0       # 字符估算的校准系数（真实 / 估算），每轮结束更新
         self._call_records = []
         self._ctx_text = "0 / 200k"
         self._token_text = "0 tokens"
@@ -661,12 +674,26 @@ class Controller(QObject):
         self._update_state = ""        # "" | available | downloading | ready | failed
         self._update_progress = 0
         self._update_installer_path = ""
+        # 模型目录刷新（refreshModels）：_models_updated_at 从磁盘缓存推断（"HH:MM" 或 ""）
+        self._models_refreshing = False
+        self._models_refresh_quiet = False
+        self._models_updated_at = self._cached_models_updated_at()
         self._node_name_map = {}     # bare name -> full path (for resolve)
         try:
             from houdini_agent.ui.i18n import get_language
             self._lang = get_language()
         except Exception:
             self._lang = "zh"
+
+        # 模型目录：同步、无网络地从磁盘缓存回填（merge 策略下静态表 + live 缓存合并；
+        # 无缓存/坏缓存时 catalog 返回静态表，此处回填等价于静态表本身）
+        try:
+            for _p in catalog.PROVIDER_SOURCES:
+                _ids = catalog.provider_model_ids(_p)
+                if _ids:
+                    MODEL_MAP[_p] = list(_ids)
+        except Exception:
+            pass
 
         self._load_custom_providers()
         self._load_prefs()
@@ -726,6 +753,7 @@ class Controller(QObject):
         self._sessions = []     # [{id, title, rows, history}]
         self._active = 0
         self._add_session()
+        self._bind_usage(self._sessions[0])
 
         # streaming UI updates (queued onto main thread)
         self._sigThink.connect(self._ui_think)
@@ -753,6 +781,24 @@ class Controller(QObject):
         self._sigPlanStream.connect(self._ui_plan_stream)
         self._sigInfo.connect(self._info)
         self._sigUpdateDialog.connect(self._show_update_dialog)
+        self._sigSub.connect(self._on_sub_event)
+        self._sigModels.connect(self._on_models_refreshed)
+        self.providerChanged.connect(self.effortChanged)
+        self.modelChanged.connect(self.effortChanged)
+        self.langChanged.connect(self.effortChanged)
+        # 换供应商 / 模型后立刻刷新底部上下文上限（以前要等一轮结束才更新，会显示旧模型的上限）
+        self.providerChanged.connect(self._schedule_ctx_refresh)
+        self.modelChanged.connect(self._schedule_ctx_refresh)
+        self._effort_by_model = {}      # model -> 用户选的推理强度（QSettings 持久化）
+        try:
+            _raw = QSettings("HoudiniAI", "Assistant").value("reasoning_effort", "")
+            _d = json.loads(_raw) if _raw else {}
+            if isinstance(_d, dict):
+                self._effort_by_model = {str(k): str(v) for k, v in _d.items()}
+        except Exception:
+            pass
+        self._sub = {"busy": False, "phase": "", "message": "", "progress": 0,
+                     "loginUrl": "", "deviceUrl": "", "deviceCode": ""}
         self._sigCtxRefresh.connect(self.refreshContext)
         self._sigUpdateState.connect(self._on_update_state)
         self._sigUpdateFound.connect(self._set_update)
@@ -775,6 +821,10 @@ class Controller(QObject):
         self._ai_row = None
         self._bm = None
         self._reset_run_state()
+
+        # 启动后若模型目录缓存过期（>6h 或无缓存），在事件循环里静默后台刷新一次；
+        # 不在构造函数里做网络请求，避免阻塞启动
+        QTimer.singleShot(4000, self._auto_refresh_models_if_stale)
 
     @staticmethod
     def _session_cache_dir():
@@ -821,6 +871,7 @@ class Controller(QObject):
         except Exception:
             pass
         self.refreshContext()
+        self._refresh_tokens()      # 后端是异步挂上的：之前算出的上下文是 0，这里补算
         if announce:
             self.toast.emit("已连接 Houdini Bridge")
 
@@ -921,7 +972,7 @@ class Controller(QObject):
         p = self._custom_provider(self._provider)
         if p is not None:
             return p.get("name", "Custom")
-        return PROVIDER_LABELS.get(self._provider, self._provider)
+        return self.tr(PROVIDER_LABELS.get(self._provider, self._provider))
     providerLabel = Property(str, _get_provider_label, notify=providerChanged)
 
     def _get_model(self): return self._model_name
@@ -929,6 +980,76 @@ class Controller(QObject):
 
     def _get_show_thinking(self): return self._show_thinking
     showThinking = Property(bool, _get_show_thinking, notify=showThinkingChanged)
+
+    # ---- 推理强度（目前只有订阅渠道 ChatGPT / Claude 支持选择） ----
+    _EFFORT_LABELS = {"low": "低", "medium": "中", "high": "高", "xhigh": "很高", "max": "最高", "ultra": "极限"}
+
+    def _sub_kind(self, provider=None):
+        """供应商是否是订阅渠道；是则返回 CPA 凭据类型（codex / claude）。"""
+        from houdini_agent.subscription import kind_of
+        return kind_of(self._provider if provider is None else provider)
+
+    def _effort_levels(self):
+        kind = self._sub_kind()
+        if not kind:
+            return []
+        from houdini_agent.subscription import effort_levels
+        return effort_levels(kind, self._model_name)
+
+    def _current_effort(self):
+        levels = self._effort_levels()
+        if not levels:
+            return ""
+        from houdini_agent.subscription import default_effort
+        v = self._effort_by_model.get(self._model_name) or default_effort(self._sub_kind(), self._model_name)
+        return v if v in levels else (levels[1] if len(levels) > 1 else levels[0])
+
+    def _get_reasoning_effort(self):
+        return self._current_effort()
+
+    def _get_reasoning_effort_label(self):
+        v = self._current_effort()
+        return ("%s · %s" % (self.tr("推理"), self.tr(self._EFFORT_LABELS.get(v, v)))) if v else ""
+
+    reasoningEffort = Property(str, _get_reasoning_effort, notify=effortChanged)
+    reasoningEffortLabel = Property(str, _get_reasoning_effort_label, notify=effortChanged)
+
+    @Slot(result="QVariantList")
+    def effortItems(self):
+        from houdini_agent.subscription import default_effort
+        cur = self._current_effort()
+        dflt = default_effort(self._sub_kind(), self._model_name)
+        en = self._lang == "en"
+        out = []
+        for v in self._effort_levels():
+            label = self.tr(self._EFFORT_LABELS.get(v, v))   # 只显示当前界面语言
+            if v == dflt:
+                label += (" (%s)" if en else "（%s）") % self.tr("默认")
+            out.append({"label": label, "val": v, "checked": v == cur})
+        return out
+
+    def _schedule_ctx_refresh(self):
+        if not self._session:
+            return
+        t = getattr(self, "_ctx_refresh_timer", None)
+        if t is None:
+            t = self._ctx_refresh_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(0)
+            t.timeout.connect(self._refresh_tokens)
+        t.start()
+
+    @Slot(str)
+    def setReasoningEffort(self, v):
+        if v not in self._effort_levels():
+            return
+        self._effort_by_model[self._model_name] = v
+        try:
+            QSettings("HoudiniAI", "Assistant").setValue("reasoning_effort",
+                                                         json.dumps(self._effort_by_model))
+        except Exception:
+            pass
+        self.effortChanged.emit()
 
     def _get_running(self): return self._running
     running = Property(bool, _get_running, notify=runningChanged)
@@ -1011,6 +1132,103 @@ class Controller(QObject):
     def showToast(self, msg):
         self.toast.emit(str(msg or ""))
 
+    # ---- 模型目录动态刷新（后台线程 + _sigModels 回主线程） ----
+    def _get_models_refreshing(self): return self._models_refreshing
+    modelsRefreshing = Property(bool, _get_models_refreshing, notify=modelsRefreshingChanged)
+
+    def _get_models_updated_at(self): return self._models_updated_at
+    modelsUpdatedAt = Property(str, _get_models_updated_at, notify=modelsChanged)
+
+    def _cached_models_updated_at(self):
+        """从磁盘缓存推断目录更新时间：取各 provider 最近一次 fetched_at 格式化为 "HH:MM"。"""
+        try:
+            cache = catalog.load_cache()
+            latest = None
+            for p in catalog.PROVIDER_SOURCES:
+                fetched = cache.get("providers", {}).get(p, {}).get("fetched_at")
+                if isinstance(fetched, (int, float)) and not isinstance(fetched, bool):
+                    ts = float(fetched)
+                    latest = ts if latest is None else max(latest, ts)
+            if latest is not None:
+                return time.strftime("%H:%M", time.localtime(latest))
+        except Exception:
+            pass
+        return ""
+
+    @Slot()
+    def refreshModels(self):
+        """后台拉取各 provider 的 /v1/models 并更新目录；无参、非阻塞、可重入安全。"""
+        self._start_models_refresh(quiet=False)
+
+    def _start_models_refresh(self, quiet):
+        """启动后台刷新。quiet=True 时（启动自动刷新）不弹 toast。"""
+        if self._models_refreshing:
+            return
+        self._models_refresh_quiet = bool(quiet)
+        self._models_refreshing = True
+        self.modelsRefreshingChanged.emit()
+
+        def work():
+            result = {}
+            try:
+                result = catalog.refresh_all(timeout=10)
+            except Exception:
+                result = {}
+            try:
+                self._sigModels.emit(json.dumps(result, ensure_ascii=False))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_models_refreshed(self, payload_json):
+        """主线程：应用后台刷新结果，就地更新 MODEL_MAP / CONTEXT_LIMITS / VISION_MODELS。"""
+        try:
+            result = json.loads(payload_json) if payload_json else {}
+        except Exception:
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
+        ok_any = False
+        try:
+            for p, ids in result.items():
+                if not ids:
+                    continue
+                ok_any = True
+                MODEL_MAP[p] = list(ids)
+                for m in ids:
+                    CONTEXT_LIMITS.setdefault(m, catalog.context_limit(m, p))
+                    if catalog.supports_vision(m, p):
+                        VISION_MODELS.add(m)
+                    else:
+                        VISION_MODELS.discard(m)
+            # 保留当前选择：当前模型被下架时把它 append 到列表末尾，不静默切换用户选择
+            if (self._provider in catalog.PROVIDER_SOURCES
+                    and self._model_name
+                    and self._model_name not in MODEL_MAP.get(self._provider, [])):
+                MODEL_MAP.setdefault(self._provider, []).append(self._model_name)
+            if ok_any:
+                self._models_updated_at = time.strftime("%H:%M")
+        except Exception:
+            pass
+        finally:
+            self._models_refreshing = False
+            self.modelsRefreshingChanged.emit()
+            self.modelsChanged.emit()
+        if self._models_refresh_quiet:
+            return
+        if ok_any:
+            self.showToast(self.tr("模型列表已更新"))
+        else:
+            self.showToast(self.tr("模型列表刷新失败，已沿用本地列表"))
+
+    def _auto_refresh_models_if_stale(self):
+        try:
+            if any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES):
+                self._start_models_refresh(quiet=True)
+        except Exception:
+            pass
+
     def _get_scene_path(self): return self._scene_path
     scenePath = Property(str, _get_scene_path, notify=sceneChanged)
 
@@ -1021,8 +1239,14 @@ class Controller(QObject):
     @Slot(result="QVariantList")
     def providerItems(self):
         # 内置 provider（不含已废弃的单一 "custom"）+ 自定义供应商
-        items = [{"label": PROVIDER_LABELS.get(k, k), "val": k, "checked": k == self._provider}
-                 for k in MODEL_MAP.keys() if k != "custom"]
+        items = []
+        for k in MODEL_MAP.keys():
+            if k == "custom":
+                continue
+            label = self.tr(PROVIDER_LABELS.get(k, k))
+            if self._sub_kind(k) and not self._sub_logged_in(k):
+                label += " · " + self.tr("未登录")
+            items.append({"label": label, "val": k, "checked": k == self._provider})
         if self._custom_providers:
             items.append({"sep": True})
             for p in self._custom_providers:
@@ -1034,7 +1258,22 @@ class Controller(QObject):
     @Slot(result="QVariantList")
     def modelItems(self):
         models = self._provider_model_names(self._provider)
-        return [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
+        items = [{"label": m, "val": m, "checked": m == self._model_name} for m in models]
+        kind = self._sub_kind()
+        if kind:
+            accs = []
+            try:
+                from houdini_agent.subscription import manager
+                accs = manager.accounts(kind)
+            except Exception:
+                pass
+            brand = "Claude" if kind == "claude" else "ChatGPT"
+            label = ((self.tr("账号：") + (accs[0].get("email") or brand)) if accs
+                     else self.tr("登录 %s 订阅…" % brand))
+            items += [{"sep": True}, {"label": label, "val": "__sub_account__", "checked": False}]
+            if accs:
+                items.append({"label": self.tr("退出登录"), "val": "__sub_logout__", "checked": False})
+        return items
 
     # ---- slots from QML ----
     @Slot(str, result=bool)
@@ -1059,10 +1298,20 @@ class Controller(QObject):
         self.providerChanged.emit()
         self.tokensChanged.emit()
         self._save_prefs()
+        if self._sub_kind(v) and not self._sub_logged_in(v):
+            self._sub_dialog_provider = v
+            self.openSubscriptionDialog.emit()
         return True
 
     @Slot(str, result=bool)
     def setModel(self, v):
+        if v == "__sub_account__":
+            self._sub_dialog_provider = self._provider
+            self.openSubscriptionDialog.emit()
+            return False
+        if v == "__sub_logout__":
+            self._confirm_sub_logout()
+            return False
         if self._running:
             self.toast.emit("当前正在运行，模型切换将在本轮结束后再操作")
             return False
@@ -1165,6 +1414,10 @@ class Controller(QObject):
 
     @Slot(str)
     def openProviderApiKey(self, provider):
+        if self._sub_kind(provider or self._provider):
+            self._sub_dialog_provider = provider or self._provider
+            self.openSubscriptionDialog.emit()
+            return
         try:
             self.openApiKeyDialog.emit(provider or self._provider)
         except Exception as e:
@@ -1463,6 +1716,26 @@ class Controller(QObject):
         except Exception:
             pass
 
+    def _upgrade_stored_blocks(self, blocks):
+        """历史消息是保存时就转好的富文本：加载时补上后来才有的渲染（就地修改）。
+        - 回答里的 LaTeX 公式（加公式渲染之前保存的会话）
+        - 思考块的 **标题** 加粗（以前只存了纯文本）"""
+        try:
+            from houdini_agent.ui_qml.mathrender import rerender_html
+        except Exception:
+            rerender_html = None
+        for b in blocks or []:
+            if not isinstance(b, dict):
+                continue
+            kind = b.get("kind")
+            if kind == "prose" and rerender_html and b.get("html"):
+                try:
+                    b["html"] = rerender_html(b["html"])
+                except Exception as e:
+                    print("[controller] re-render math failed:", e)
+            elif kind == "thinking" and b.get("text") and not b.get("html"):
+                b["html"] = self._think_html(b["text"])
+
     def _load_active(self):
         # 切换/新建会话时清掉上一会话残留的附带图片，避免它泄漏到新会话的图生图里。
         self._last_attached_images = []
@@ -1472,6 +1745,7 @@ class Controller(QObject):
         for it in rows:
             if it.get("type") == "ai":
                 blocks = (it.get("payload", {}) or {}).get("blocks", [])
+                self._upgrade_stored_blocks(blocks)
                 it["payload"] = {"bm": BlockModel(blocks)}
         self._model.load(rows)
         p, m = s.get("provider"), s.get("model")
@@ -1491,11 +1765,34 @@ class Controller(QObject):
                 self.modelChanged.emit()
         if self._session:
             self._session.history = copy.deepcopy(s.get("history", []))
+        self._bind_usage(s)
         self._reset_run_state()
         self._plan_row = None
         self._plan_payload = None
         self._plan_idmap = {}
         self._refresh_tokens()
+
+    @staticmethod
+    def _new_token_stats():
+        return {"input": 0, "output": 0, "reasoning": 0,
+                "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
+
+    def _bind_usage(self, s, reset=False):
+        """让 _token_stats / _ctx_anchor 指向会话 s 自己的用量记录（原地累加，随会话保存）。"""
+        u = s.get("usage")
+        if reset or not isinstance(u, dict):
+            u = s["usage"] = {}
+        stats = u.get("stats")
+        if not isinstance(stats, dict):
+            stats = u["stats"] = {}
+        for k, v in self._new_token_stats().items():
+            if not isinstance(stats.get(k), (int, float)):
+                stats[k] = v
+        self._token_stats = stats
+        a = u.get("ctx")
+        self._ctx_anchor = a if isinstance(a, dict) and a.get("tokens") else None
+        if self._ctx_anchor and self._ctx_anchor.get("ratio"):
+            self._ctx_ratio = float(self._ctx_anchor["ratio"])
 
     @Slot(result="QVariantList")
     def sessionItems(self):
@@ -1582,8 +1879,10 @@ class Controller(QObject):
             self._session.reset()
         self._sessions[self._active]["rows"] = []
         self._sessions[self._active]["history"] = []
+        self._bind_usage(self._sessions[self._active], reset=True)
         self._reset_run_state()
         self._plan_row = None
+        self._refresh_tokens()
         self._save_all()
         self.toast.emit(self.tr("清空对话"))
 
@@ -1659,6 +1958,8 @@ class Controller(QObject):
         elif action == "optimize":
             if self._session and len(self._session.history) > 24:
                 self._session.history = self._session.history[-24:]
+                self._ctx_anchor = None     # 真实用量对应的是压缩前的 history
+                self._sessions[self._active].setdefault("usage", {}).pop("ctx", None)
                 self._refresh_tokens()
                 self.toast.emit(self.tr("已压缩上下文"))
             else:
@@ -2002,6 +2303,10 @@ class Controller(QObject):
         if not self._session:
             self.toast.emit("AI 后端尚未就绪，请稍候几秒再试")
             return
+        if self._sub_kind():
+            self._sub_dialog_provider = self._provider
+            self.openSubscriptionDialog.emit()
+            return
         try:
             self.openApiKeyDialog.emit(self._provider)
         except Exception as e:
@@ -2265,6 +2570,198 @@ class Controller(QObject):
             self.toast.emit("创建 Wrangle 失败：%s" % e)
             return False
 
+    # ---- 订阅登录（本机 CPA：ChatGPT 走 Codex OAuth，Claude 走 Claude Code OAuth） ----
+    # 后台线程只发 (str, str) 信号回主线程（PySide6 跨线程 Signal(dict) 会崩，见 memory）。
+    def _sub_logged_in(self, provider=None):
+        kind = self._sub_kind(provider)
+        if not kind:
+            return False
+        try:
+            from houdini_agent.subscription import manager
+            return manager.logged_in(kind)
+        except Exception:
+            return False
+
+    def _sub_target(self):
+        """订阅对话框 / 退出登录作用的供应商：最近一次打开对话框时指定的，否则当前供应商。"""
+        p = getattr(self, "_sub_dialog_provider", "") or ""
+        if not self._sub_kind(p):
+            p = self._provider if self._sub_kind() else "codex"
+        return p
+
+    @Slot()
+    def subscriptionDialogOpened(self):
+        """对话框每次打开：不在登录流程中时清掉上一次的提示（两种订阅共用一份状态）。"""
+        if not self._sub.get("busy"):
+            self._sub.update(message="", loginUrl="", deviceUrl="", deviceCode="")
+
+    @Slot(result="QVariantMap")
+    def subscriptionStatus(self):
+        target = self._sub_target()
+        kind = self._sub_kind(target)
+        base = dict(self._sub, kind=kind, title=self.tr(PROVIDER_LABELS.get(target, target)))
+        try:
+            from houdini_agent.subscription import manager, CPA_VERSION
+            accounts = manager.accounts(kind)
+            installed = manager.installed()
+        except Exception as e:
+            return dict(base, installed=False, version="", accounts=[], error=str(e))
+        return dict(base, installed=installed, version=CPA_VERSION,
+                    accounts=[{"email": a["email"], "plan": a["plan"], "file": a["file"]} for a in accounts])
+
+    def _sub_set(self, **kw):
+        self._sub.update(kw)
+        self.subscriptionChanged.emit()
+
+    def _on_sub_event(self, kind, js):
+        """主线程：应用后台订阅流程的事件。"""
+        try:
+            d = json.loads(js) if js else {}
+        except Exception:
+            d = {}
+        if kind == "progress":
+            self._sub_set(phase="install", progress=int(d.get("p", 0)),
+                          message="%s %d%%" % (self.tr("正在下载订阅组件…"), int(d.get("p", 0))))
+        elif kind == "phase":
+            # message 是翻译表里的固定句子，suffix 是不需要翻译的附加内容（模型名、错误原文）
+            self._sub_set(phase=d.get("phase", ""), message=self.tr(d.get("message", "")) + d.get("suffix", ""))
+        elif kind == "url":
+            self._sub_set(phase="login", loginUrl=d.get("url", ""),
+                          message=self.tr("已在浏览器打开登录页，登录并授权后会自动完成。"))
+        elif kind == "device":
+            self._sub_set(phase="login", deviceUrl=d.get("url", ""), deviceCode=d.get("code", ""),
+                          message=self.tr("在浏览器打开的页面里输入下面的验证码，授权后会自动完成。"))
+        elif kind == "done":
+            ok = bool(d.get("ok"))
+            msg = self._sub_result_text(d)
+            self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="", message=msg)
+            if ok:
+                self.toast.emit(msg or self.tr("已登录"))
+                target = self._sub_target()
+                names = self._provider_model_names(target)
+                if self._provider == target and names and self._model_name not in names:
+                    self._model_name = names[0]
+                    self.modelChanged.emit()
+                self.providerChanged.emit()     # 让顶栏 / 供应商面板重新读取登录状态
+
+    def _sub_result_text(self, d):
+        """按当前界面语言组织登录结果（manager 返回结果类型 code，不在底层写死文案）。"""
+        code = d.get("code") or ("ok" if d.get("ok") else "error")
+        en = self._lang == "en"
+        if code == "ok":
+            plan = d.get("plan") or ""
+            return self.tr("已登录 ") + (d.get("who") or "") + ((" (%s)" if en else "（%s）") % plan if plan else "")
+        if code == "cancelled":
+            return self.tr("已取消登录")
+        if code == "timeout":
+            return self.tr("登录超时（15 分钟内未完成授权）")
+        if code == "port":
+            return self.tr("本机端口被占用，请关闭占用它的程序后重试：") + str(d.get("port") or "")
+        if code == "failed":
+            return self.tr("登录没有完成") + ((" (%s)" if en else "（%s）") % d.get("detail") if d.get("detail") else "")
+        return self.tr("出错了：") + str(d.get("message") or "")
+
+    @Slot(bool)
+    def subscriptionLogin(self, device):
+        if self._sub.get("busy"):
+            return
+        self._sub_set(busy=True, phase="install", progress=0, message=self.tr("正在准备订阅组件…"),
+                      loginUrl="", deviceUrl="", deviceCode="")
+
+        sub_kind = self._sub_kind(self._sub_target())
+
+        def emit(kind, data):
+            self._sigSub.emit(kind, json.dumps(data, ensure_ascii=False))
+
+        def work():
+            try:
+                import webbrowser
+                from houdini_agent.subscription import manager
+                manager.install(progress=lambda p: emit("progress", {"p": p}))
+                emit("phase", {"phase": "login", "message": "正在发起登录…"})
+
+                def on_event(kind, data):
+                    if kind == "url":
+                        webbrowser.open(data)
+                        emit("url", {"url": data})
+                    elif kind == "device":
+                        webbrowser.open(data.get("url", ""))
+                        emit("device", data)
+
+                res = manager.login(device=bool(device) and sub_kind == "codex", on_event=on_event,
+                                    kind=sub_kind)
+                if res.get("ok"):
+                    emit("phase", {"phase": "start", "message": "登录成功，正在启动本机订阅服务…"})
+                    manager.ensure_running()
+                    try:
+                        manager.refresh_models(sub_kind)
+                    except Exception:
+                        pass
+                emit("done", res)
+            except Exception as e:
+                emit("done", {"ok": False, "code": "error", "message": str(e)})
+
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot()
+    def subscriptionCancelLogin(self):
+        try:
+            from houdini_agent.subscription import manager
+            manager.cancel_login()
+        except Exception:
+            pass
+
+    def _confirm_sub_logout(self):
+        self._sub_dialog_provider = self._provider
+        kind = self._sub_kind()
+        try:
+            from houdini_agent.subscription import manager
+            accs = manager.accounts(kind)
+        except Exception:
+            accs = []
+        brand = "Claude" if kind == "claude" else "ChatGPT"
+        who = ", ".join(a.get("email") or brand for a in accs)
+        body = self.tr("将删除这台电脑上保存的登录凭据：") + who
+        if kind == "codex":
+            body += "\n\n" + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。")
+        self._request_confirm("退出 %s 订阅登录？" % brand, body, lambda: self.subscriptionLogout(""))
+
+    @Slot(str)
+    def subscriptionLogout(self, file_name):
+        try:
+            from houdini_agent.subscription import manager
+            n = manager.logout(file_name or None, kind=self._sub_kind(self._sub_target()))
+        except Exception as e:
+            self.toast.emit("退出登录失败：%s" % e)
+            return
+        self._sub_set(message=self.tr("已退出登录") if n else "")
+        self.providerChanged.emit()     # 供应商菜单的「未登录」标记跟着变
+
+    @Slot()
+    def subscriptionRefreshModels(self):
+        sub_kind = self._sub_kind(self._sub_target())
+
+        def work():
+            try:
+                from houdini_agent.subscription import manager
+                manager.ensure_running()
+                models = manager.refresh_models(sub_kind)
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：",
+                                                       "suffix": ", ".join(models)}, ensure_ascii=False))
+            except Exception as e:
+                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "刷新模型失败：",
+                                                       "suffix": str(e)}, ensure_ascii=False))
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot(str)
+    def openExternalUrl(self, url):
+        try:
+            import webbrowser
+            if url:
+                webbrowser.open(url)
+        except Exception:
+            pass
+
     def _check_update(self):
         self.toast.emit("正在检查更新…")
         def work():
@@ -2475,6 +2972,13 @@ class Controller(QObject):
         p = self._custom_provider(key)
         if p is not None:
             return [m.get("name") for m in (p.get("models") or []) if m.get("name")]
+        kind = self._sub_kind(key)
+        if kind:
+            try:
+                from houdini_agent.subscription import manager
+                return manager.cached_models(kind)
+            except Exception:
+                pass
         return MODEL_MAP.get(key, [])
 
     def _model_meta(self, key, model):
@@ -2489,13 +2993,23 @@ class Controller(QObject):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return self._to_int(meta.get("context"), 128000) or 128000
-        return CONTEXT_LIMITS.get(self._model_name, 128000)
+        kind = self._sub_kind()
+        if kind:
+            # 订阅渠道的窗口与同名模型的 API 直连不同（Codex 多为 272K），按订阅目录取
+            from houdini_agent.subscription import model_context
+            return model_context(kind, self._model_name)
+        # 静态表未命中时回落到 catalog 的推断（缓存 meta → 静态表 → 家族推断）
+        return CONTEXT_LIMITS.get(self._model_name) or catalog.context_limit(self._model_name, self._provider)
 
     def _active_model_vision(self):
         meta = self._model_meta(self._provider, self._model_name)
         if meta is not None:
             return bool(meta.get("vision"))
-        return self._model_name in VISION_MODELS
+        if self._sub_kind():
+            return True     # Codex / Claude 订阅目录里的模型都支持图片输入
+        if self._model_name in VISION_MODELS:
+            return True
+        return catalog.supports_vision(self._model_name, self._provider)
 
     def _apply_custom_provider(self, p):
         """把某自定义供应商的 url/key/协议应用到 client（被选中或运行前调用）。"""
@@ -2794,7 +3308,8 @@ class Controller(QObject):
                     continue
                 data = {"id": s["id"], "title": s["title"], "rows": s["rows"], "history": s["history"],
                         "provider": s.get("provider", self._provider),
-                        "model": s.get("model", self._model_name)}
+                        "model": s.get("model", self._model_name),
+                        "usage": s.get("usage") or {}}
                 (self._cache_dir / ("session_%s.json" % s["id"])).write_text(
                     json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
                 saved[s["id"]] = sig
@@ -2826,7 +3341,8 @@ class Controller(QObject):
                     loaded.append({"id": d.get("id", sid), "title": d.get("title", "新对话"),
                                    "rows": d.get("rows", []), "history": d.get("history", []),
                                    "provider": d.get("provider", entry.get("provider", self._provider)),
-                                   "model": d.get("model", entry.get("model", self._model_name))})
+                                   "model": d.get("model", entry.get("model", self._model_name)),
+                                   "usage": d.get("usage") if isinstance(d.get("usage"), dict) else {}})
             if loaded:
                 self._sessions = loaded
                 self._active = min(int(manifest.get("active", 0)), len(loaded) - 1)
@@ -2886,6 +3402,11 @@ class Controller(QObject):
             if self._running:
                 self.toast.emit("当前正在运行，先停止或等待完成后再发送")
             return False
+        if self._sub_kind() and self._session and not self._sub_logged_in():
+            self.toast.emit(self.tr("请先登录 %s" % PROVIDER_LABELS.get(self._provider, "")))
+            self._sub_dialog_provider = self._provider
+            self.openSubscriptionDialog.emit()
+            return False
         # name the session from its first user message
         if self._sessions and self._sessions[self._active]["title"] == "新对话":
             self._sessions[self._active]["title"] = text[:14]
@@ -2941,6 +3462,11 @@ class Controller(QObject):
         if self._is_custom_key(self._provider):
             self._apply_custom_provider(self._custom_provider(self._provider))
             prov_arg = "custom"
+        if self._sub_kind():
+            try:
+                self._session.client.set_reasoning(self._current_effort(), summary=self._show_thinking)
+            except Exception as e:
+                print("[controller] set reasoning failed:", e)
         ctx_limit = self._active_model_context()
         threading.Thread(
             target=self._worker,
@@ -3108,6 +3634,8 @@ class Controller(QObject):
                  "on_iteration_start": lambda i: self._sigStatus.emit("generating")},
                 context_limit=(context_limit if context_limit else CONTEXT_LIMITS.get(model, 128000)),
                 enable_thinking=True,
+                # 订阅渠道（ChatGPT / Claude）走原生推理，不再要求模型在正文里写 <think>
+                think_tags=(self._sub_kind(provider) is None),
                 supports_vision=supports_vision,
                 tools=tools, max_iter=max_iter,
                 images=images, rag=True, memory=self._memory_enabled,
@@ -3115,6 +3643,7 @@ class Controller(QObject):
             if isinstance(result, dict) and not result.get("ok", True):
                 err = str(result.get("error") or result.get("final_content") or "AI request failed")
                 self._log_external("Worker result error: " + err[:1000])
+                self._accumulate_usage(result)      # 出错前已完成的请求也照实计入
                 self._sigDone.emit(err)
                 return
             self._accumulate_usage(result)
@@ -3140,10 +3669,31 @@ class Controller(QObject):
         recs = result.get("call_records")
         if isinstance(recs, list):
             self._call_records.extend(recs)
-            s["requests"] += max(1, len(recs))
-        else:
+            s["requests"] += len(recs) if recs else (1 if u else 0)
+        elif u:
             s["requests"] += 1
+        self._update_ctx_anchor(recs)
         # note: _refresh_tokens() is invoked on the main thread in _ui_done
+
+    def _update_ctx_anchor(self, recs):
+        """用本轮最后一次 API 调用的真实用量锚定上下文占用：
+        prompt_tokens 是模型实际看到的全部输入（系统提示/工具定义/历史/本轮工具结果），
+        再加上它的回复（推理 token 不回传，扣掉），就是此刻 history 的真实 token 数。"""
+        last = None
+        for r in reversed(recs or []):
+            if isinstance(r, dict) and r.get("input_tokens"):
+                last = r
+                break
+        if not last or not self._session or not self._sessions:
+            return
+        out = int(last.get("output_tokens") or 0)
+        reason = int(last.get("reasoning_tokens") or 0)
+        if 0 < reason <= out:
+            out -= reason
+        anchor = {"tokens": int(last["input_tokens"]) + out,
+                  "hist_len": len(getattr(self._session, "history", []) or [])}
+        self._ctx_anchor = anchor
+        self._sessions[self._active].setdefault("usage", {})["ctx"] = anchor
 
     # ---- tool executor (called by AIClient on the worker thread) ----
     def _tool_executor(self, tool_name, **kwargs):
@@ -4927,8 +5477,27 @@ class Controller(QObject):
     def _estimate_ctx(self):
         if not self._session:
             return 0
+        actual = self._anchored_ctx()
+        if actual is not None:
+            return actual
+        return int(self._heuristic_ctx() * self._ctx_ratio)
+
+    def _calibrate_ctx(self):
+        """刚拿到真实用量时，用"真实/估算"比例校准估算（没有锚点的新会话、压缩后都靠它）。"""
+        a = self._ctx_anchor
+        if not a or a.get("calibrated") or not self._session:
+            return
+        a["calibrated"] = True
+        if len(getattr(self._session, "history", []) or []) != a.get("hist_len"):
+            return
+        h = self._heuristic_ctx()
+        if h > 0:
+            self._ctx_ratio = a["ratio"] = round(min(2.0, max(0.2, float(a["tokens"]) / h)), 3)
+
+    def _heuristic_ctx(self):
+        """按字符估算整份请求（系统提示 + 工具 + 历史 + 检索上下文 + 待发图片）的 token 数。"""
         try:
-            msgs = self._session.build_messages(self._show_thinking)
+            msgs = self._session.build_messages(self._show_thinking and not self._sub_kind())
         except Exception:
             msgs = copy.deepcopy(getattr(self._session, "history", []) or [])
         try:
@@ -4956,6 +5525,30 @@ class Controller(QObject):
             for t in tools:
                 est += len(json.dumps(t, ensure_ascii=False, default=str)) // 4 + 30
         return max(0, int(est))
+
+    def _anchored_ctx(self):
+        """有真实用量锚点时：锚点 + 之后新增消息/待发图片的估算；history 被裁剪或清空则返回 None。"""
+        a = self._ctx_anchor
+        if not a:
+            return None
+        hist = getattr(self._session, "history", None) or []
+        n = int(a.get("hist_len") or 0)
+        if n <= 0 or len(hist) < n:
+            return None
+        extra = list(hist[n:])
+        if self._pending_images:
+            extra.append({"role": "user", "content": [
+                {"type": "text", "text": ""},
+                *({"type": "image_url", "image_url": {"url": "data:%s;base64,<pending>" % mt}}
+                  for _b64, mt in self._pending_images),
+            ]})
+        add = 0
+        if extra:
+            try:
+                add = self._session.client._estimate_messages_tokens(extra, None)
+            except Exception:
+                add = sum(len(json.dumps(m, ensure_ascii=False, default=str)) // 3 + 4 for m in extra)
+        return max(0, int(a["tokens"]) + int(add))
 
     @staticmethod
     def _fmt_k(n):
@@ -5574,7 +6167,16 @@ class Controller(QObject):
         self._think_text += t
         self._ensure_think()
         self._think_block["text"] = self._think_text
+        self._think_block["html"] = self._think_html(self._think_text)
         self._flush()
+
+    @staticmethod
+    def _think_html(text):
+        """思考内容 → StyledText：转义 + **标题** 加粗（Codex 推理摘要用它分段）。"""
+        import re as _re
+        h = _esc(text.strip("\n"))
+        h = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", h)
+        return h.replace("\n", "<br>")
 
     @Slot(str)
     def _ui_content(self, t):
@@ -5618,6 +6220,7 @@ class Controller(QObject):
                 self._think_block["dur"] = ""
         # re-render the final answer as markdown + highlighted code blocks
         self._finalize_answer()
+        self._calibrate_ctx()
         self._refresh_tokens()
         if err:
             self._log_chat("ERROR", err)
@@ -5625,8 +6228,10 @@ class Controller(QObject):
             if self._pending_plan_confirm:
                 self._pending_plan_confirm = False
                 self.planConfirmFailed.emit(str(err))
+            hint = self._sub_error_hint(err)
             self._blocks.append({"kind": "prose",
-                                 "html": "<span style='color:#dd9999'>错误：" + _esc(err) + "</span>"})
+                                 "html": "<span style='color:#dd9999'>错误：" + _esc(err) + "</span>"
+                                         + ("<br><span style='color:#c9b27c'>" + _esc(hint) + "</span>" if hint else "")})
         elif self._plan_revision_mode:
             self._plan_revision_mode = False
             self.toast.emit("未收到修订后的计划，请换一种修改要求再试")
@@ -5646,6 +6251,18 @@ class Controller(QObject):
         # 本轮结束后，弹出排队中的后台概念图画廊（供用户挑选）
         if self._pending_bg_galleries:
             QTimer.singleShot(0, self._drain_pending_bg_galleries)
+
+    def _sub_error_hint(self, err):
+        """订阅渠道的 CPA 报错翻译成一句人话。"""
+        if not self._sub_kind():
+            return ""
+        e = str(err)
+        if "auth_unavailable" in e or "no auth available" in e:
+            return self.tr("订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；"
+                           "如果一直这样，退出登录后重新登录。")
+        if "empty_stream" in e:
+            return self.tr("上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。")
+        return ""
 
     # ---- markdown + code rendering of the final answer ----
     def _finalize_answer(self):
@@ -5701,6 +6318,9 @@ class Controller(QObject):
     @classmethod
     def _md_html(cls, text):
         import re as _re
+        # 数学公式先抽成占位符（避免 _ * 被当成 Markdown），最后换回渲染好的富文本
+        from houdini_agent.ui_qml.mathrender import extract_math, restore_math
+        text, maths = extract_math(text)
         lines = text.split("\n")
         out = []
         i, n = 0, len(lines)
@@ -5742,7 +6362,7 @@ class Controller(QObject):
             else:
                 out.append(cls._inline(line))
             i += 1
-        return "<br>".join(out)
+        return restore_math("<br>".join(out), maths)
 
     @staticmethod
     def _highlight(code, lang):
