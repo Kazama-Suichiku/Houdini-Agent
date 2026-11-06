@@ -39,9 +39,11 @@ AI 以自主 **Agent 循环** 运行：接收用户请求 → 规划步骤 → �
 | **DeepSeek** | `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp` | V4：显式 thinking 参数 + reasoning_effort；1M 上下文；`deepseek-chat` / `deepseek-reasoner` 已于 2026/07/24 下线 |
 | **智谱 GLM** | `glm-4.7` | 国内访问稳定，原生推理与工具调用 |
 | **OpenAI** | `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` | GPT-5.6 系列（1M 上下文），完整 Function Calling 与 Vision 支持 |
-| **拼好饭**（中转） | `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-sonnet-5`、`gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-astra`、`kimi-k3`、`grok-4.7`、`glm-5.3`、`glm-5.3-flash`、`deepseek-v4-pro`、`deepseek-v4.1-flash` | 通过中转接口使用 Claude、GPT、Kimi、Grok、GLM、DeepSeek（清单与中转站实时 `/v1/models` 一致） |
+| **拼好饭**（中转） | `claude-opus-5-5`、`claude-sonnet-5-5`、`claude-sonnet-5`、`gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-astra`、`grok-4.7`、`glm-5.3`、`glm-5.3-flash`、`glm-5.3-flashx`、`kiro-auto` | 通过中转接口使用 Claude、GPT、Grok、GLM（清单从站点实时 `/v1/models` 自动发现） |
 | **OpenRouter** | `claude-opus-5.5`、`claude-sonnet-5.5`、`claude-haiku-5.5`、`claude-fable-5.1`、`claude-opus-5`、`gpt-6.1-sol`、`gpt-6-astra/luna`、`gpt-5.6-sol`、`gemini-4-argon`、`gemini-3.8-flash`、`deepseek-v4.1-flash`、`deepseek-v4-pro`、`glm-5.3`、`grok-4.7`、`kimi-k3`、`minimax-m3` 共 17 个 | 通过单一 API Key 使用所有主流提供商的模型 |
 | **自定义** | 用户可配置 | 任何 OpenAI 兼容端点（LM Studio、vLLM 等）；可配置 URL、API Key、模型名、上下文限制、Vision 和 FC 支持 |
+
+> **模型目录自动刷新** —— 拼好饭、OpenRouter、OpenAI、DeepSeek、GLM 的模型列表会在运行时从各自的 `/v1/models` 拉取（缓存 6 小时，并自动过滤掉图片、嵌入等非对话模型）。启动时若缓存过期会后台静默刷新；也可以在「供应商管理」面板点「刷新模型」手动刷新。网络或 API Key 不可用时，沿用内置静态清单。
 
 ### 图片/多模态输入
 

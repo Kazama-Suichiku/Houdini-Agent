@@ -6,7 +6,16 @@ Header UI 构建 — 顶部设置栏（模型选择、Provider、Web/Think 开�
 样式由全局 style_template.qss 通过 objectName 选择器控制。
 """
 
+import json
+
 from houdini_agent.qt_compat import QtWidgets, QtCore
+from houdini_agent.utils import model_catalog as catalog
+
+try:
+    from houdini_agent.qt_compat import invoke_on_main
+except ImportError:  # 极老版本 qt_compat 无此助手时跳过后台刷新
+    invoke_on_main = None
+
 from .i18n import tr, get_language, set_language, language_changed
 
 
@@ -52,45 +61,13 @@ class HeaderMixin:
         # 模型
         self.model_combo = QtWidgets.QComboBox()
         self.model_combo.setObjectName("modelCombo")
-        self._model_map = {
-            'deepseek': ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
-            'glm': ['glm-4.7'],
-            'openai': ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
-            'duojie': [
-                'claude-opus-5-5',
-                'claude-sonnet-5-5',
-                'claude-sonnet-5',
-                'gpt-6.1-sol',
-                'gpt-6-sol',
-                'gpt-6-astra',
-                'kimi-k3',
-                'grok-4.7',
-                'glm-5.3',
-                'glm-5.3-flash',
-                'deepseek-v4-pro',
-                'deepseek-v4.1-flash',
-            ],
-            'openrouter': [
-                'anthropic/claude-opus-5.5',
-                'anthropic/claude-sonnet-5.5',
-                'anthropic/claude-haiku-5.5',
-                'anthropic/claude-fable-5.1',
-                'anthropic/claude-opus-5',
-                'openai/gpt-6.1-sol',
-                'openai/gpt-6-astra',
-                'openai/gpt-6-luna',
-                'openai/gpt-5.6-sol',
-                'google/gemini-4-argon',
-                'google/gemini-3.8-flash',
-                'deepseek/deepseek-v4.1-flash',
-                'deepseek/deepseek-v4-pro',
-                'z-ai/glm-5.3',
-                'x-ai/grok-4.7',
-                'moonshotai/kimi-k3',
-                'minimax/minimax-m3',
-            ],
-            'custom': [],  # 由用户通过配置对话框动态填充
-        }
+        # 模型目录：静态兜底表 + 本地磁盘缓存合并（无网络请求）
+        self._model_map = {k: list(v) for k, v in catalog.STATIC_MODELS.items()}
+        for _p in catalog.PROVIDER_SOURCES:
+            _ids = catalog.provider_model_ids(_p)      # 本地缓存，无网络
+            if _ids:
+                self._model_map[_p] = list(_ids)
+        # custom 由用户配置填充（见 _load_custom_provider_config / 配置对话框）
         # Custom provider 的运行时配置（从持久化配置加载）
         self._custom_provider_config = {
             'api_url': '',
@@ -102,91 +79,13 @@ class HeaderMixin:
             'anthropic_protocol': False,  # True → Anthropic Messages 格式；False → OpenAI Chat Completions 格式
         }
         self._load_custom_provider_config()
-        self._model_context_limits = {
-            # DeepSeek 直连
-            'deepseek-v4-flash': 1048576, 'deepseek-v4-pro': 1048576,
-            'deepseek-v4-flash-vision-exp': 1048576,
-            # GLM 直连
-            'glm-4.7': 200000,
-            # OpenAI 直连
-            'gpt-5.6-sol': 1000000, 'gpt-5.6-terra': 1000000,
-            'gpt-5.6-luna': 1000000, 'gpt-5.5': 1000000,
-            # Duojie 模型（Claude 走 200K 保守值）
-            'claude-opus-5-5': 200000, 'claude-sonnet-5-5': 200000, 'claude-sonnet-5': 200000,
-            'gpt-6.1-sol': 1000000, 'gpt-6-sol': 1000000, 'gpt-6-astra': 1000000,
-            'kimi-k3': 1048576, 'grok-4.7': 500000,
-            'glm-5.3': 1048576, 'glm-5.3-flash': 1048576,
-            'deepseek-v4.1-flash': 1048576,
-            # OpenRouter 模型
-            'anthropic/claude-opus-5.5': 1000000,
-            'anthropic/claude-sonnet-5.5': 1000000,
-            'anthropic/claude-haiku-5.5': 1000000,
-            'anthropic/claude-fable-5.1': 1000000,
-            'anthropic/claude-opus-5': 1000000,
-            'openai/gpt-6.1-sol': 1050000,
-            'openai/gpt-6-astra': 1050000,
-            'openai/gpt-6-luna': 1050000,
-            'openai/gpt-5.6-sol': 1050000,
-            'google/gemini-4-argon': 1048576,
-            'google/gemini-3.8-flash': 1048576,
-            'deepseek/deepseek-v4.1-flash': 1048576,
-            'deepseek/deepseek-v4-pro': 1048576,
-            'z-ai/glm-5.3': 1048576,
-            'x-ai/grok-4.7': 500000,
-            'moonshotai/kimi-k3': 1048576,
-            'minimax/minimax-m3': 1048576,
-        }
+        self._model_context_limits = dict(catalog.STATIC_CONTEXT)
         # 模型特性配置
-        _pc_vis = {'supports_prompt_caching': True, 'supports_vision': True}
-        _pc_txt = {'supports_prompt_caching': True, 'supports_vision': False}
-        self._model_features = {
-            # DeepSeek
-            'deepseek-v4-flash':          dict(_pc_txt),
-            'deepseek-v4-pro':            dict(_pc_txt),
-            'deepseek-v4-flash-vision-exp': dict(_pc_vis),
-            # GLM
-            'glm-4.7':                    dict(_pc_txt),
-            # OpenAI
-            'gpt-5.6-sol':                dict(_pc_vis),
-            'gpt-5.6-terra':              dict(_pc_vis),
-            'gpt-5.6-luna':               dict(_pc_vis),
-            'gpt-5.5':                    dict(_pc_vis),
-            # Duojie - Claude
-            'claude-opus-5-5':            dict(_pc_vis),
-            'claude-sonnet-5-5':          dict(_pc_vis),
-            'claude-sonnet-5':            dict(_pc_vis),
-            # Duojie - GPT
-            'gpt-6.1-sol':                dict(_pc_vis),
-            'gpt-6-sol':                  dict(_pc_vis),
-            'gpt-6-astra':                dict(_pc_vis),
-            # Duojie - Kimi / Grok
-            'kimi-k3':                    dict(_pc_vis),
-            'grok-4.7':                   dict(_pc_vis),
-            # Duojie - GLM
-            'glm-5.3':                    dict(_pc_txt),
-            'glm-5.3-flash':              dict(_pc_vis),
-            # Duojie - DeepSeek
-            'deepseek-v4.1-flash':        dict(_pc_vis),
-            # OpenRouter 模型
-            'anthropic/claude-opus-5.5':           dict(_pc_vis),
-            'anthropic/claude-sonnet-5.5':         dict(_pc_vis),
-            'anthropic/claude-haiku-5.5':          dict(_pc_vis),
-            'anthropic/claude-fable-5.1':          dict(_pc_vis),
-            'anthropic/claude-opus-5':             dict(_pc_vis),
-            'openai/gpt-6.1-sol':                  dict(_pc_vis),
-            'openai/gpt-6-astra':                  dict(_pc_vis),
-            'openai/gpt-6-luna':                   dict(_pc_vis),
-            'openai/gpt-5.6-sol':                  dict(_pc_vis),
-            'google/gemini-4-argon':               dict(_pc_vis),
-            'google/gemini-3.8-flash':             dict(_pc_vis),
-            'deepseek/deepseek-v4.1-flash':        dict(_pc_vis),
-            'deepseek/deepseek-v4-pro':            dict(_pc_txt),
-            'z-ai/glm-5.3':                        dict(_pc_txt),
-            'x-ai/grok-4.7':                       dict(_pc_vis),
-            'moonshotai/kimi-k3':                  dict(_pc_vis),
-            'minimax/minimax-m3':                  dict(_pc_vis),
-        }
+        self._model_features = {k: dict(v) for k, v in catalog.STATIC_FEATURES.items()}
         self._refresh_models('deepseek')
+        # 启动后后台刷新一次过期的模型目录（不阻塞 UI 构造）
+        if invoke_on_main is not None:
+            QtCore.QTimer.singleShot(4000, self._refresh_catalog_async)
         self.model_combo.setMinimumWidth(100)
         self.model_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.model_combo.setEditable(False)  # 默认不可编辑，Custom 时切换为可编辑
@@ -484,6 +383,70 @@ class HeaderMixin:
             if self._current_provider() == 'custom':
                 self._refresh_models('custom')
                 self._update_key_status()
+
+    # ============================================================
+    # 模型目录后台刷新（catalog）
+    # ============================================================
+
+    def _refresh_catalog_async(self):
+        """缓存过期时后台拉取各 provider 的 /v1/models（失败静默）。"""
+        try:
+            stale = [p for p in catalog.PROVIDER_SOURCES if catalog.is_stale(p)]
+        except Exception:
+            return
+        if not stale:
+            return
+
+        def work():
+            try:
+                result = catalog.refresh_all(stale)
+            except Exception:
+                return
+            # invoke_on_main 只支持可 QMetaType 编组的参数（str 可、dict 不可），
+            # 故把结果 JSON 序列化后按名调用主线程槽
+            try:
+                invoke_on_main(self, "_apply_catalog_json", json.dumps(result))
+            except Exception:
+                pass  # 窗口已销毁等竞态 — 静默放弃
+
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
+    @QtCore.Slot(str)
+    def _apply_catalog_json(self, payload: str):
+        """工作线程 → 主线程入口：反序列化后应用刷新结果。"""
+        try:
+            result = json.loads(payload)
+        except ValueError:
+            return
+        if isinstance(result, dict):
+            self._apply_catalog_refresh(result)
+
+    def _apply_catalog_refresh(self, result):
+        """主线程：把刷新结果写回模型表，并重建当前 provider 的下拉。"""
+        try:
+            changed = False
+            for provider, ids in result.items():
+                if not ids:
+                    continue
+                self._model_map[provider] = list(ids)
+                changed = True
+                for m in ids:
+                    self._model_context_limits.setdefault(m, catalog.context_limit(m, provider))
+                    self._model_features[m] = catalog.model_features(m, provider)
+            if not changed:
+                return
+            cur_provider = self.provider_combo.currentData()
+            if cur_provider in result and result.get(cur_provider):
+                cur = self.model_combo.currentText()
+                self._refresh_models(cur_provider)
+                idx = self.model_combo.findText(cur)
+                if idx >= 0:
+                    self.model_combo.setCurrentIndex(idx)
+                # 当前模型已被下架（findText < 0）：QComboBox 重填后回到第 0 项，
+                # 静默回退，不弹窗不提示
+        except Exception:
+            pass  # 静默失败 — 目录刷新绝不打扰用户
 
 
 class _CustomProviderDialog(QtWidgets.QDialog):

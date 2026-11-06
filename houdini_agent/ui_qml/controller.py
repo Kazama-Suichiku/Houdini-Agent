@@ -37,78 +37,23 @@ except ImportError:  # Houdini <= 20.5 (Qt5)
     )
     import random
 
+from houdini_agent.utils import model_catalog as catalog
+
 
 ROLE_TYPE = Qt.UserRole + 1
 ROLE_PAYLOAD = Qt.UserRole + 2
 
 # Real provider keys + model ids (kept in sync with ui/header.py _model_map)
-# 2026-09 对齐：Duojie 以 /v1/models 实时清单为准；OpenRouter/OpenAI/DeepSeek 以官方目录为准
-MODEL_MAP = {
-    "duojie": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
-               "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
-               "kimi-k3", "grok-4.7", "glm-5.3", "glm-5.3-flash",
-               "deepseek-v4-pro", "deepseek-v4.1-flash"],
-    "openrouter": ["anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
-                   "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
-                   "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
-                   "google/gemini-4-argon", "google/gemini-3.8-flash",
-                   "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro",
-                   "z-ai/glm-5.3", "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3"],
-    "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
-    # ChatGPT 订阅（本机 CPA + Codex OAuth）；实际列表登录后从 CPA 拉取，见 _provider_model_names
-    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
-              "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
-    # Claude 订阅（本机 CPA + Claude Code OAuth）；Anthropic 不允许第三方使用订阅，登录框里会提示风险
-    "claude_sub": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
-                   "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"],
-    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
-    "glm": ["glm-4.7"],
-    "custom": [],
-}
+# 静态兜底取自 model_catalog；三份目录保持可变 —— refreshModels() 后台拉取
+# 各 provider 的 /v1/models 后就地更新（custom / codex / claude_sub 不参与拉取）
+MODEL_MAP = {k: list(v) for k, v in catalog.STATIC_MODELS.items()}
 PROVIDER_LABELS = {
     "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
     "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
-CONTEXT_LIMITS = {
-    # Duojie（中转；Claude 走 200K 保守值）
-    "claude-opus-5-5": 200000, "claude-sonnet-5-5": 200000, "claude-sonnet-5": 200000,
-    "gpt-6.1-sol": 1000000, "gpt-6-sol": 1000000, "gpt-6-astra": 1000000,
-    "kimi-k3": 1048576, "grok-4.7": 500000,
-    "glm-5.3": 1048576, "glm-5.3-flash": 1048576, "deepseek-v4.1-flash": 1048576,
-    # OpenAI 直连
-    "gpt-5.6-sol": 1000000, "gpt-5.6-terra": 1000000, "gpt-5.6-luna": 1000000, "gpt-5.5": 1000000,
-    # OpenRouter
-    "anthropic/claude-opus-5.5": 1000000, "anthropic/claude-sonnet-5.5": 1000000,
-    "anthropic/claude-haiku-5.5": 1000000, "anthropic/claude-fable-5.1": 1000000,
-    "anthropic/claude-opus-5": 1000000, "openai/gpt-6.1-sol": 1050000,
-    "openai/gpt-6-astra": 1050000, "openai/gpt-6-luna": 1050000,
-    "openai/gpt-5.6-sol": 1050000, "google/gemini-4-argon": 1048576,
-    "google/gemini-3.8-flash": 1048576, "deepseek/deepseek-v4.1-flash": 1048576,
-    "deepseek/deepseek-v4-pro": 1048576, "z-ai/glm-5.3": 1048576,
-    "x-ai/grok-4.7": 500000, "moonshotai/kimi-k3": 1048576,
-    "minimax/minimax-m3": 1048576,
-    # DeepSeek 直连（deepseek-v4-pro 也在 Duojie 上）
-    "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576,
-    # GLM 直连
-    "glm-4.7": 200000,
-}
-VISION_MODELS = {
-    # Duojie
-    "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5",
-    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra",
-    "kimi-k3", "grok-4.7", "glm-5.3-flash", "deepseek-v4.1-flash",
-    # OpenAI 直连
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
-    # OpenRouter（deepseek-v4-pro / glm-5.3 只收文本）
-    "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
-    "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
-    "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
-    "google/gemini-4-argon", "google/gemini-3.8-flash", "deepseek/deepseek-v4.1-flash",
-    "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3",
-    # DeepSeek 直连
-    "deepseek-v4-flash-vision-exp",
-}
+CONTEXT_LIMITS = dict(catalog.STATIC_CONTEXT)
+VISION_MODELS = set(catalog.STATIC_VISION)
 # tools safe to run off the Qt main thread (no hou.* access)
 BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
            "list_skills", "search_memory", "execute_shell"}
@@ -253,6 +198,9 @@ UI_EN = {
     "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
     "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
     "刷新模型": "Refresh models", "复制": "Copy",
+    "模型列表已更新": "Model list updated",
+    "模型列表刷新失败，已沿用本地列表": "Failed to refresh models; using the local list",
+    "刷新中…": "Refreshing…", "模型更新于": "Models updated at", "尚未自动刷新": "Not refreshed yet",
     "推理": "Effort", "低": "Low", "中": "Medium", "高": "High", "很高": "Very high",
     "最高": "Max", "极限": "Ultra", "默认": "default", "未登录": "signed out",
     "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
@@ -610,6 +558,7 @@ class Controller(QObject):
     _sigInfo = Signal(str, str)           # title, body -> QML info dialog
     _sigUpdateDialog = Signal(str, str)   # worker -> main: 检查更新发现新版本（带「立即更新」按钮的对话框）
     _sigSub = Signal(str, str)            # worker -> main: ChatGPT 订阅状态事件 (kind, json)
+    _sigModels = Signal(str)              # worker -> main: 模型目录刷新结果 (json -> _on_models_refreshed)
     tokensChanged = Signal()
     pendingOpsChanged = Signal()
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
@@ -634,6 +583,8 @@ class Controller(QObject):
     openPluginsDialog = Signal()
     openMemoryDialog = Signal()
     openSettingsDialog = Signal()         # request the unified settings window
+    modelsChanged = Signal()              # 模型目录已更新（MODEL_MAP 被后台刷新改写）
+    modelsRefreshingChanged = Signal()    # 刷新开始/结束
 
     # worker -> main thread (queued)
     _sigThink = Signal(str)
@@ -723,12 +674,26 @@ class Controller(QObject):
         self._update_state = ""        # "" | available | downloading | ready | failed
         self._update_progress = 0
         self._update_installer_path = ""
+        # 模型目录刷新（refreshModels）：_models_updated_at 从磁盘缓存推断（"HH:MM" 或 ""）
+        self._models_refreshing = False
+        self._models_refresh_quiet = False
+        self._models_updated_at = self._cached_models_updated_at()
         self._node_name_map = {}     # bare name -> full path (for resolve)
         try:
             from houdini_agent.ui.i18n import get_language
             self._lang = get_language()
         except Exception:
             self._lang = "zh"
+
+        # 模型目录：同步、无网络地从磁盘缓存回填（merge 策略下静态表 + live 缓存合并；
+        # 无缓存/坏缓存时 catalog 返回静态表，此处回填等价于静态表本身）
+        try:
+            for _p in catalog.PROVIDER_SOURCES:
+                _ids = catalog.provider_model_ids(_p)
+                if _ids:
+                    MODEL_MAP[_p] = list(_ids)
+        except Exception:
+            pass
 
         self._load_custom_providers()
         self._load_prefs()
@@ -817,6 +782,7 @@ class Controller(QObject):
         self._sigInfo.connect(self._info)
         self._sigUpdateDialog.connect(self._show_update_dialog)
         self._sigSub.connect(self._on_sub_event)
+        self._sigModels.connect(self._on_models_refreshed)
         self.providerChanged.connect(self.effortChanged)
         self.modelChanged.connect(self.effortChanged)
         self.langChanged.connect(self.effortChanged)
@@ -855,6 +821,10 @@ class Controller(QObject):
         self._ai_row = None
         self._bm = None
         self._reset_run_state()
+
+        # 启动后若模型目录缓存过期（>6h 或无缓存），在事件循环里静默后台刷新一次；
+        # 不在构造函数里做网络请求，避免阻塞启动
+        QTimer.singleShot(4000, self._auto_refresh_models_if_stale)
 
     @staticmethod
     def _session_cache_dir():
@@ -1161,6 +1131,103 @@ class Controller(QObject):
     @Slot(str)
     def showToast(self, msg):
         self.toast.emit(str(msg or ""))
+
+    # ---- 模型目录动态刷新（后台线程 + _sigModels 回主线程） ----
+    def _get_models_refreshing(self): return self._models_refreshing
+    modelsRefreshing = Property(bool, _get_models_refreshing, notify=modelsRefreshingChanged)
+
+    def _get_models_updated_at(self): return self._models_updated_at
+    modelsUpdatedAt = Property(str, _get_models_updated_at, notify=modelsChanged)
+
+    def _cached_models_updated_at(self):
+        """从磁盘缓存推断目录更新时间：取各 provider 最近一次 fetched_at 格式化为 "HH:MM"。"""
+        try:
+            cache = catalog.load_cache()
+            latest = None
+            for p in catalog.PROVIDER_SOURCES:
+                fetched = cache.get("providers", {}).get(p, {}).get("fetched_at")
+                if isinstance(fetched, (int, float)) and not isinstance(fetched, bool):
+                    ts = float(fetched)
+                    latest = ts if latest is None else max(latest, ts)
+            if latest is not None:
+                return time.strftime("%H:%M", time.localtime(latest))
+        except Exception:
+            pass
+        return ""
+
+    @Slot()
+    def refreshModels(self):
+        """后台拉取各 provider 的 /v1/models 并更新目录；无参、非阻塞、可重入安全。"""
+        self._start_models_refresh(quiet=False)
+
+    def _start_models_refresh(self, quiet):
+        """启动后台刷新。quiet=True 时（启动自动刷新）不弹 toast。"""
+        if self._models_refreshing:
+            return
+        self._models_refresh_quiet = bool(quiet)
+        self._models_refreshing = True
+        self.modelsRefreshingChanged.emit()
+
+        def work():
+            result = {}
+            try:
+                result = catalog.refresh_all(timeout=10)
+            except Exception:
+                result = {}
+            try:
+                self._sigModels.emit(json.dumps(result, ensure_ascii=False))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_models_refreshed(self, payload_json):
+        """主线程：应用后台刷新结果，就地更新 MODEL_MAP / CONTEXT_LIMITS / VISION_MODELS。"""
+        try:
+            result = json.loads(payload_json) if payload_json else {}
+        except Exception:
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
+        ok_any = False
+        try:
+            for p, ids in result.items():
+                if not ids:
+                    continue
+                ok_any = True
+                MODEL_MAP[p] = list(ids)
+                for m in ids:
+                    CONTEXT_LIMITS.setdefault(m, catalog.context_limit(m, p))
+                    if catalog.supports_vision(m, p):
+                        VISION_MODELS.add(m)
+                    else:
+                        VISION_MODELS.discard(m)
+            # 保留当前选择：当前模型被下架时把它 append 到列表末尾，不静默切换用户选择
+            if (self._provider in catalog.PROVIDER_SOURCES
+                    and self._model_name
+                    and self._model_name not in MODEL_MAP.get(self._provider, [])):
+                MODEL_MAP.setdefault(self._provider, []).append(self._model_name)
+            if ok_any:
+                self._models_updated_at = time.strftime("%H:%M")
+        except Exception:
+            pass
+        finally:
+            self._models_refreshing = False
+            self.modelsRefreshingChanged.emit()
+            self.modelsChanged.emit()
+        if self._models_refresh_quiet:
+            return
+        if ok_any:
+            self.showToast(self.tr("模型列表已更新"))
+        else:
+            self.showToast(self.tr("模型列表刷新失败，已沿用本地列表"))
+
+    def _auto_refresh_models_if_stale(self):
+        try:
+            if any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES):
+                self._start_models_refresh(quiet=True)
+        except Exception:
+            pass
 
     def _get_scene_path(self): return self._scene_path
     scenePath = Property(str, _get_scene_path, notify=sceneChanged)
@@ -2931,7 +2998,8 @@ class Controller(QObject):
             # 订阅渠道的窗口与同名模型的 API 直连不同（Codex 多为 272K），按订阅目录取
             from houdini_agent.subscription import model_context
             return model_context(kind, self._model_name)
-        return CONTEXT_LIMITS.get(self._model_name, 128000)
+        # 静态表未命中时回落到 catalog 的推断（缓存 meta → 静态表 → 家族推断）
+        return CONTEXT_LIMITS.get(self._model_name) or catalog.context_limit(self._model_name, self._provider)
 
     def _active_model_vision(self):
         meta = self._model_meta(self._provider, self._model_name)
@@ -2939,7 +3007,9 @@ class Controller(QObject):
             return bool(meta.get("vision"))
         if self._sub_kind():
             return True     # Codex / Claude 订阅目录里的模型都支持图片输入
-        return self._model_name in VISION_MODELS
+        if self._model_name in VISION_MODELS:
+            return True
+        return catalog.supports_vision(self._model_name, self._provider)
 
     def _apply_custom_provider(self, p):
         """把某自定义供应商的 url/key/协议应用到 client（被选中或运行前调用）。"""
