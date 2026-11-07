@@ -487,13 +487,13 @@ def _setup_fastmcp_tools():
 				created_connections.append({"from": from_node.path(), "to": to_node.path(), "input_index": input_index})
 			except Exception as conn_error:
 				errors.append(f"建立连接失败: {str(conn_error)}")
-	try:
-		parent.layoutChildren()
-	except Exception:
-		pass
-	# 注意：不再自动猜测连接关系。
-	# 原因：自动连接（如按创建顺序串联、猜测 copytopoints 输入）
-	# 会导致不可预测的结果。连接关系应由调用方通过 connections 配置显式指定。
+		try:
+			parent.layoutChildren()
+		except Exception:
+			pass
+		# 注意：不再自动猜测连接关系。
+		# 原因：自动连接（如按创建顺序串联、猜测 copytopoints 输入）
+		# 会导致不可预测的结果。连接关系应由调用方通过 connections 配置显式指定。
 		success_message = f"成功创建 {len(created_nodes)} 个节点，建立 {len(created_connections)} 个连接"
 		if errors:
 			success_message += f"，但有 {len(errors)} 个错误"

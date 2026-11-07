@@ -3797,7 +3797,6 @@ class Controller(QObject):
             except Exception as e:
                 return {"success": False, "error": str(e)}
         # Houdini tools → main thread (blocking)
-        import json
         with self._tool_lock:
             while not self._tool_q.empty():
                 try:
