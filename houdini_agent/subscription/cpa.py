@@ -54,6 +54,14 @@ _GITHUB_URL = "https://github.com/" + _REPO + "/releases/download/v{ver}/{asset}
 # Codex 订阅下可见的模型（CPA 内置 Codex 目录，visibility=list），按推荐顺序
 CODEX_MODELS = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
                 "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
+# Codex 订阅下内置生图模型兜底表（实际列表会随 CPA /v1/models 自动同步更新，包括未来新版本）
+CODEX_IMAGE_MODELS = [
+    "gpt-image-2.5",
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-flare",
+    "gpt-image-2",
+    "gpt-image-1.5",
+]
 # Codex 渠道的上下文窗口与 API 直连不同（同名模型直连多为 1M），单独维护
 CODEX_CONTEXT = {"gpt-6.1-sol": 500000}
 CODEX_DEFAULT_CONTEXT = 272000
@@ -114,17 +122,70 @@ def default_effort(kind, model) -> str:
 
 
 _HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review"}
-
-
-def _is_chat_model(model_id) -> bool:
-    """CPA 的 /v1/models 还会列出 gpt-image-* 等图片生成模型，不能用来对话。"""
-    m = str(model_id or "")
-    return bool(m) and m not in _HIDDEN_MODELS and not m.startswith("gpt-image")
+_IMAGE_TOKEN_RE = re.compile(r"(?:^|[-_/])image(?:$|[-_/.0-9])", re.I)
+_VERSION_RE = re.compile(r"(\d+(?:\.\d+)*)")
+_IMAGE_VARIANT_ORDER = {"": 0, "sunburst": 1, "flare": 2, "pro": 3, "mini": 4}
+_OPENAI_IMAGE_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
 
 
 def _model_kind(model_id) -> str:
     """CPA 把所有已登录渠道的模型合在一个 /v1/models 里，按名字分回各订阅。"""
     return "claude" if str(model_id or "").startswith("claude-") else "codex"
+
+
+def is_image_model(model_id) -> bool:
+    """判断 CPA /v1/models 里的模型 ID 是否是生图模型（自动兼容未来 gpt-image-* 等新系列）。"""
+    m = str(model_id or "").strip()
+    if not m or m in _HIDDEN_MODELS or _model_kind(m) != "codex":
+        return False
+    low = m.lower()
+    return (low.startswith(("gpt-image", "chatgpt-image", "dall-e"))
+            or bool(_IMAGE_TOKEN_RE.search(low)))
+
+
+def _is_chat_model(model_id) -> bool:
+    """CPA 的 /v1/models 还会列出 gpt-image-* 等图片生成模型，不能用来对话。"""
+    m = str(model_id or "").strip()
+    return bool(m) and m not in _HIDDEN_MODELS and not is_image_model(m)
+
+
+def _image_model_sort_key(model_id: str):
+    """按版本号降序排列生图模型，同版本基础款排在变体前（如 2.6 > 2.5 > 2.5-sunburst > 2 > 1.5）。"""
+    low = str(model_id or "").strip().lower()
+    m = _VERSION_RE.search(low)
+    if m:
+        ver = tuple(int(p) for p in m.group(1).split("."))
+        tail = low[m.end():].lstrip("-_.")
+    else:
+        ver = (0,)
+        tail = low
+    # 负版本号实现降序；补齐长度避免 (2, 5) 与 (2,) 比较歧义
+    padded = tuple(-x for x in (ver + (0, 0, 0))[:4])
+    is_gpt_image = 0 if low.startswith("gpt-image") else 1
+    var_rank = _IMAGE_VARIANT_ORDER.get(tail, 10)
+    return (is_gpt_image, padded, var_rank, tail, low)
+
+
+def _sort_image_models(ids) -> list:
+    uniq = list(dict.fromkeys(str(i).strip() for i in (ids or []) if str(i or "").strip()))
+    return sorted(uniq, key=_image_model_sort_key)
+
+
+def aspect_ratio_to_size(aspect_ratio) -> str:
+    """把画幅比例（如 1:1 / 16:9 / 9:16）映射到 OpenAI / Codex /v1/images/* 支持的 size。"""
+    s = str(aspect_ratio or "").strip().lower()
+    if not s:
+        return "1024x1024"
+    if s in _OPENAI_IMAGE_SIZES:
+        return s
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*[:/x]\s*(\d+(?:\.\d+)?)$", s)
+    if m:
+        w, h = float(m.group(1)), float(m.group(2))
+        if w > h:
+            return "1536x1024"
+        if h > w:
+            return "1024x1536"
+    return "1024x1024"
 
 _DEFAULT_PORT = 18317          # 避开 CPA 默认 8317，免得和用户自己跑的 CPA 冲突
 _LOGIN_TIMEOUT = 15 * 60
@@ -270,6 +331,12 @@ class CPAManager:
 
     def chat_url(self) -> str:
         return self.base_url() + "/chat/completions"
+
+    def images_generations_url(self) -> str:
+        return self.base_url() + "/images/generations"
+
+    def images_edits_url(self) -> str:
+        return self.base_url() + "/images/edits"
 
     # ---------------------------------------------------------------- install
     def installed(self) -> bool:
@@ -492,21 +559,131 @@ class CPAManager:
                   if _is_chat_model(m) and _model_kind(m) == kind]
         return models or default_models(kind)
 
+    def cached_image_models(self, kind="codex") -> list:
+        """已缓存的订阅生图模型（Codex 渠道自动从 /v1/models 同步；无缓存时回退兜底表）。"""
+        if kind != "codex":
+            return []
+        st = self._load_state()
+        models = [m for m in (st.get("image_models") or [])
+                  if is_image_model(m) and _model_kind(m) == "codex"]
+        return _sort_image_models(models) if models else list(CODEX_IMAGE_MODELS)
+
+    def image_models_stale(self, max_age=12 * 3600) -> bool:
+        """生图模型缓存尚未同步或已超过 max_age 秒。"""
+        st = self._load_state()
+        if not st.get("image_models"):
+            return True
+        ts = st.get("image_models_updated_at")
+        if not isinstance(ts, (int, float)):
+            return True
+        return (time.time() - float(ts)) >= max_age
+
     def refresh_models(self, kind="codex") -> list:
-        """从本机服务拉取模型（需已登录且服务在跑），只取该订阅的模型，按推荐顺序排列并缓存。"""
+        """从本机服务拉取模型（需已登录且服务在跑），同时更新对话模型与 Codex 生图模型缓存。"""
         r = _requests().get(self.base_url() + "/models", timeout=5,
                             headers={"Authorization": "Bearer " + self.client_key()},
                             proxies={"http": None, "https": None})
         r.raise_for_status()
-        ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
-        ids = [i for i in ids if _is_chat_model(i) and _model_kind(i) == kind]
+        raw_ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+        ids = [i for i in raw_ids if _is_chat_model(i) and _model_kind(i) == kind]
         prefer = default_models(kind)
         ordered = [m for m in prefer if m in ids] + sorted(i for i in ids if i not in prefer)
+        st = self._load_state()
+        changed = False
         if ordered:
-            st = self._load_state()
             st[self._models_key(kind)] = ordered
+            changed = True
+        if kind == "codex":
+            img_ids = _sort_image_models(i for i in raw_ids if is_image_model(i) and _model_kind(i) == "codex")
+            if img_ids:
+                st["image_models"] = img_ids
+                st["image_models_updated_at"] = time.time()
+                changed = True
+        if changed:
             self._save_state()
         return ordered or self.cached_models(kind)
+
+    def refresh_image_models(self, kind="codex") -> list:
+        """刷新并返回订阅生图模型列表。"""
+        self.refresh_models(kind)
+        return self.cached_image_models(kind)
+
+    # ---------------------------------------------------------------- image generation
+    def _load_image_part(self, ref, index=0):
+        """把本地路径 / data URI / http(s) URL 转为 multipart 文件元组 (filename, bytes, mime)。"""
+        s = str(ref or "").strip()
+        if not s:
+            raise CPAError("参考图为空")
+        if s.startswith("data:"):
+            m = re.match(r"^data:([^;,]+)?;base64,(.+)$", s, re.S)
+            if not m:
+                raise CPAError("无法解析参考图 data URI")
+            mime = (m.group(1) or "image/png").strip().lower()
+            raw = base64.b64decode(m.group(2))
+            ext = {"image/jpeg": "jpg", "image/jpg": "jpg",
+                   "image/webp": "webp", "image/png": "png"}.get(mime, "png")
+            return ("ref_%d.%s" % (index, ext), raw, mime)
+        if s.lower().startswith(("http://", "https://")):
+            resp = _requests().get(s, timeout=30)
+            resp.raise_for_status()
+            raw = resp.content
+            mime = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            if not mime.startswith("image/"):
+                mime = _detect_image_mime(raw)
+            ext = {"image/jpeg": "jpg", "image/webp": "webp"}.get(mime, "png")
+            return ("ref_%d.%s" % (index, ext), raw, mime)
+        if os.path.isfile(s):
+            raw = Path(s).read_bytes()
+            ext = os.path.splitext(s)[1].lower().lstrip(".")
+            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "webp": "image/webp", "png": "image/png"}.get(ext) or _detect_image_mime(raw)
+            fname = os.path.basename(s) or ("ref_%d.png" % index)
+            return (fname, raw, mime)
+        raise CPAError("无法读取参考图：%s" % s)
+
+    def generate_image(self, prompt, model="gpt-image-2.5", aspect_ratio="1:1",
+                       reference_images=None, timeout=180, should_stop=None) -> dict:
+        """通过本机 CPA 调 Codex /v1/images/generations（文生图）或 /v1/images/edits（图生图）。
+        返回 {"bytes": bytes, "ext": ".png", "revised_prompt": str, "model": str}。"""
+        if not self.logged_in("codex"):
+            raise CPAError("尚未登录 ChatGPT 订阅，请在「设置 → 模型与 Provider → ChatGPT 订阅」登录后使用 Codex 生图")
+        if should_stop and should_stop():
+            raise CPAError("已取消")
+        self.ensure_running()
+        if should_stop and should_stop():
+            raise CPAError("已取消")
+
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            raise CPAError("提示词不能为空")
+        model = str(model or "").strip() or (self.cached_image_models("codex") or CODEX_IMAGE_MODELS)[0]
+        size = aspect_ratio_to_size(aspect_ratio)
+        requests = _requests()
+        headers = {"Authorization": "Bearer " + self.client_key()}
+        proxies = {"http": None, "https": None}
+
+        refs = [r for r in (reference_images or []) if r]
+        if refs:
+            parts = [self._load_image_part(r, i) for i, r in enumerate(refs[:5])]
+            field = "image[]" if len(parts) > 1 else "image"
+            files = [(field, p) for p in parts]
+            data = {"model": model, "prompt": prompt, "size": size}
+            resp = requests.post(self.images_edits_url(), headers=headers,
+                                 data=data, files=files, proxies=proxies, timeout=timeout)
+        else:
+            payload = {"model": model, "prompt": prompt, "size": size}
+            resp = requests.post(self.images_generations_url(),
+                                 headers=dict(headers, **{"Content-Type": "application/json"}),
+                                 json=payload, proxies=proxies, timeout=timeout)
+
+        if resp.status_code < 200 or resp.status_code >= 300:
+            raise CPAError(_friendly_image_error(resp.status_code, resp.text))
+        try:
+            body = resp.json()
+        except Exception as e:
+            raise CPAError("Codex 生图返回了非 JSON 响应：%s" % e)
+        img_bytes, ext, revised = _extract_image_from_response(body, requests)
+        return {"bytes": img_bytes, "ext": ext, "revised_prompt": revised, "model": model}
 
     # ---------------------------------------------------------------- login
     def login(self, device=False, on_event=None, kind="codex"):
@@ -605,6 +782,78 @@ class CPAManager:
     def login_in_progress(self) -> bool:
         with self._lock:
             return self._login is not None
+
+
+def _detect_image_mime(raw: bytes) -> str:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
+def _ext_from_format(fmt: str, raw: bytes) -> str:
+    low = str(fmt or "").strip().lower().lstrip(".")
+    if low in ("jpg", "jpeg"):
+        return ".jpg"
+    if low == "webp":
+        return ".webp"
+    if low == "png":
+        return ".png"
+    mime = _detect_image_mime(raw)
+    return {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(mime, ".png")
+
+
+def _extract_image_from_response(body: dict, requests_mod):
+    items = (body or {}).get("data") if isinstance(body, dict) else None
+    if not items or not isinstance(items, list):
+        raise CPAError("Codex 生图未返回图片数据")
+    first = items[0] or {}
+    revised = str(first.get("revised_prompt") or "")
+    out_fmt = str((body or {}).get("output_format") or "")
+    b64 = first.get("b64_json")
+    if b64:
+        raw = base64.b64decode(b64)
+        return raw, _ext_from_format(out_fmt, raw), revised
+    url = str(first.get("url") or "").strip()
+    if url.startswith("data:"):
+        m = re.match(r"^data:([^;,]+)?;base64,(.+)$", url, re.S)
+        if not m:
+            raise CPAError("Codex 生图返回了无效的 data URI")
+        raw = base64.b64decode(m.group(2))
+        mime = (m.group(1) or "").lower()
+        ext = {"image/jpeg": ".jpg", "image/webp": ".webp", "image/png": ".png"}.get(mime) or _ext_from_format(out_fmt, raw)
+        return raw, ext, revised
+    if url.lower().startswith(("http://", "https://")):
+        r = requests_mod.get(url, timeout=60)
+        r.raise_for_status()
+        raw = r.content
+        return raw, _ext_from_format(out_fmt, raw), revised
+    raise CPAError("Codex 生图响应缺少 b64_json / url")
+
+
+def _friendly_image_error(status_code: int, text: str) -> str:
+    msg = ""
+    try:
+        j = json.loads(text or "")
+        if isinstance(j, dict):
+            err = j.get("error")
+            if isinstance(err, dict):
+                msg = str(err.get("message") or "")
+            elif isinstance(err, str):
+                msg = err
+    except Exception:
+        pass
+    if not msg:
+        msg = (text or "").strip()[:300]
+    low = msg.lower()
+    if "auth_unavailable" in low or "no auth available" in low or status_code in (401, 403):
+        return "ChatGPT 订阅凭据不可用或已过期，请在「ChatGPT 订阅」里重新登录后重试（%s）" % (msg or ("HTTP %d" % status_code))
+    if status_code == 429 or "rate limit" in low or "quota" in low:
+        return "ChatGPT 订阅生图额度暂时受限，请稍后再试（%s）" % (msg or "HTTP 429")
+    return "Codex 生图失败（HTTP %d）：%s" % (status_code, msg or "未知错误")
 
 
 manager = CPAManager()

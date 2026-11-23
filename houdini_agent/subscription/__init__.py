@@ -16,13 +16,17 @@
 
 from .cpa import (  # noqa: F401
     CPA_VERSION,
+    CPAError,
     CODEX_MODELS,
+    CODEX_IMAGE_MODELS,
     CODEX_CONTEXT,
     CLAUDE_MODELS,
     codex_efforts,
     codex_default_effort,
     kind_of,
     default_models,
+    is_image_model,
+    aspect_ratio_to_size,
     model_context,
     effort_levels,
     default_effort,

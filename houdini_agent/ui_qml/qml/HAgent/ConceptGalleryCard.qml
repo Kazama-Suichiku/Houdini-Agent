@@ -36,6 +36,8 @@ Item {
     property int prog: (block && block.progress !== undefined) ? block.progress : 0
     property string note: (block && block.note) ? block.note : ""
     property string model: (block && block.model) ? block.model : "nano-banana"
+    property bool isCodex: cg.model.indexOf("codex:") === 0
+    property string providerBadge: cg.phase === "making3d" ? "MESHY" : (cg.isCodex ? "CODEX" : "MESHY")
     property var sel: []        // locally-selected indices (pick phase)
 
     function loc(s) { return controller ? (controller.lang, controller.tr(s)) : s }
@@ -71,7 +73,7 @@ Item {
                 width: parent.width; height: hdr.implicitHeight
                 Text {
                     id: hdr
-                    text: ("MESHY · " + cg.title).toUpperCase()
+                    text: (cg.providerBadge + " · " + cg.title).toUpperCase()
                     color: Theme.accent; font.family: Theme.fontMono
                     font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
                 }
@@ -237,7 +239,7 @@ Item {
                     // 生图模型选择（弹窗）：换模型即用相同提示词就地重出
                     Pill {
                         id: modelPill
-                        label: cg.loc("模型") + " · " + cg.model
+                        label: cg.loc("模型") + " · " + (controller ? controller.imageModelDisplayName(cg.model) : cg.model)
                         onClicked: {
                             if (!controller) return
                             var p = modelPill.mapToItem(cg, 0, modelPill.height + 2)
@@ -306,7 +308,7 @@ Item {
     // 生图模型下拉（弹窗）
     MenuPopup {
         id: modelMenu
-        menuWidth: 190
+        menuWidth: 235
         onPicked: function(val) {
             if (controller && val !== cg.model)
                 controller.resolveConcept(cg.token, JSON.stringify({action: "set_model", model: val}))

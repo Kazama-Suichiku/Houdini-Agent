@@ -14,9 +14,43 @@ import concurrent.futures
 import os
 import threading
 import time
+import uuid
 
 from . import config
 from .client import MeshyClient, MeshyError
+
+MESHY_IMAGE_MODELS = ("nano-banana", "nano-banana-2", "nano-banana-pro", "gpt-image-2")
+
+
+def parse_image_model(spec):
+    """解析生图模型标识 -> (backend, model_id)。
+    - "codex:<model>" -> ("codex", "<model>")
+    - "meshy:<model>" -> ("meshy", "<model>")
+    - 已知 Meshy 模型名（含 gpt-image-2）-> ("meshy", "<model>")
+    - 其余 Codex 生图模型（如 gpt-image-2.5*）-> ("codex", "<model>")
+    - 空或未知 -> ("meshy", spec or "nano-banana")
+    """
+    s = str(spec or "").strip()
+    if not s:
+        return ("meshy", "nano-banana")
+    if ":" in s:
+        prefix, rest = s.split(":", 1)
+        p = prefix.strip().lower()
+        m = rest.strip()
+        if p == "codex":
+            return ("codex", m)
+        if p == "meshy":
+            return ("meshy", m or "nano-banana")
+    if s in MESHY_IMAGE_MODELS:
+        return ("meshy", s)
+    try:
+        from houdini_agent.subscription import is_image_model as _is_codex_img
+        if _is_codex_img(s):
+            return ("codex", s)
+    except Exception:
+        if s.lower().startswith("gpt-image"):
+            return ("codex", s)
+    return ("meshy", s)
 
 
 _TEX_KEYS = ("base_color", "normal", "roughness", "metallic", "emission")
@@ -539,21 +573,98 @@ def _download_image(client, task, task_id):
     return client.download(url, os.path.join(dest, "concept" + ext))
 
 
+def _generate_concepts_codex(prompts, model_id, aspect_ratio="1:1",
+                             reference_images=None, per_prompt_refs=None,
+                             on_progress=None, on_image=None, should_stop=None):
+    """通过 ChatGPT 订阅（本机 CPA /v1/images/{generations,edits}）并行生图。不需要 Meshy API Key。"""
+    try:
+        from houdini_agent.subscription import manager, CODEX_IMAGE_MODELS
+    except Exception as e:
+        raise MeshyError("ChatGPT 订阅模块不可用：%s" % e)
+    if not manager.logged_in("codex"):
+        raise MeshyError(
+            "未登录 ChatGPT 订阅：请在「设置 → 模型与 Provider → ChatGPT 订阅」登录，"
+            "或在「设置 → 常规」切换默认生图模型。")
+    try:
+        manager.ensure_running()
+    except Exception as e:
+        raise MeshyError("启动本地订阅服务失败：%s" % e)
+
+    model_id = str(model_id or "").strip() or (manager.cached_image_models("codex") or CODEX_IMAGE_MODELS)[0]
+    shared_refs = [r for r in (reference_images or []) if r][:5] or None
+    per_refs = None
+    if per_prompt_refs:
+        per_refs = [([r for r in (lst or []) if r][:5] or None) for lst in per_prompt_refs]
+
+    total = len(prompts)
+    results = [None] * total
+    completed = [0]
+    errors = []
+    lock = threading.Lock()
+
+    def one(i):
+        refs_i = per_refs[i] if (per_refs is not None and i < len(per_refs)) else None
+        if refs_i is None:
+            refs_i = shared_refs
+        out = manager.generate_image(
+            prompts[i], model=model_id, aspect_ratio=aspect_ratio,
+            reference_images=refs_i, should_stop=should_stop)
+        tid = "codex-%s" % uuid.uuid4().hex[:12]
+        dest = config.assets_dir(tid)
+        ext = out.get("ext") or ".png"
+        path = os.path.join(dest, "concept" + ext)
+        with open(path, "wb") as f:
+            f.write(out["bytes"])
+        print("[codex-image] %s done: %s (%s, #%d)" % (
+            "image-to-image" if refs_i else "text-to-image", tid, model_id, i))
+        res = {"index": i, "task_id": tid, "image": path, "prompt": prompts[i],
+               "provider": "codex", "model": model_id}
+        with lock:
+            completed[0] += 1
+            _safe_call(on_image, res)
+            _safe_call(on_progress, "生成概念图", completed[0] * 100 // total,
+                       "%d/%d" % (completed[0], total))
+        return res
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=total) as ex:
+        futs = {ex.submit(one, i): i for i in range(total)}
+        for f in concurrent.futures.as_completed(futs):
+            i = futs[f]
+            try:
+                results[i] = f.result()
+            except Exception as e:
+                errors.append(str(e))
+                print("[codex-image] generation failed:", e)
+    out = [r for r in results if r]
+    if not out:
+        raise MeshyError("概念图生成失败：" + (errors[0] if errors else "未知原因"))
+    return out
+
+
 def generate_concepts(prompts, ai_model="nano-banana", aspect_ratio="1:1",
                       reference_images=None, per_prompt_refs=None,
                       on_progress=None, on_image=None, should_stop=None):
-    """并行生成概念图。prompts = 每张图一个提示词的列表
+    """并行生成概念图。支持 Meshy 与 Codex（ChatGPT 订阅）两种生图后端。
+    prompts = 每张图一个提示词的列表
     （元素可全相同=同一提示词的多个变体，也可各不相同=不同设计方向）。
+    ai_model：如 "nano-banana"（Meshy）或 "codex:gpt-image-2.5"（ChatGPT 订阅）。
     reference_images：共享参考图（所有输出都基于这组图，走【图生图】）。
     per_prompt_refs：与 prompts 一一对应的参考图列表——第 i 张输出只用 per_prompt_refs[i]
       作为参考（用于"对每张选中的图分别做二次编辑"）。优先级高于 reference_images。
     任一参考图非空 → 该输出走图生图端点；否则走文生图。
     on_image(concept) 每张完成时回调（UI 增量填槽，体现并行）。
-    返回 [{index, task_id, image, prompt}]；全失败抛 MeshyError。"""
-    client = MeshyClient()
+    返回 [{index, task_id, image, prompt, provider, model}]；全失败抛 MeshyError。"""
     prompts = [str(p) for p in (prompts or []) if str(p).strip()][:MAX_PARALLEL]
     if not prompts:
         raise MeshyError("没有有效的提示词")
+    backend, model_id = parse_image_model(ai_model)
+    if backend == "codex":
+        return _generate_concepts_codex(
+            prompts, model_id=model_id, aspect_ratio=aspect_ratio,
+            reference_images=reference_images, per_prompt_refs=per_prompt_refs,
+            on_progress=on_progress, on_image=on_image, should_stop=should_stop)
+
+    client = MeshyClient()
     shared_args = None
     if reference_images:
         shared_args = [_image_to_arg(r) for r in reference_images if r][:5] or None
@@ -574,16 +685,17 @@ def generate_concepts(prompts, ai_model="nano-banana", aspect_ratio="1:1",
         if refs_i is None:
             refs_i = shared_args
         if refs_i:
-            tid = client.create_image_to_image(prompts[i], refs_i, ai_model=ai_model)
+            tid = client.create_image_to_image(prompts[i], refs_i, ai_model=model_id)
             kind = "image-to-image"
         else:
-            tid = client.create_text_to_image(prompts[i], ai_model=ai_model,
+            tid = client.create_text_to_image(prompts[i], ai_model=model_id,
                                               aspect_ratio=aspect_ratio)
             kind = "text-to-image"
         print("[meshy] %s submitted: %s (#%d)" % (kind, tid, i))
         task = client.wait(kind, tid, should_stop=should_stop)
         path = _download_image(client, task, tid)
-        res = {"index": i, "task_id": tid, "image": path, "prompt": prompts[i]}
+        res = {"index": i, "task_id": tid, "image": path, "prompt": prompts[i],
+               "provider": "meshy", "model": model_id}
         with lock:
             completed[0] += 1
             _safe_call(on_image, res)
@@ -646,9 +758,9 @@ def concepts_to_3d(concepts, enable_pbr=True, topology="triangle",
             try:
                 image_arg = _image_to_arg(img)
             except Exception as ie:
-                # 本地概念图丢失/不可读：不直接判这张失败，回退用云端 task_id 串接；
-                # 两者都没有才放弃。
-                if not c.get("task_id"):
+                # 本地概念图丢失/不可读：不直接判这张失败，Meshy 概念图可回退用云端 task_id 串接；
+                # Codex 本地图片无法走 Meshy task_id，直接报错。
+                if not c.get("task_id") or c.get("provider") == "codex" or str(c.get("task_id", "")).startswith("codex-"):
                     raise
                 print("[meshy] 概念图本地文件不可用，回退到 input_task_id：%s" % ie)
         tid = client.create_image_to_3d(

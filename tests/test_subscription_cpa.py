@@ -279,3 +279,208 @@ def test_claude_sub_provider_routes_to_local_cpa(mgr, monkeypatch):
 def test_claude_sub_requests_effort_and_thinking(monkeypatch, mgr):
     p = _capture_payload("claude_sub", "claude-opus-5-5", True, monkeypatch, mgr, effort="high")
     assert p.get("reasoning_effort") == "high" and p.get("reasoning") == {"summary": "detailed"}
+
+
+# ---------------------------------------------------------------- Codex image models & generation
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+    b"\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+class _JsonResp:
+    def __init__(self, status=200, payload=None, text="", content=b"", headers=None):
+        self.status_code = status
+        self._payload = payload
+        self.text = text if text else (json.dumps(payload) if payload is not None else "")
+        self.content = content
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError("HTTP %d" % self.status_code)
+
+    def json(self):
+        return self._payload
+
+
+def test_codex_image_model_detection_and_sorting():
+    assert cpa.is_image_model("gpt-image-2.5")
+    assert cpa.is_image_model("gpt-image-2.5-sunburst")
+    assert cpa.is_image_model("gpt-image-2.6-flare")
+    assert cpa.is_image_model("gpt-image-5.6")
+    assert cpa.is_image_model("codex-image-1")
+    assert not cpa.is_image_model("gpt-6.1-sol")
+    assert not cpa.is_image_model("claude-opus-5-5")
+    assert not cpa.is_image_model("gpt-reserve")
+    assert not cpa._is_chat_model("gpt-image-2.6")
+    assert not cpa._is_chat_model("codex-image-1")
+
+    raw = ["gpt-image-1.5", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-2.6-sunburst",
+           "gpt-image-2.5", "gpt-image-2.6", "gpt-image-2.5-sunburst", "gpt-image-5.6"]
+    assert cpa._sort_image_models(raw) == [
+        "gpt-image-5.6",
+        "gpt-image-2.6",
+        "gpt-image-2.6-sunburst",
+        "gpt-image-2.5",
+        "gpt-image-2.5-sunburst",
+        "gpt-image-2.5-flare",
+        "gpt-image-2",
+        "gpt-image-1.5",
+    ]
+
+
+def test_aspect_ratio_to_size():
+    assert cpa.aspect_ratio_to_size("1:1") == "1024x1024"
+    assert cpa.aspect_ratio_to_size("16:9") == "1536x1024"
+    assert cpa.aspect_ratio_to_size("4:3") == "1536x1024"
+    assert cpa.aspect_ratio_to_size("9:16") == "1024x1536"
+    assert cpa.aspect_ratio_to_size("3:4") == "1024x1536"
+    assert cpa.aspect_ratio_to_size("1536x1024") == "1536x1024"
+    assert cpa.aspect_ratio_to_size("") == "1024x1024"
+
+
+def test_refresh_models_syncs_codex_image_models_dynamically(mgr, monkeypatch):
+    assert mgr.cached_image_models("codex") == cpa.CODEX_IMAGE_MODELS
+    assert mgr.cached_image_models("claude") == []
+    assert mgr.image_models_stale() is True
+
+    class _FakeReq:
+        def get(self, url, **kw):
+            assert url.endswith("/models")
+            assert kw.get("proxies") == {"http": None, "https": None}
+            return _JsonResp(200, {
+                "data": [
+                    {"id": "gpt-6.1-sol"},
+                    {"id": "gpt-image-2.6-flare"},
+                    {"id": "gpt-image-2.6"},
+                    {"id": "gpt-image-2.5"},
+                    {"id": "gpt-image-2"},
+                    {"id": "claude-opus-5-5"},
+                    {"id": "codex-auto-review"},
+                ]
+            })
+
+    monkeypatch.setattr(cpa, "_requests", lambda: _FakeReq())
+    chat_models = mgr.refresh_models("codex")
+    assert chat_models == ["gpt-6.1-sol"]
+    assert mgr.cached_image_models("codex") == [
+        "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.5", "gpt-image-2"
+    ]
+    assert mgr.image_models_stale() is False
+    # 持久化到 state.json 后新实例也能读到
+    again = cpa.CPAManager(base=mgr.base)
+    assert again.cached_image_models("codex") == [
+        "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.5", "gpt-image-2"
+    ]
+
+
+def test_codex_generate_image_t2i_and_i2i(mgr, tmp_path, monkeypatch):
+    # 未登录直接报错
+    with pytest.raises(cpa.CPAError):
+        mgr.generate_image("a red cube")
+
+    mgr.auth_dir.mkdir(parents=True, exist_ok=True)
+    (mgr.auth_dir / "codex-u.json").write_text(json.dumps({"type": "codex", "email": "u@x"}), encoding="utf-8")
+    monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
+
+    calls = []
+    b64_png = base64.b64encode(_TINY_PNG).decode("ascii")
+
+    class _FakeReq:
+        def post(self, url, **kw):
+            calls.append((url, kw))
+            assert kw.get("proxies") == {"http": None, "https": None}
+            if url.endswith("/images/generations"):
+                return _JsonResp(200, {"output_format": "png",
+                                       "data": [{"b64_json": b64_png, "revised_prompt": "red cube"}]})
+            return _JsonResp(200, {"data": [{"url": "data:image/png;base64," + b64_png}]})
+
+    monkeypatch.setattr(cpa, "_requests", lambda: _FakeReq())
+
+    # 1) 文生图
+    res1 = mgr.generate_image("a red cube", model="gpt-image-2.5", aspect_ratio="16:9")
+    assert res1["bytes"] == _TINY_PNG and res1["ext"] == ".png"
+    assert res1["revised_prompt"] == "red cube"
+    assert calls[0][0].endswith("/v1/images/generations")
+    assert calls[0][1]["json"] == {"model": "gpt-image-2.5", "prompt": "a red cube", "size": "1536x1024"}
+
+    # 2) 图生图（多张参考图：本地文件 + data URI）
+    ref_file = tmp_path / "ref.png"
+    ref_file.write_bytes(_TINY_PNG)
+    data_uri = "data:image/png;base64," + b64_png
+    res2 = mgr.generate_image("make it blue", model="gpt-image-2.5", aspect_ratio="9:16",
+                              reference_images=[str(ref_file), data_uri])
+    assert res2["bytes"] == _TINY_PNG and res2["ext"] == ".png"
+    assert calls[1][0].endswith("/v1/images/edits")
+    assert calls[1][1]["data"] == {"model": "gpt-image-2.5", "prompt": "make it blue", "size": "1024x1536"}
+    assert [field for field, _ in calls[1][1]["files"]] == ["image[]", "image[]"]
+
+    # 3) 鉴权过期给出可读中文错误
+    class _ErrReq:
+        def post(self, url, **kw):
+            return _JsonResp(503, {"error": {"message": "auth_unavailable: no auth available"}})
+
+    monkeypatch.setattr(cpa, "_requests", lambda: _ErrReq())
+    with pytest.raises(cpa.CPAError) as err:
+        mgr.generate_image("cube")
+    assert "重新登录" in str(err.value)
+
+
+def test_generate_concepts_routes_codex_without_meshy_key(mgr, tmp_path, monkeypatch):
+    from houdini_agent.meshy import network_ops as nops, config as mcfg, schemas as mschemas
+    import houdini_agent.subscription as sub
+
+    # 同名 gpt-image-2 能准确区分 Meshy 与 Codex
+    assert nops.parse_image_model("codex:gpt-image-2") == ("codex", "gpt-image-2")
+    assert nops.parse_image_model("gpt-image-2") == ("meshy", "gpt-image-2")
+    assert nops.parse_image_model("codex:gpt-image-2.5") == ("codex", "gpt-image-2.5")
+    assert nops.parse_image_model("gpt-image-2.5") == ("codex", "gpt-image-2.5")
+    assert nops.parse_image_model("nano-banana") == ("meshy", "nano-banana")
+
+    # 工具 schema 不再把 ai_model 锁死为 Meshy enum
+    for t in mschemas.MESHY_TOOLS:
+        if t["function"]["name"] in ("meshy_text_to_image", "meshy_image_to_image", "meshy_concept_to_3d"):
+            prop = t["function"]["parameters"]["properties"]["ai_model"]
+            assert "enum" not in prop
+
+    # Codex 生图路径绝不实例化 MeshyClient，也不要求 MESHY_API_KEY
+    monkeypatch.setattr(sub, "manager", mgr)
+    mgr.auth_dir.mkdir(parents=True, exist_ok=True)
+    (mgr.auth_dir / "codex-u.json").write_text(json.dumps({"type": "codex", "email": "u@x"}), encoding="utf-8")
+    monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
+    monkeypatch.setattr(mcfg, "assets_dir", lambda tid=None: str((tmp_path / str(tid or "root")).resolve()))
+
+    def _boom_meshy(*a, **k):
+        raise AssertionError("MeshyClient should not be constructed for Codex image generation")
+    monkeypatch.setattr(nops, "MeshyClient", _boom_meshy)
+
+    seen = []
+
+    def _fake_gen(prompt, model="gpt-image-2.5", aspect_ratio="1:1", reference_images=None, **kw):
+        seen.append((prompt, model, aspect_ratio, reference_images))
+        return {"bytes": _TINY_PNG, "ext": ".png", "revised_prompt": "", "model": model}
+
+    monkeypatch.setattr(mgr, "generate_image", _fake_gen)
+
+    # assets_dir 需要目录存在
+    def _mk_assets_dir(tid=None):
+        p = tmp_path / str(tid or "root")
+        p.mkdir(parents=True, exist_ok=True)
+        return str(p)
+    monkeypatch.setattr(mcfg, "assets_dir", _mk_assets_dir)
+
+    emitted = []
+    out = nops.generate_concepts(
+        ["sci-fi helmet", "steampunk goggles"],
+        ai_model="codex:gpt-image-2.5",
+        aspect_ratio="16:9",
+        on_image=emitted.append,
+    )
+    assert len(out) == 2
+    assert len(emitted) == 2
+    assert all(item["provider"] == "codex" and item["model"] == "gpt-image-2.5" for item in out)
+    assert all(cpa.os.path.isfile(item["image"]) for item in out)
+    assert {s[0] for s in seen} == {"sci-fi helmet", "steampunk goggles"}
+    assert all(s[1] == "gpt-image-2.5" and s[2] == "16:9" for s in seen)

@@ -127,7 +127,8 @@ _TEXT_TO_IMAGE = {
     "function": {
         "name": "meshy_text_to_image",
         "description": (
-            "【2D 出图工具】用 Meshy 由文字并行生成概念图/参考图（产出的是图片，不是 3D 模型，会消耗 credits）。"
+            "【2D 出图工具】由文字并行生成概念图/参考图（产出的是图片，不是 3D 模型；"
+            "自动使用用户在设置中选择的默认生图模型，支持 Meshy 与 ChatGPT/Codex 订阅生图）。"
             "只要用户提到'概念图''参考图''图片''画几张''出几张图看看''方案图'等 2D 图像需求，"
             "一律用本工具——不要用 meshy_text_to_3d（那个出的是 3D 模型，不是图）。"
             "会弹出画廊：可多选、可改提示词重新生成、可把选中的图直接升级成 3D，或只保留图片完成。"
@@ -144,8 +145,7 @@ _TEXT_TO_IMAGE = {
                             "description": "多个不同描述，每个并行出一张（最多 4 个）。要不同方向时优先用它"},
                 "count": {"type": "integer", "description": "用 prompt 时并行生成几张变体，默认 2，最多 4"},
                 "ai_model": {"type": "string",
-                             "enum": ["nano-banana", "nano-banana-2", "nano-banana-pro", "gpt-image-2"],
-                             "description": "文生图模型，默认 nano-banana"},
+                             "description": "可选。不传则自动使用用户在设置中配置的默认生图模型（如 Meshy 或 Codex gpt-image-*）。除非用户明确指定模型，否则请省略此参数"},
                 "aspect_ratio": {"type": "string",
                                  "description": "画幅比例，如 1:1 / 16:9 / 9:16 / 4:3，默认 1:1"},
             },
@@ -159,8 +159,8 @@ _IMAGE_TO_IMAGE = {
     "function": {
         "name": "meshy_image_to_image",
         "description": (
-            "【2D 图生图 / 图片编辑工具】用 Meshy 基于一张或多张参考图 + 文字提示生成一张新图片"
-            "（产出图片，不是 3D 模型，会消耗 credits）。"
+            "【2D 图生图 / 图片编辑工具】基于一张或多张参考图 + 文字提示生成新图片"
+            "（产出图片，不是 3D 模型；自动使用用户在设置中选择的默认生图模型，支持 Meshy 与 ChatGPT/Codex 订阅生图）。"
             "适用场景：用户上传/给出了一张图，说'在这张图基础上改成…''换个风格''把背景换掉'"
             "'生成一张类似但是…的图'等——把用户的图作为 image 传入、把想要的改动写进 prompt 即可。"
             "image 接受：公网 URL / base64 data URI / 本地路径；要多张参考图用 images（1–5 张）。"
@@ -180,8 +180,7 @@ _IMAGE_TO_IMAGE = {
                            "description": "多张参考图(1–5)，与 image 二选一"},
                 "count": {"type": "integer", "description": "并行生成几张变体，默认 2，最多 4"},
                 "ai_model": {"type": "string",
-                             "enum": ["nano-banana", "nano-banana-2", "nano-banana-pro", "gpt-image-2"],
-                             "description": "图生图模型，默认 nano-banana"},
+                             "description": "可选。不传则自动使用用户在设置中配置的默认生图模型（如 Meshy 或 Codex gpt-image-*）。除非用户明确指定模型，否则请省略此参数"},
             },
             "required": ["prompt"],
         },
@@ -193,7 +192,7 @@ _CONCEPT_TO_3D = {
     "function": {
         "name": "meshy_concept_to_3d",
         "description": (
-            "概念图驱动的 3D 生成（人在环交互，会消耗 Meshy credits）。"
+            "概念图驱动的 3D 生成（人在环交互；概念图阶段自动使用用户在设置中选择的默认生图模型，3D 阶段消耗 Meshy credits）。"
             "由文字先并行生成若干张概念图，弹出画廊让用户多选满意的，"
             "再对选中的图分别生成 3D 模型（自动串接，免重传）；用户也可改提示词重新生成。"
             "当用户想'先看几个方案再决定做哪个'、或希望对生成结果有更强的美术把控时，优先用这个而不是 meshy_text_to_3d。"
@@ -209,8 +208,7 @@ _CONCEPT_TO_3D = {
                 "count": {"type": "integer",
                           "description": "用 prompt 时并行生成的数量，默认 2，最多 4"},
                 "ai_model": {"type": "string",
-                             "enum": ["nano-banana", "nano-banana-2", "nano-banana-pro", "gpt-image-2"],
-                             "description": "文生图模型，默认 nano-banana"},
+                             "description": "可选。不传则自动使用用户在设置中配置的默认生图模型（如 Meshy 或 Codex gpt-image-*）。除非用户明确指定模型，否则请省略此参数"},
                 "enable_pbr": {"type": "boolean", "description": "3D 阶段是否生成 PBR 贴图，默认 true"},
                 "topology": {"type": "string", "enum": ["quad", "triangle"],
                              "description": "3D 阶段拓扑，默认 triangle"},

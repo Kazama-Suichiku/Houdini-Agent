@@ -147,6 +147,21 @@ UI_EN = {
     "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
     "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
     "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
+    # 生图模型设置（Meshy / Codex 订阅）
+    "图片生成": "Image generation",
+    "默认生图模型": "Default image model",
+    "选择文生图、图生图与概念图默认使用的生图后端。登录 ChatGPT 订阅后可直接使用 Codex 生图模型，无需 Meshy API Key。":
+        "Choose the default backend for text-to-image, image-to-image, and concept art. "
+        "Sign in to your ChatGPT plan to use Codex image models without a Meshy API key.",
+    "同步模型": "Sync models",
+    "同步中…": "Syncing…",
+    "自动同步自本机 ChatGPT 订阅（Codex）": "Auto-synced from your local ChatGPT plan (Codex)",
+    "登录 ChatGPT 订阅后，即可自动同步并使用 Codex 生图模型（如 gpt-image-*）。":
+        "Sign in to your ChatGPT plan to automatically sync and use Codex image models (e.g. gpt-image-*).",
+    "登录 ChatGPT 订阅": "Sign in to ChatGPT plan",
+    "Codex 生图模型已更新": "Codex image models updated",
+    "同步 Codex 生图模型失败：": "Failed to sync Codex image models: ",
+    "请先登录 ChatGPT 订阅后再选择 Codex 生图模型": "Sign in to your ChatGPT plan before choosing a Codex image model",
     # 规则编辑器
     "新建": "New", "未命名": "Untitled", "打开规则目录": "Open rules folder",
     "还没有规则": "No rules yet",
@@ -585,6 +600,9 @@ class Controller(QObject):
     openSettingsDialog = Signal()         # request the unified settings window
     modelsChanged = Signal()              # 模型目录已更新（MODEL_MAP 被后台刷新改写）
     modelsRefreshingChanged = Signal()    # 刷新开始/结束
+    imageModelChanged = Signal()          # 默认生图模型或 Codex 生图模型目录变化
+    codexImageRefreshingChanged = Signal()
+    _sigCodexImageRefresh = Signal(str)   # worker -> main: Codex 生图模型同步结果 JSON
 
     # worker -> main thread (queued)
     _sigThink = Signal(str)
@@ -636,6 +654,8 @@ class Controller(QObject):
         self._accent_key = "warm"         # warm | steel | celadon | clay | neutral
         self._font_family_key = "editorial"  # editorial | modern | mono
         self._density_key = "normal"      # compact | normal | roomy
+        self._default_image_model = ""    # ""=自动（未配 Meshy Key 且已登录 Codex 时自动走 Codex，否则 nano-banana）
+        self._codex_image_refreshing = False
         self._my_templates = []           # 用户自存模板（templates.json）
         self._scene_path = "/obj"
         self._scene_sel = "no selection"
@@ -783,6 +803,10 @@ class Controller(QObject):
         self._sigUpdateDialog.connect(self._show_update_dialog)
         self._sigSub.connect(self._on_sub_event)
         self._sigModels.connect(self._on_models_refreshed)
+        self._sigCodexImageRefresh.connect(self._on_codex_image_refreshed)
+        self.subscriptionChanged.connect(self.imageModelChanged)
+        self.langChanged.connect(self.imageModelChanged)
+        self.meshyAccountChanged.connect(self.imageModelChanged)
         self.providerChanged.connect(self.effortChanged)
         self.modelChanged.connect(self.effortChanged)
         self.langChanged.connect(self.effortChanged)
@@ -950,6 +974,10 @@ class Controller(QObject):
             d = str(s.value("density_key", "normal") or "normal")
             if d in ("compact", "normal", "roomy"):
                 self._density_key = d
+            img_m = str(s.value("default_image_model", "") or "").strip()
+            if img_m and (img_m in ("nano-banana", "nano-banana-2", "nano-banana-pro", "gpt-image-2")
+                          or (img_m.startswith("codex:") and len(img_m) > 6)):
+                self._default_image_model = img_m
         except Exception:
             pass
 
@@ -1093,6 +1121,55 @@ class Controller(QObject):
     def _get_density_key(self): return self._density_key
     densityKey = Property(str, _get_density_key, notify=appearanceChanged)
 
+    # ---- 生图默认模型（Meshy / ChatGPT Codex 订阅） ----
+    _MESHY_IMAGE_CHOICES = (
+        ("nano-banana", "Nano Banana（默认 · 快）"),
+        ("nano-banana-2", "Nano Banana 2"),
+        ("nano-banana-pro", "Nano Banana Pro（高质量）"),
+        ("gpt-image-2", "GPT Image 2"),
+    )
+
+    def _codex_logged_in(self):
+        return self._sub_logged_in("codex")
+
+    def _codex_image_models(self):
+        try:
+            from houdini_agent.subscription import manager
+            return list(manager.cached_image_models("codex"))
+        except Exception:
+            return []
+
+    def _effective_default_image_model(self):
+        """当前生效的默认生图模型。
+        - 用户显式选过则严格沿用；
+        - 未显式选择时：若未配置 Meshy Key 且已登录 Codex，自动默认走 Codex 首选生图模型；
+          否则沿用 Meshy nano-banana。"""
+        if self._default_image_model:
+            return self._default_image_model
+        if self._codex_logged_in():
+            has_meshy = False
+            try:
+                has_meshy = bool(_meshy and _meshy.has_api_key())
+            except Exception:
+                pass
+            if not has_meshy:
+                cmodels = self._codex_image_models()
+                if cmodels:
+                    return "codex:" + cmodels[0]
+        return "nano-banana"
+
+    def _get_default_image_model(self):
+        return self._effective_default_image_model()
+    defaultImageModel = Property(str, _get_default_image_model, notify=imageModelChanged)
+
+    def _get_codex_logged_in(self):
+        return self._codex_logged_in()
+    codexLoggedIn = Property(bool, _get_codex_logged_in, notify=imageModelChanged)
+
+    def _get_codex_image_refreshing(self):
+        return self._codex_image_refreshing
+    codexImageRefreshing = Property(bool, _get_codex_image_refreshing, notify=codexImageRefreshingChanged)
+
     def _get_lang(self): return self._lang
     lang = Property(str, _get_lang, notify=langChanged)
 
@@ -1170,10 +1247,23 @@ class Controller(QObject):
 
         def work():
             result = {}
+            codex_synced = False
             try:
                 result = catalog.refresh_all(timeout=10)
             except Exception:
                 result = {}
+            # 已登录 ChatGPT 订阅时同步拉取 Codex 对话与生图模型（自动感知新版 gpt-image-*）
+            try:
+                from houdini_agent.subscription import manager
+                if manager.logged_in("codex") and manager.installed():
+                    if (not quiet) or manager.healthy() or manager.image_models_stale():
+                        manager.ensure_running(timeout=12)
+                        manager.refresh_models("codex")
+                        codex_synced = True
+            except Exception:
+                pass
+            if codex_synced:
+                result["_codex_synced"] = True
             try:
                 self._sigModels.emit(json.dumps(result, ensure_ascii=False))
             except Exception:
@@ -1189,7 +1279,8 @@ class Controller(QObject):
             result = {}
         if not isinstance(result, dict):
             result = {}
-        ok_any = False
+        codex_synced = bool(result.pop("_codex_synced", False))
+        ok_any = codex_synced
         try:
             for p, ids in result.items():
                 if not ids:
@@ -1215,6 +1306,9 @@ class Controller(QObject):
             self._models_refreshing = False
             self.modelsRefreshingChanged.emit()
             self.modelsChanged.emit()
+            if codex_synced:
+                self.imageModelChanged.emit()
+                self.providerChanged.emit()
         if self._models_refresh_quiet:
             return
         if ok_any:
@@ -1224,7 +1318,12 @@ class Controller(QObject):
 
     def _auto_refresh_models_if_stale(self):
         try:
-            if any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES):
+            need = any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES)
+            if not need:
+                from houdini_agent.subscription import manager
+                if manager.logged_in("codex") and manager.installed() and manager.image_models_stale():
+                    need = True
+            if need:
                 self._start_models_refresh(quiet=True)
         except Exception:
             pass
@@ -3220,18 +3319,123 @@ class Controller(QObject):
         sep = "&" if "?" in base else "?"
         self._open_browser(base + sep + _MESHY_UTM)
 
+    @Slot(str, result=str)
+    def imageModelDisplayName(self, spec=""):
+        """生图模型短显示名（画廊按钮 / 提示用）。"""
+        s = str(spec or "").strip() or self._effective_default_image_model()
+        if s.startswith("codex:"):
+            return "Codex · " + s[6:]
+        if s.startswith("meshy:"):
+            return s[6:]
+        return s
+
+    @Slot(result="QVariantList")
+    def meshyImageModelOptions(self):
+        """设置页：Meshy 生图模型选项。"""
+        return [{"key": val, "label": self.tr(lbl)} for val, lbl in self._MESHY_IMAGE_CHOICES]
+
+    @Slot(result="QVariantList")
+    def codexImageModelOptions(self):
+        """设置页：ChatGPT 订阅（Codex）生图模型选项（自动随 CPA /v1/models 同步）。"""
+        models = self._codex_image_models()
+        cur = self._effective_default_image_model()
+        if cur.startswith("codex:"):
+            cm = cur[6:]
+            if cm and cm not in models:
+                models.append(cm)
+        return [{"key": "codex:" + m, "label": m} for m in models]
+
+    @Slot(str)
+    def setDefaultImageModel(self, val):
+        """设置默认生图模型（持久化到 QSettings）。支持 Meshy 模型及 codex:<model>。"""
+        v = str(val or "").strip()
+        if v.startswith("meshy:"):
+            v = v[6:].strip()
+        meshy_keys = {k for k, _ in self._MESHY_IMAGE_CHOICES}
+        if v.startswith("codex:"):
+            if len(v) <= 6:
+                return
+            if not self._codex_logged_in():
+                self.toast.emit(self.tr("请先登录 ChatGPT 订阅后再选择 Codex 生图模型"))
+                return
+        elif v not in meshy_keys:
+            return
+        if v != self._default_image_model:
+            self._default_image_model = v
+            self._set_pref("default_image_model", v)
+            self.imageModelChanged.emit()
+
+    @Slot()
+    def openCodexSubscription(self):
+        """从设置页直接打开 ChatGPT 订阅（Codex）登录弹窗。"""
+        self._sub_dialog_provider = "codex"
+        self.openSubscriptionDialog.emit()
+
+    @Slot()
+    def refreshCodexImageModels(self):
+        """手动同步本机 CPA /v1/models 里的 Codex 生图模型列表（后台线程）。"""
+        if self._codex_image_refreshing:
+            return
+        if not self._codex_logged_in():
+            self.toast.emit(self.tr("请先登录 ChatGPT 订阅"))
+            return
+        self._codex_image_refreshing = True
+        self.codexImageRefreshingChanged.emit()
+
+        def work():
+            try:
+                from houdini_agent.subscription import manager
+                manager.ensure_running(timeout=15)
+                models = manager.refresh_image_models("codex")
+                payload = {"ok": True, "models": models}
+            except Exception as e:
+                payload = {"ok": False, "error": str(e)}
+            try:
+                self._sigCodexImageRefresh.emit(json.dumps(payload, ensure_ascii=False))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot(str)
+    def _on_codex_image_refreshed(self, js):
+        try:
+            d = json.loads(js) if js else {}
+        except Exception:
+            d = {}
+        self._codex_image_refreshing = False
+        self.codexImageRefreshingChanged.emit()
+        self.imageModelChanged.emit()
+        self.subscriptionChanged.emit()
+        self.providerChanged.emit()
+        if d.get("ok"):
+            models = d.get("models") or []
+            suffix = (" (%s)" % ", ".join(models[:4])) if models else ""
+            self.toast.emit(self.tr("Codex 生图模型已更新") + suffix)
+        else:
+            self.toast.emit(self.tr("同步 Codex 生图模型失败：") + str(d.get("error") or ""))
+
     @Slot(str, result="QVariantList")
     def imageModelItems(self, current=""):
-        """生图模型下拉项（画廊里"弹窗选模型"用）。current=当前模型，打勾。"""
-        cur = str(current or "")
-        models = [
-            ("nano-banana", self.tr("Nano Banana（默认 · 快）")),
-            ("nano-banana-2", "Nano Banana 2"),
-            ("nano-banana-pro", self.tr("Nano Banana Pro（高质量）")),
-            ("gpt-image-2", "GPT Image 2"),
-        ]
-        return [{"label": lbl, "val": val, "checked": (val == cur)}
-                for val, lbl in models]
+        """生图模型下拉项（画廊里"弹窗选模型"用）。已登录 Codex 时同时列出 Codex 与 Meshy 模型。"""
+        cur = str(current or "").strip() or self._effective_default_image_model()
+        meshy_models = [(val, self.tr(lbl)) for val, lbl in self._MESHY_IMAGE_CHOICES]
+        show_codex = self._codex_logged_in() or cur.startswith("codex:")
+        if not show_codex:
+            return [{"label": lbl, "val": val, "checked": (val == cur)}
+                    for val, lbl in meshy_models]
+        cmodels = self._codex_image_models()
+        if cur.startswith("codex:"):
+            cm = cur[6:]
+            if cm and cm not in cmodels:
+                cmodels.append(cm)
+        items = [{"label": "Codex · " + m, "val": "codex:" + m, "checked": ("codex:" + m == cur)}
+                 for m in cmodels]
+        if items:
+            items.append({"sep": True})
+        items.extend({"label": "Meshy · " + lbl, "val": val, "checked": (val == cur)}
+                     for val, lbl in meshy_models)
+        return items
 
     @Slot(str)
     def composePrefill(self, text):
@@ -4044,7 +4248,8 @@ class Controller(QObject):
         else:
             return {"success": False, "error": "缺少 prompt 或 prompts"}
         card_prompt = prompt or prompt_list[0]
-        ai_model = kwargs.get("ai_model", "nano-banana")
+        raw_model = str(kwargs.get("ai_model") or "").strip()
+        ai_model = raw_model if raw_model else self._effective_default_image_model()
         aspect_ratio = kwargs.get("aspect_ratio", "1:1")
         enable_pbr = bool(kwargs.get("enable_pbr", True))
         topology = kwargs.get("topology", "triangle")
@@ -4164,7 +4369,7 @@ class Controller(QObject):
                                           "prompt": c.get("prompt", "")} for c in res]
                         with self._meshy_bg_lock:
                             self._bg_galleries[token] = {
-                                "concepts": concepts_full, "mode": mode,
+                                "concepts": concepts_full, "mode": mode, "model": ai_model,
                                 "card_prompt": card_prompt, "tool": tool_name, "label": label}
                             self._meshy_bg.pop(token, None)   # 不再算"运行中"
                         self._sigShowBgGallery.emit(token)
@@ -4221,7 +4426,7 @@ class Controller(QObject):
                     pending = {"prompts": cur_prompts, "refs": base_refs}
                     show(phase="gen", prompt=card_prompt, count=len(cur_prompts),
                          images=[], selected=[], progress=0,
-                         note="切换模型 %s · 重新生成…" % ai_model)
+                         note="切换模型 %s · 重新生成…" % self.imageModelDisplayName(ai_model))
                     continue
 
                 if action == "regenerate":
@@ -4838,6 +5043,7 @@ class Controller(QObject):
         self._ai_row = self._model.append({"type": "ai", "payload": {"bm": bm}})
         block = {"kind": "concept", "token": token, "phase": "pick",
                  "mode": g.get("mode", "concept"), "prompt": g.get("card_prompt", ""),
+                 "model": g.get("model", self._effective_default_image_model()),
                  "images": list(concepts), "selected": [], "progress": 100,
                  "count": len(concepts),
                  "note": "后台已生成 %d 张 · 勾选后可生成 3D / 二次编辑 / 换提示词" % len(concepts)}
@@ -4915,6 +5121,20 @@ class Controller(QObject):
             lines += ["- %s" % p for p in sel_imgs]
             lines.append("请理解意图、写出更好的英文编辑提示词，再调用 "
                          "meshy_image_to_image(image=\"<上面某个路径>\", prompt=\"<优化后的编辑提示>\") 重做。")
+            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
+            return
+
+        if action == "set_model":
+            nm = (d.get("model") or "").strip()
+            gen_tool = ("meshy_image_to_image" if g.get("tool") == "meshy_image_to_image"
+                        else "meshy_text_to_image")
+            _blk(phase="done", model=nm or g.get("model", ""),
+                 note="切换模型 %s · 重新生成…" % self.imageModelDisplayName(nm))
+            _drop_token()
+            lines = ["【用户操作 · 切换生图模型重新生成】",
+                     "目标模型：%s" % nm,
+                     "原提示词：%s" % card_prompt,
+                     "请使用相同提示词调用 %s(prompt=..., ai_model=%r) 重新生成。" % (gen_tool, nm)]
             self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
             return
 

@@ -26,6 +26,7 @@ from .schemas import (
 )
 from .network_ops import (
     run_network, run_network_parallel, generate_concepts, concepts_to_3d,
+    parse_image_model, MESHY_IMAGE_MODELS,
     run_animations, search_animations,
     list_library, fetch_library_asset, LIBRARY_KINDS,
     BATCH_TOOLS, MAX_PARALLEL,
@@ -40,6 +41,7 @@ __all__ = [
     "MUTATING_TOOLS", "INTERACTIVE_TOOLS", "LOCAL_TOOLS", "ALL_TOOL_NAMES",
     "BATCH_TOOLS", "MAX_PARALLEL",
     "run_network", "run_network_parallel", "generate_concepts", "concepts_to_3d",
+    "parse_image_model", "MESHY_IMAGE_MODELS",
     "run_animations", "search_animations",
     "list_library", "fetch_library_asset", "LIBRARY_KINDS",
     "has_api_key", "set_api_key", "get_api_key", "masked_key", "clear_api_key",

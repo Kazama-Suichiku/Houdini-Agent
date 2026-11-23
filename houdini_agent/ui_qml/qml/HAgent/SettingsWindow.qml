@@ -316,7 +316,27 @@ Popup {
     Component {
         id: cGeneral
         ColumnLayout {
+            id: genRoot
             spacing: 0
+            property var meshyImgOpts: []
+            property var codexImgOpts: []
+            property string curImgModel: controller ? controller.defaultImageModel : "nano-banana"
+            property bool codexOn: controller ? controller.codexLoggedIn : false
+            function reloadImg() {
+                if (!controller) return
+                meshyImgOpts = controller.meshyImageModelOptions()
+                codexImgOpts = controller.codexImageModelOptions()
+                curImgModel = controller.defaultImageModel
+                codexOn = controller.codexLoggedIn
+            }
+            Component.onCompleted: reloadImg()
+            Connections {
+                target: controller
+                ignoreUnknownSignals: true
+                function onImageModelChanged() { genRoot.reloadImg() }
+                function onLangChanged() { genRoot.reloadImg() }
+            }
+
             SectionTitle { text: win.loc("行为") }
             FieldRow {
                 name: win.loc("显示思考过程")
@@ -336,6 +356,90 @@ Popup {
                 Toggle { on: controller ? controller.memoryEnabled : false
                     onToggled: if (controller) controller.menuAction("memory") }
             }
+            Item { Layout.preferredHeight: 14 }
+            SectionTitle { text: win.loc("图片生成") }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                Layout.bottomMargin: 14
+                spacing: 0
+                Text {
+                    text: win.loc("默认生图模型")
+                    color: Theme.text; font.family: Theme.fontBody; font.pixelSize: Theme.fMd
+                }
+                Text {
+                    Layout.fillWidth: true; Layout.topMargin: 3
+                    text: win.loc("选择文生图、图生图与概念图默认使用的生图后端。登录 ChatGPT 订阅后可直接使用 Codex 生图模型，无需 Meshy API Key。")
+                    color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fXs
+                    wrapMode: Text.Wrap; lineHeight: 1.35
+                }
+                // Meshy 选项
+                Text {
+                    Layout.topMargin: 12
+                    text: "MESHY"
+                    color: Theme.textMute; font.family: Theme.fontMono
+                    font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
+                }
+                Flow {
+                    Layout.fillWidth: true; Layout.topMargin: 7; spacing: 7
+                    Repeater {
+                        model: genRoot.meshyImgOpts
+                        delegate: OptChip {
+                            required property var modelData
+                            text: modelData.label
+                            on: genRoot.curImgModel === modelData.key
+                            onClicked: if (controller) controller.setDefaultImageModel(modelData.key)
+                        }
+                    }
+                }
+                // ChatGPT 订阅（Codex）选项
+                RowLayout {
+                    Layout.fillWidth: true; Layout.topMargin: 13; spacing: 8
+                    Text {
+                        Layout.fillWidth: true
+                        text: win.loc("ChatGPT 订阅") + " (CODEX)"
+                        color: Theme.textMute; font.family: Theme.fontMono
+                        font.pixelSize: Theme.fMicro; font.letterSpacing: Theme.trackLabel
+                    }
+                    TButton {
+                        visible: genRoot.codexOn
+                        label: (controller && controller.codexImageRefreshing) ? win.loc("同步中…") : win.loc("同步模型")
+                        onClicked: if (controller) controller.refreshCodexImageModels()
+                    }
+                    TButton {
+                        visible: !genRoot.codexOn
+                        label: win.loc("登录 ChatGPT 订阅")
+                        onClicked: if (controller) controller.openCodexSubscription()
+                    }
+                }
+                Flow {
+                    visible: genRoot.codexOn
+                    Layout.fillWidth: true; Layout.topMargin: 7; spacing: 7
+                    Repeater {
+                        model: genRoot.codexImgOpts
+                        delegate: OptChip {
+                            required property var modelData
+                            text: modelData.label
+                            on: genRoot.curImgModel === modelData.key
+                            onClicked: if (controller) controller.setDefaultImageModel(modelData.key)
+                        }
+                    }
+                }
+                Text {
+                    visible: genRoot.codexOn
+                    Layout.fillWidth: true; Layout.topMargin: 6
+                    text: win.loc("自动同步自本机 ChatGPT 订阅（Codex）")
+                    color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fXs
+                }
+                Text {
+                    visible: !genRoot.codexOn
+                    Layout.fillWidth: true; Layout.topMargin: 6
+                    text: win.loc("登录 ChatGPT 订阅后，即可自动同步并使用 Codex 生图模型（如 gpt-image-*）。")
+                    color: Theme.textMute; font.family: Theme.fontBody; font.pixelSize: Theme.fXs
+                    wrapMode: Text.Wrap; lineHeight: 1.35
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.borderSoft }
             Item { Layout.preferredHeight: 10 }
             SectionTitle { text: win.loc("常规") }
             FieldRow {
