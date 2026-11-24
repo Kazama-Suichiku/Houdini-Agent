@@ -105,14 +105,15 @@ STATIC_VISION: Set[str] = {
     "glm-5.3-flashx", "kiro-auto",
     # OpenAI 直连
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
-    # OpenRouter（deepseek-v4-pro / glm-5.3 只收文本）
+    # OpenRouter（glm-5.3 只收文本；DeepSeek 全系默认支持图片输入）
     "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
     "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
     "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
-    "google/gemini-4-argon", "google/gemini-3.8-flash", "deepseek/deepseek-v4.1-flash",
+    "google/gemini-4-argon", "google/gemini-3.8-flash",
+    "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro",
     "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3",
-    # DeepSeek 直连
-    "deepseek-v4-flash-vision-exp",
+    # DeepSeek 直连（默认支持图片输入）
+    "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp",
 }
 
 # header._model_features 搬运 + 为新增 id 补齐（prompt caching 全 True；vision 与 STATIC_VISION 一致）
@@ -120,9 +121,9 @@ _FEAT_VIS: Dict[str, bool] = {"supports_prompt_caching": True, "supports_vision"
 _FEAT_TXT: Dict[str, bool] = {"supports_prompt_caching": True, "supports_vision": False}
 
 STATIC_FEATURES: Dict[str, Dict[str, bool]] = {
-    # DeepSeek
-    "deepseek-v4-flash":            dict(_FEAT_TXT),
-    "deepseek-v4-pro":              dict(_FEAT_TXT),
+    # DeepSeek（默认支持图片输入）
+    "deepseek-v4-flash":            dict(_FEAT_VIS),
+    "deepseek-v4-pro":              dict(_FEAT_VIS),
     "deepseek-v4-flash-vision-exp": dict(_FEAT_VIS),
     # GLM
     "glm-4.7":                      dict(_FEAT_TXT),
@@ -163,7 +164,7 @@ STATIC_FEATURES: Dict[str, Dict[str, bool]] = {
     "google/gemini-4-argon":               dict(_FEAT_VIS),
     "google/gemini-3.8-flash":             dict(_FEAT_VIS),
     "deepseek/deepseek-v4.1-flash":        dict(_FEAT_VIS),
-    "deepseek/deepseek-v4-pro":            dict(_FEAT_TXT),
+    "deepseek/deepseek-v4-pro":            dict(_FEAT_VIS),
     "z-ai/glm-5.3":                        dict(_FEAT_TXT),
     "x-ai/grok-4.7":                       dict(_FEAT_VIS),
     "moonshotai/kimi-k3":                  dict(_FEAT_VIS),
@@ -541,7 +542,7 @@ _FAMILY_CONTEXT: List[Tuple[str, int]] = [
     ("gemini", 1048576), ("deepseek", 1048576), ("glm", 1048576),
     ("grok", 500000), ("kimi", 1048576), ("minimax", 1048576),
 ]
-_FAMILY_VISION: Tuple[str, ...] = ("claude", "gpt", "gemini", "grok", "kimi", "minimax", "fable")
+_FAMILY_VISION: Tuple[str, ...] = ("claude", "gpt", "gemini", "grok", "kimi", "minimax", "fable", "deepseek")
 _DEFAULT_CONTEXT = 128000
 
 
@@ -565,17 +566,17 @@ def context_limit(model: str, provider: Optional[str] = None,
 
 def supports_vision(model: str, provider: Optional[str] = None,
                     cache_path: Optional[str] = None) -> bool:
-    """是否支持图像输入：缓存 meta.vision → STATIC_VISION → 家族推断。"""
+    """是否支持图像输入：缓存 meta.vision → STATIC_VISION → 家族/渠道推断（DeepSeek 默认支持）。"""
     mid = str(model or "")
     if provider:
         cached = _cache_meta(load_cache(cache_path), provider, mid).get("vision")
         if isinstance(cached, bool):
             return cached
+        if str(provider).lower() == "deepseek":
+            return True
     if mid in STATIC_VISION:
         return True
     low = mid.lower()
-    if "deepseek" in low:
-        return "vision" in low
     if "glm" in low:
         return False
     for family in _FAMILY_VISION:
