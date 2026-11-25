@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.2</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.3</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (19)</span><span class="en">All (19)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (20)</span><span class="en">All (20)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.2", date:"2026-11-24", size:"71.0 MB", latest:true, series:"2.1", milestone:false, badge:"DEEPSEEK VISION",
+  {ver:"2.1.3", date:"2026-11-25", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"MULTI-INSTANCE",
+   sha:"b352529a8ab3caf8f6b49003ce22a9feb5bdd68ce7799619f918583ca406b012",
+   zh:"支持同版本多开与不同版本 Houdini（如 20.5 + 21.0）同时接入并跨文件操作：修复 Windows 端口复用导致多开抢占同一端口的问题，独立登记各实例的 PID、版本号与 .hip 文件名；状态栏新增一键实例切换下拉与再启动入口；Agent 新增 list_houdini_instances、switch_houdini_instance、run_in_houdini_instance 与 transfer_nodes_between_instances，可跨打开的工程直接查看、修改并无损复制节点网络。",
+   en:"Full multi-instance Houdini & cross-file support (same-version multiple windows + cross-version e.g. 20.5 & 21.0): fixed Windows port collision, added per-instance discovery with PID, version & .hip filename, added a 1-click instance switcher in the context bar, and introduced 4 cross-instance Agent tools including lossless node transfer across open .hip files."},
+  {ver:"2.1.2", date:"2026-11-24", size:"71.0 MB", latest:false, series:"2.1", milestone:false, badge:"DEEPSEEK VISION",
    sha:"cd8bb6b440729cd96c1d053be3c31a39d6e67a85426d73d7cd2543c70b00c485",
    zh:"DeepSeek 全系模型（含直连 deepseek-v4-flash / deepseek-v4-pro、OpenRouter 及后续动态拉取的新模型）默认开启多模态图片输入与视口截图能力，无需再单独切换视觉实验版。",
    en:"All DeepSeek models (direct deepseek-v4-flash / deepseek-v4-pro, OpenRouter, and newly synced models) now support multimodal image input and viewport capture by default."},
