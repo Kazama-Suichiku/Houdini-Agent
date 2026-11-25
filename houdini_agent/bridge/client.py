@@ -19,6 +19,35 @@ def port_file():
     return Path(base) / "HoudiniAgent" / "bridge.port"
 
 
+def bridges_dir():
+    """多实例发现目录：每个启动的 Houdini Bridge 写入 <pid>.json，互不覆盖。"""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "HoudiniAgent" / "bridges"
+
+
+def registered_ports():
+    """读取所有已登记的 Bridge 实例端口（按修改时间新到旧，去重）。"""
+    d = bridges_dir()
+    if not d.is_dir():
+        return []
+    entries = []
+    for f in d.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            p = int(data.get("port") or 0)
+            if 0 < p < 65536:
+                entries.append((f.stat().st_mtime, p))
+        except Exception:
+            continue
+    entries.sort(reverse=True)
+    seen, out = set(), []
+    for _, p in entries:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 def _read_port_file():
     try:
         return int(port_file().read_text(encoding="utf-8").strip())
@@ -97,3 +126,16 @@ class BridgeClient:
             return self.request("scene_context", timeout=2.0)
         except Exception:
             return None
+
+    def export_items(self, node_paths, file_path):
+        return self.request("export_items", {
+            "node_paths": list(node_paths or []),
+            "file_path": str(file_path or ""),
+        }, timeout=60.0)
+
+    def import_items(self, parent_path, file_path, create_parent=True):
+        return self.request("import_items", {
+            "parent_path": str(parent_path or "/obj"),
+            "file_path": str(file_path or ""),
+            "create_parent": bool(create_parent),
+        }, timeout=60.0)

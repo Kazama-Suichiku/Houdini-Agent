@@ -288,6 +288,8 @@ def install_all_packages(repo_root, installs=None):
 def launch_houdini(repo_root, install):
     install_package(repo_root, install)
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("PYTHON")}
+    # 清除本进程因 adopt_port 写入的端口固定值，让新开的 Houdini 从默认端口段自动分配空闲槽位
+    env.pop("HAGENT_BRIDGE_PORT", None)
     env["HAGENT_REPO"] = str(_bridge_python_root(repo_root))
     env["HAGENT_EXTERNAL_LAUNCH"] = "1"
     return subprocess.Popen([install["exe"]], cwd=install["path"], env=env)

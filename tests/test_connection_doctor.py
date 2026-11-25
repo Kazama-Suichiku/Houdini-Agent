@@ -251,3 +251,165 @@ def test_connection_tool_schemas_wellformed():
     for t in doctor.CONNECTION_TOOLS:
         f = t["function"]
         assert f["description"] and f["parameters"]["type"] == "object"
+
+
+# ------------------------------------------------------------------ multi-instance & cross-file
+
+def _start_rich_bridge(houdini_ver, hip_path, pid, path="/obj/geo1",
+                       on_tool=None, on_export=None, on_import=None):
+    """启一个模拟完整多实例协议（ping / scene_context / execute_tool / export_items / import_items）的假 Bridge。"""
+    import os
+    hip_name = os.path.basename(hip_path) if hip_path else "untitled.hip"
+
+    class H(socketserver.StreamRequestHandler):
+        def handle(self):
+            line = self.rfile.readline(1024 * 1024)
+            if not line:
+                return
+            req = json.loads(line.decode("utf-8"))
+            act = req.get("action")
+            pl = req.get("payload") or {}
+            port = self.server.server_address[1]
+            if act == "ping":
+                res = {"status": "ok", "houdini": houdini_ver, "pid": pid, "port": port,
+                       "hip_path": hip_path, "hip_name": hip_name}
+            elif act == "scene_context":
+                res = {"status": "ok", "houdini": houdini_ver, "pid": pid, "port": port,
+                       "hip_path": hip_path, "hip_name": hip_name, "path": path, "selection": "1 node selected"}
+            elif act == "execute_tool":
+                res = on_tool(pl) if on_tool else {"success": True, "result": "ran %s on %s" % (pl.get("name"), hip_name)}
+            elif act == "export_items":
+                if on_export:
+                    res = on_export(pl)
+                else:
+                    fp = pl["file_path"]
+                    open(fp, "wb").write(b"FAKE-CPIO:" + ",".join(pl["node_paths"]).encode("utf-8"))
+                    res = {"success": True, "file_path": fp, "parent": "/obj/geo1",
+                           "count": len(pl["node_paths"]),
+                           "names": [p.rsplit("/", 1)[-1] for p in pl["node_paths"]],
+                           "paths": pl["node_paths"]}
+            elif act == "import_items":
+                if on_import:
+                    res = on_import(pl)
+                else:
+                    data = open(pl["file_path"], "rb").read().decode("utf-8")
+                    assert data.startswith("FAKE-CPIO:")
+                    parent = pl.get("parent_path") or "/obj"
+                    names = [p.rsplit("/", 1)[-1] for p in data.split(":", 1)[1].split(",")]
+                    created = [parent.rstrip("/") + "/" + n for n in names]
+                    res = {"success": True, "parent": parent, "created": created, "count": len(created)}
+            else:
+                out = {"id": req.get("id"), "success": False, "error": "unknown action: %s" % act}
+                self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
+                return
+            out = {"id": req.get("id"), "success": True, "result": res}
+            self.wfile.write((json.dumps(out) + "\n").encode("utf-8"))
+
+    class Srv(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    srv = Srv(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, srv.server_address[1]
+
+
+def test_server_rejects_duplicate_bind_same_port():
+    """多开 Houdini 不能绑定同一个端口（Windows 必须用 SO_EXCLUSIVEADDRUSE 禁止重绑）。"""
+    from houdini_agent.bridge.server import _Server
+    s1 = _Server(("127.0.0.1", 0), socketserver.BaseRequestHandler)
+    port = s1.server_address[1]
+    try:
+        with pytest.raises(OSError):
+            s2 = _Server(("127.0.0.1", port), socketserver.BaseRequestHandler)
+            s2.server_close()
+    finally:
+        s1.server_close()
+
+
+def test_discover_distinguish_and_switch_multi_instances(monkeypatch):
+    """同版本多开（两个 21.0）+ 跨版本（20.5）同时在线：能全部发现、按文件名/版本/端口区分并切换。"""
+    s1, p1 = _start_rich_bridge("21.0.440", "D:/proj/shot_010.hip", pid=1001)
+    s2, p2 = _start_rich_bridge("21.0.440", "D:/proj/character_rig.hip", pid=1002)
+    s3, p3 = _start_rich_bridge("20.5.332", "D:/proj/fx_sim.hip", pid=1003)
+    try:
+        monkeypatch.setenv("HAGENT_BRIDGE_PORT", str(p1))
+        monkeypatch.setattr(doctor, "_candidate_ports", lambda: [p1, p2, p3])
+        found = doctor.discover_all_bridges(include_context=True)
+        assert len(found) == 3
+        assert {i["hip_name"] for i in found} == {"shot_010.hip", "character_rig.hip", "fx_sim.hip"}
+        assert [i["port"] for i in found if i["active"]] == [p1]
+
+        # 按 .hip 名、唯一版本号、PID、端口均可准确解析
+        inst, err = doctor.resolve_instance("character_rig.hip", instances=found)
+        assert err == "" and inst["port"] == p2
+        inst, err = doctor.resolve_instance("20.5", instances=found)
+        assert err == "" and inst["port"] == p3
+        inst, err = doctor.resolve_instance("pid:1002", instances=found)
+        assert err == "" and inst["port"] == p2
+        inst, err = doctor.resolve_instance(str(p3), instances=found)
+        assert err == "" and inst["port"] == p3
+
+        # 同版本有两个 21.0 实例时，只传 "21.0" 应报清晰消歧提示而非盲猜
+        inst, err = doctor.resolve_instance("21.0", instances=found)
+        assert inst is None and "多个" in err
+
+        # 切换默认实例到 20.5
+        sw = doctor.switch_instance("fx_sim.hip")
+        assert sw["success"] is True and sw["port"] == p3
+        assert resolve_port() == p3
+
+        # 列出实例摘要包含全部 3 个并标明当前默认
+        lst = doctor.list_instances_result()
+        assert lst["success"] is True and lst["count"] == 3
+        assert "fx_sim.hip" in lst["result"] and "[当前默认]" in lst["result"]
+    finally:
+        for s in (s1, s2, s3):
+            s.shutdown()
+            s.server_close()
+
+
+def test_run_in_instance_and_cross_instance_transfer(monkeypatch):
+    """跨文件/跨版本定向执行工具 + 跨实例无损传输节点（导出 .cpio → 导入目标并清理临时文件）。"""
+    captured_tmp = []
+
+    def _rec_export(pl):
+        captured_tmp.append(pl["file_path"])
+        open(pl["file_path"], "wb").write(b"FAKE-CPIO:" + ",".join(pl["node_paths"]).encode("utf-8"))
+        return {"success": True, "file_path": pl["file_path"], "parent": "/obj/geo1",
+                "count": len(pl["node_paths"]),
+                "names": [p.rsplit("/", 1)[-1] for p in pl["node_paths"]],
+                "paths": pl["node_paths"]}
+
+    s_src, p_src = _start_rich_bridge("20.5.332", "D:/proj/asset_src.hip", pid=2001, on_export=_rec_export)
+    s_dst, p_dst = _start_rich_bridge("21.0.440", "D:/proj/shot_dst.hip", pid=2002)
+    try:
+        monkeypatch.setenv("HAGENT_BRIDGE_PORT", str(p_dst))
+        monkeypatch.setattr(doctor, "_candidate_ports", lambda: [p_src, p_dst])
+
+        # 1) 不切换默认实例，直接去 20.5 源实例查询场景
+        r = doctor.run_in_instance("asset_src.hip", "get_scene_info", {})
+        assert r["success"] is True
+        assert "asset_src.hip" in r["result"]
+        assert resolve_port() == p_dst   # 默认实例未被改变
+
+        # 2) 只读模式下禁止在其它实例写入
+        ro = doctor.run_in_instance("asset_src.hip", "create_node", {"type": "box"}, read_only=True)
+        assert ro["success"] is False and "只读模式" in ro["error"]
+
+        # 3) 跨版本（20.5 -> 21.0）传输节点
+        xfer = doctor.transfer_nodes(
+            "asset_src.hip", "shot_dst.hip",
+            ["/obj/geo1/grid1", "/obj/geo1/mountain_vex"],
+            target_parent="/obj/imported_geo",
+        )
+        assert xfer["success"] is True
+        assert xfer["created"] == ["/obj/imported_geo/grid1", "/obj/imported_geo/mountain_vex"]
+        assert "asset_src.hip" in xfer["result"] and "shot_dst.hip" in xfer["result"]
+        # 临时 .cpio 文件已清理
+        import os
+        assert captured_tmp and not os.path.exists(captured_tmp[0])
+    finally:
+        for s in (s_src, s_dst):
+            s.shutdown()
+            s.server_close()

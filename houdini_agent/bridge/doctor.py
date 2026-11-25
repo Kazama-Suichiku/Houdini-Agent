@@ -12,13 +12,19 @@
     由 BridgeAgentSession 注册、controller 在 app 侧执行
 """
 
+import concurrent.futures
 import json
 import os
 import socket
+import tempfile
 import time
+import uuid
 from pathlib import Path
 
-from .client import BridgeClient, DEFAULT_HOST, _FALLBACK_PORT, port_file, resolve_port
+from .client import (
+    BridgeClient, DEFAULT_HOST, _FALLBACK_PORT,
+    bridges_dir, port_file, registered_ports, resolve_port,
+)
 
 # 服务器端口被占时自动顺延的范围（与 server.start_bridge 的 candidates 一致）
 _PORT_SPAN = 21
@@ -27,7 +33,7 @@ _PORT_SPAN = 21
 CONNECTION_TOOLS = [
     {"type": "function", "function": {
         "name": "check_houdini_connection",
-        "description": ("体检 Houdini Bridge 连接：Houdini 是否在运行、端口探测、集成包安装状态、"
+        "description": ("体检 Houdini Bridge 连接：Houdini 是否在运行、所有已连接实例列表、端口探测、集成包安装状态、"
                         "桥接/启动器日志摘要，并给出具体修复建议（advice 字段）。"
                         "场景工具报告 Houdini 未连接时先调用它定位原因。"
                         "聊天、Plan 和 Meshy 生成不依赖此连接，仅场景工具需要。"),
@@ -50,9 +56,57 @@ CONNECTION_TOOLS = [
                              "description": "最长等待秒数：reconnect 默认 10，launch_houdini 默认 90"},
         }, "required": ["action"]},
     }},
+    {"type": "function", "function": {
+        "name": "list_houdini_instances",
+        "description": ("列出当前本机所有正在运行且已接入 Bridge 的 Houdini 实例（支持同版本多开与不同版本同时打开）。"
+                        "返回每个实例的 port、pid、Houdini 版本、当前打开的 .hip 文件名与路径、当前网络路径及是否为当前活跃目标。"
+                        "当用户提到多个 Houdini 窗口、不同版本、或要跨文件读取/复制节点时，先调用本工具确认各实例身份。"),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    }},
+    {"type": "function", "function": {
+        "name": "switch_houdini_instance",
+        "description": ("切换后续默认场景工具所指向的活跃 Houdini 实例。"
+                        "instance 可填端口号（如 '45173'）、PID、.hip 文件名/路径关键词（如 'shot_010.hip'）、"
+                        "唯一版本号（如 '20.5'）或 list_houdini_instances 返回的序号（如 '2'）。"),
+        "parameters": {"type": "object", "properties": {
+            "instance": {"type": "string",
+                         "description": "目标实例标识：端口 / PID / .hip 文件名 / 版本号 / 序号"},
+        }, "required": ["instance"]},
+    }},
+    {"type": "function", "function": {
+        "name": "run_in_houdini_instance",
+        "description": ("在指定的某个 Houdini 实例上直接执行任意场景工具（无需反复切换默认实例），"
+                        "用于跨文件查看节点/参数/VEX、对比两个打开的 .hip 场景，或定向修改另一个 Houdini 窗口中的节点。"),
+        "parameters": {"type": "object", "properties": {
+            "instance": {"type": "string",
+                         "description": "目标实例标识：端口 / PID / .hip 文件名 / 版本号 / 序号"},
+            "tool_name": {"type": "string",
+                          "description": "要在该实例执行的 Houdini 场景工具名（如 get_scene_info / inspect_node / create_node / execute_python 等）"},
+            "arguments": {"type": "object",
+                          "description": "传给该工具的参数字典（可选）"},
+        }, "required": ["instance", "tool_name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "transfer_nodes_between_instances",
+        "description": ("【跨文件 / 跨 Houdini 实例传输节点】把源 Houdini 实例中的一个或多个节点（含连线、参数、VEX Wrangle、子网等）"
+                        "经 Houdini 原生 saveItemsToFile/loadItemsFromFile 无损复制到另一个已打开的 Houdini 实例（支持同版本多开与跨版本如 20.5 ↔ 21.0）。"
+                        "同一批 node_paths 必须位于同一个父网络下；目标父网络若是 /obj/<name> 且不存在会自动创建 geo 容器。"),
+        "parameters": {"type": "object", "properties": {
+            "source_instance": {"type": "string",
+                                "description": "源 Houdini 实例标识（端口 / PID / .hip 名 / 版本号 / 序号）"},
+            "target_instance": {"type": "string",
+                                "description": "目标 Houdini 实例标识（端口 / PID / .hip 名 / 版本号 / 序号）"},
+            "node_paths": {"type": "array", "items": {"type": "string"},
+                           "description": "要复制的源节点绝对路径列表（同一父网络下），如 ['/obj/geo1/grid1', '/obj/geo1/mountain1'] 或 ['/obj/hero_geo']"},
+            "target_parent": {"type": "string",
+                              "description": "目标实例里的父网络路径，默认 '/obj'（传 SOP 节点时可填 '/obj/geo1' 等）"},
+            "create_parent": {"type": "boolean",
+                              "description": "目标 /obj/<name> 容器不存在时是否自动创建 geo 节点，默认 true"},
+        }, "required": ["source_instance", "target_instance", "node_paths"]},
+    }},
 ]
 
-CONNECTION_TOOL_NAMES = {"check_houdini_connection", "repair_houdini_connection"}
+CONNECTION_TOOL_NAMES = {t["function"]["name"] for t in CONNECTION_TOOLS}
 
 
 # ---------------------------------------------------------------- primitives
@@ -86,11 +140,15 @@ def _env_base():
 
 
 def _candidate_ports():
-    """所有可能有 Bridge 的端口，去重保序：当前解析端口、发现文件端口、
-    env 基址顺延段、默认基址顺延段（覆盖"env/文件过期指错、服务器顺延换端口"全部情况）。"""
+    """所有可能有 Bridge 的端口，去重保序：当前解析端口、发现文件端口、多实例登记端口、
+    env 基址顺延段、默认基址顺延段（覆盖"env/文件过期指错、服务器顺延换端口、多实例并存"全部情况）。"""
     cands = [resolve_port()]
     try:
         cands.append(int(port_file().read_text(encoding="utf-8").strip()))
+    except Exception:
+        pass
+    try:
+        cands += registered_ports()
     except Exception:
         pass
     env = _env_base()
@@ -120,6 +178,326 @@ def _ping(port):
         return BridgeClient(port=port, connect_timeout=0.3).ping()
     except Exception:
         return None
+
+
+def _short_houdini_ver(ver):
+    parts = str(ver or "").strip().split(".")
+    if len(parts) >= 2 and parts[0].isdigit():
+        return "H%s.%s" % (parts[0], parts[1])
+    return ("H" + str(ver).strip()) if ver else "Houdini"
+
+
+def format_instance_label(inst, include_port=False):
+    ver = _short_houdini_ver(inst.get("houdini"))
+    hip = str(inst.get("hip_name") or "").strip()
+    if not hip and inst.get("hip_path"):
+        hip = os.path.basename(str(inst["hip_path"]))
+    base = "%s · %s" % (ver, hip) if hip else ver
+    if include_port and inst.get("port"):
+        return "%s (:%s)" % (base, inst["port"])
+    return base
+
+
+def _probe_instance(port, include_context=True):
+    """探测单个端口：返回标准化实例字典，未开或非 Bridge 返回 None。"""
+    if _tcp_state(port, timeout=0.25) != "open":
+        return None
+    cli = BridgeClient(port=port, connect_timeout=0.3)
+    info = None
+    if include_context:
+        ctx = cli.scene_context()
+        if isinstance(ctx, dict) and (ctx.get("houdini") or ctx.get("path")):
+            info = ctx
+    if not isinstance(info, dict):
+        ping = cli.ping()
+        if not (isinstance(ping, dict) and ping.get("status") == "ok"):
+            return None
+        info = ping
+    hip_path = str(info.get("hip_path") or "")
+    hip_name = str(info.get("hip_name") or "") or (os.path.basename(hip_path) if hip_path else "")
+    inst = {
+        "id": "port:%d" % port,
+        "port": int(port),
+        "pid": int(info.get("pid") or 0) or None,
+        "houdini": str(info.get("houdini") or ""),
+        "hip_path": hip_path,
+        "hip_name": hip_name,
+        "path": str(info.get("path") or "/obj"),
+        "selection": str(info.get("selection") or ""),
+    }
+    inst["label"] = format_instance_label(inst, include_port=False)
+    return inst
+
+
+def _prune_stale_registrations(live_ports):
+    """清理 bridges/ 下已退出实例遗留的登记文件（仅清理不在 live_ports 且端口不通的）。"""
+    d = bridges_dir()
+    if not d.is_dir():
+        return
+    live_set = set(int(p) for p in (live_ports or []))
+    for f in d.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            p = int(data.get("port") or 0)
+            if p and p not in live_set and _tcp_state(p, timeout=0.12) != "open":
+                f.unlink()
+        except Exception:
+            continue
+
+
+def discover_all_bridges(heartbeat=None, include_context=True):
+    """并发扫描全部候选端口，发现所有活着的 Houdini Bridge 实例（支持同版本多开与跨版本）。
+    返回按端口升序排列的实例列表，并标明当前 active 实例。"""
+    cands = _candidate_ports()
+    if not cands:
+        return []
+    active_port = resolve_port()
+    found = []
+    workers = min(12, len(cands))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_probe_instance, p, include_context): p for p in cands}
+        for f in concurrent.futures.as_completed(futs):
+            if heartbeat:
+                try:
+                    heartbeat()
+                except Exception:
+                    pass
+            try:
+                inst = f.result()
+            except Exception:
+                inst = None
+            if inst is not None:
+                found.append(inst)
+    found.sort(key=lambda x: x["port"])
+    for idx, inst in enumerate(found, 1):
+        inst["index"] = idx
+        inst["active"] = (inst["port"] == active_port)
+    try:
+        _prune_stale_registrations([x["port"] for x in found])
+    except Exception:
+        pass
+    return found
+
+
+def resolve_instance(query, instances=None, heartbeat=None):
+    """按端口 / PID / 序号 / .hip 文件名 / 版本号解析目标 Houdini 实例。
+    返回 (instance_dict, "") 或 (None, 可读中文错误说明)。"""
+    if instances is None:
+        instances = discover_all_bridges(heartbeat=heartbeat, include_context=True)
+    if not instances:
+        return None, "当前没有已连接的 Houdini 实例。请先启动 Houdini 或调用 check_houdini_connection 排查。"
+    q = str(query or "").strip()
+    if not q:
+        for inst in instances:
+            if inst.get("active"):
+                return inst, ""
+        return instances[0], ""
+
+    low = q.lower()
+    # 1) 显式 port:<n> 或精确端口匹配
+    port_q = low[5:] if low.startswith("port:") else (low[1:] if low.startswith(":") else low)
+    if port_q.isdigit():
+        num = int(port_q)
+        for inst in instances:
+            if inst["port"] == num:
+                return inst, ""
+        for inst in instances:
+            if inst.get("pid") == num:
+                return inst, ""
+        if 1 <= num <= len(instances):
+            return instances[num - 1], ""
+
+    # 2) 显式 pid:<n>
+    if low.startswith("pid:") and low[4:].isdigit():
+        pid = int(low[4:])
+        for inst in instances:
+            if inst.get("pid") == pid:
+                return inst, ""
+
+    # 3) 精确文件名/路径匹配
+    exact = [inst for inst in instances if (
+        (inst.get("hip_name") or "").lower() == low
+        or (inst.get("hip_path") or "").lower() == low
+        or (inst.get("houdini") or "").lower() == low
+    )]
+    if len(exact) == 1:
+        return exact[0], ""
+    if len(exact) > 1:
+        desc = "；".join("#%d %s (:%d, pid=%s)" % (
+            i["index"], i["label"], i["port"], i.get("pid") or "?") for i in exact)
+        return None, "匹配到多个 Houdini 实例（%s），请用端口号或完整 .hip 路径指定：%s" % (q, desc)
+
+    # 4) 子串模糊匹配（.hip 文件名、路径、版本号、显示标签）
+    fuzzy = []
+    for inst in instances:
+        hay = " ".join([
+            str(inst.get("hip_name") or ""),
+            str(inst.get("hip_path") or ""),
+            str(inst.get("houdini") or ""),
+            str(inst.get("label") or ""),
+            str(inst.get("port") or ""),
+        ]).lower()
+        if low in hay:
+            fuzzy.append(inst)
+    if len(fuzzy) == 1:
+        return fuzzy[0], ""
+    if len(fuzzy) > 1:
+        desc = "；".join("#%d %s (:%d, pid=%s)" % (
+            i["index"], i["label"], i["port"], i.get("pid") or "?") for i in fuzzy)
+        return None, "关键词 %r 匹配到多个 Houdini 实例，请用端口号或更精确的 .hip 名区分：%s" % (q, desc)
+
+    avail = "；".join("#%d %s (:%d)" % (i["index"], i["label"], i["port"]) for i in instances)
+    return None, "未找到匹配的 Houdini 实例 %r。当前在线实例：%s" % (q, avail)
+
+
+def list_instances_result(heartbeat=None):
+    instances = discover_all_bridges(heartbeat=heartbeat, include_context=True)
+    if not instances:
+        return {
+            "success": True,
+            "count": 0,
+            "instances": [],
+            "result": "当前没有已连接的 Houdini 实例。请先打开 Houdini（可调用 check_houdini_connection 排查）。",
+        }
+    # 若当前活跃端口已不在在线列表里，自动切到第一个活实例
+    if not any(i.get("active") for i in instances):
+        adopt_port(instances[0]["port"])
+        instances[0]["active"] = True
+    lines = ["当前共发现 %d 个在线 Houdini 实例：" % len(instances)]
+    for inst in instances:
+        mark = " [当前默认]" if inst.get("active") else ""
+        hip_info = inst.get("hip_path") or inst.get("hip_name") or "未命名场景"
+        lines.append(
+            "- #%d %s%s | port=%d | pid=%s | hip=%s | network=%s (%s)"
+            % (inst["index"], inst["label"], mark, inst["port"],
+               inst.get("pid") or "?", hip_info, inst.get("path") or "/obj",
+               inst.get("selection") or "no selection"))
+    return {
+        "success": True,
+        "count": len(instances),
+        "instances": instances,
+        "result": "\n".join(lines),
+    }
+
+
+def switch_instance(query, heartbeat=None):
+    instances = discover_all_bridges(heartbeat=heartbeat, include_context=True)
+    inst, err = resolve_instance(query, instances=instances)
+    if err:
+        return {"success": False, "error": err, "instances": instances}
+    adopt_port(inst["port"])
+    for item in instances:
+        item["active"] = (item["port"] == inst["port"])
+    return {
+        "success": True,
+        "reconnected": True,
+        "switched": True,
+        "port": inst["port"],
+        "instance": inst,
+        "instances": instances,
+        "result": "已将当前活跃 Houdini 实例切换为 #%d %s（端口 %d，文件 %s）。后续场景工具将默认作用于此实例。"
+                  % (inst["index"], inst["label"], inst["port"],
+                     inst.get("hip_path") or inst.get("hip_name") or "untitled.hip"),
+    }
+
+
+def run_in_instance(instance_query, tool_name, arguments=None, heartbeat=None, read_only=False):
+    tool_name = str(tool_name or "").strip()
+    if not tool_name:
+        return {"success": False, "error": "缺少 tool_name"}
+    if tool_name in CONNECTION_TOOL_NAMES:
+        return {"success": False, "error": "不能通过 run_in_houdini_instance 嵌套调用连接工具 %s" % tool_name}
+    if read_only:
+        from .server import _MUTATING
+        if tool_name in _MUTATING or tool_name in ("save_hip", "delete_node", "execute_shell"):
+            return {"success": False, "error": "当前处于只读模式（Ask/Plan），禁止在实例上执行写入工具 %s" % tool_name}
+    inst, err = resolve_instance(instance_query, heartbeat=heartbeat)
+    if err:
+        return {"success": False, "error": err}
+    try:
+        cli = BridgeClient(port=inst["port"])
+        res = cli.execute_tool(tool_name, arguments or {})
+    except Exception as e:
+        return {"success": False, "error": "在实例 %s (:%d) 上执行 %s 失败: %s"
+                                           % (inst["label"], inst["port"], tool_name, e)}
+    if isinstance(res, dict):
+        res.setdefault("_instance", {
+            "port": inst["port"], "pid": inst.get("pid"),
+            "houdini": inst.get("houdini"), "hip_name": inst.get("hip_name"),
+            "label": inst["label"],
+        })
+        if res.get("success") and res.get("result"):
+            res["result"] = "[%s :%d]\n%s" % (inst["label"], inst["port"], res["result"])
+        return res
+    return {"success": False, "error": "工具返回了非字典结果"}
+
+
+def transfer_nodes(source_instance, target_instance, node_paths, target_parent="/obj",
+                   create_parent=True, heartbeat=None):
+    """跨 Houdini 实例/文件复制节点（经 Houdini 原生 saveItemsToFile / loadItemsFromFile）。"""
+    paths = [str(p).strip() for p in (node_paths or []) if str(p or "").strip()]
+    if not paths:
+        return {"success": False, "error": "node_paths 不能为空"}
+    instances = discover_all_bridges(heartbeat=heartbeat, include_context=True)
+    src, err = resolve_instance(source_instance, instances=instances)
+    if err:
+        return {"success": False, "error": "源实例解析失败：%s" % err}
+    dst, err = resolve_instance(target_instance, instances=instances)
+    if err:
+        return {"success": False, "error": "目标实例解析失败：%s" % err}
+
+    tmp_file = os.path.join(tempfile.gettempdir(), "hagent_xfer_%s.cpio" % uuid.uuid4().hex[:12])
+    try:
+        src_cli = BridgeClient(port=src["port"])
+        try:
+            exp = src_cli.export_items(paths, tmp_file)
+        except Exception as e:
+            if "unknown action" in str(e).lower():
+                return {"success": False,
+                        "error": "源实例 %s (:%d) 正在运行旧版 Bridge，尚未支持跨实例传输。"
+                                 "请保存并重启该 Houdini 实例后重试。" % (src["label"], src["port"])}
+            return {"success": False, "error": "从源实例 %s 导出节点失败: %s" % (src["label"], e)}
+        if not isinstance(exp, dict) or not exp.get("success"):
+            return {"success": False, "error": (exp or {}).get("error") or "导出源节点失败"}
+
+        dst_cli = BridgeClient(port=dst["port"])
+        try:
+            imp = dst_cli.import_items(target_parent or "/obj", tmp_file, create_parent=create_parent)
+        except Exception as e:
+            if "unknown action" in str(e).lower():
+                return {"success": False,
+                        "error": "目标实例 %s (:%d) 正在运行旧版 Bridge，尚未支持跨实例传输。"
+                                 "请保存并重启该 Houdini 实例后重试。" % (dst["label"], dst["port"])}
+            return {"success": False, "error": "向目标实例 %s 导入节点失败: %s" % (dst["label"], e)}
+        if not isinstance(imp, dict) or not imp.get("success"):
+            return {"success": False, "error": (imp or {}).get("error") or "导入目标节点失败"}
+
+        created = imp.get("created") or []
+        summary = (
+            "已从 [%s :%d] 跨文件传输 %d 个节点（%s）到 [%s :%d] 的 %s，新建路径：%s"
+            % (src["label"], src["port"], exp.get("count", len(paths)),
+               ", ".join(exp.get("names") or paths),
+               dst["label"], dst["port"], imp.get("parent") or target_parent,
+               ", ".join(created) if created else "(详见目标网络)")
+        )
+        out = {
+            "success": True,
+            "source": src,
+            "target": dst,
+            "exported": exp.get("paths") or paths,
+            "created": created,
+            "parent": imp.get("parent") or target_parent,
+            "result": summary,
+        }
+        if imp.get("_node_changes"):
+            out["_node_changes"] = imp["_node_changes"]
+        return out
+    finally:
+        try:
+            if os.path.isfile(tmp_file):
+                os.remove(tmp_file)
+        except OSError:
+            pass
 
 
 def scan_for_bridge(heartbeat=None):
@@ -211,10 +589,13 @@ def diagnose():
                     entry["parse_error"] = str(e)
             packages.append(entry)
 
+    all_instances = discover_all_bridges(include_context=False)
     out = {
         "success": True,
         "bridge_connected": connected,
         "port": {"resolved": resolved, "source": source},
+        "instance_count": len(all_instances),
+        "instances": all_instances,
         "houdini_running": running,
         "houdini_installs": [{"version": i["version"], "path": i["path"]} for i in installs],
         "packages": packages,
@@ -225,8 +606,10 @@ def diagnose():
 
     if connected:
         out["houdini"] = ping_res.get("houdini")
-        out["advice"] = ("Bridge 连接正常（端口 %d，Houdini %s），场景工具可用。"
-                         % (resolved, ping_res.get("houdini")))
+        extra = ("（当前共发现 %d 个在线 Houdini 实例，可用 list_houdini_instances / switch_houdini_instance / transfer_nodes_between_instances 跨实例协作）"
+                 % len(all_instances)) if len(all_instances) > 1 else ""
+        out["advice"] = ("Bridge 连接正常（端口 %d，Houdini %s），场景工具可用。%s"
+                         % (resolved, ping_res.get("houdini"), extra))
         return out
 
     found, _info = scan_for_bridge()

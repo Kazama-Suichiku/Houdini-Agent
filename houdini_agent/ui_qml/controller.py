@@ -83,7 +83,7 @@ except Exception:
 CONFIRM_TOOLS = {"create_node", "create_nodes_batch", "create_wrangle_node", "delete_node",
                  "set_node_parameter", "batch_set_parameters", "connect_nodes", "copy_node",
                  "execute_python", "execute_shell", "save_hip", "run_skill",
-                 "repair_houdini_connection"}
+                 "repair_houdini_connection", "transfer_nodes_between_instances"}
 
 # Meshy 集成（自包含包，import 即自注册到 ToolRegistry）。
 # 网络工具在 app 侧后台线程执行；生成类工具消耗 credits，纳入确认门。
@@ -162,6 +162,12 @@ UI_EN = {
     "Codex 生图模型已更新": "Codex image models updated",
     "同步 Codex 生图模型失败：": "Failed to sync Codex image models: ",
     "请先登录 ChatGPT 订阅后再选择 Codex 生图模型": "Sign in to your ChatGPT plan before choosing a Codex image model",
+    # 多 Houdini 实例管理
+    "刷新实例列表": "Refresh Houdini instances",
+    "启动另一个 Houdini…": "Launch another Houdini…",
+    "未连接 Houdini": "No Houdini connected",
+    "没有已连接的 Houdini 实例": "No connected Houdini instances",
+    "已切换到 ": "Switched to ",
     # 规则编辑器
     "新建": "New", "未命名": "Untitled", "打开规则目录": "Open rules folder",
     "还没有规则": "No rules yet",
@@ -582,6 +588,9 @@ class Controller(QObject):
     toast = Signal(str)                   # transient message
     prefillComposer = Signal(str)         # text -> 预填输入框并聚焦（库里"+用 Meshy 生成"）
     requestOpenHoudini = Signal()         # 断开时请求外部协调器弹启动器/重连 Houdini
+    requestLaunchAnotherHoudini = Signal()  # 多开：请求外部协调器再启动另一个 Houdini
+    houdiniInstancesChanged = Signal()    # 在线 Houdini 实例列表或当前活跃实例变化
+    _sigInstances = Signal(str)           # worker -> main: 扫描到的实例列表 JSON
     openFontDialog = Signal()             # request the font-size slider popup
     openTokenDialog = Signal()            # request the token analytics popup (QML)
     openInfoDialog = Signal(str, str)      # title, body (QML)
@@ -656,6 +665,8 @@ class Controller(QObject):
         self._density_key = "normal"      # compact | normal | roomy
         self._default_image_model = ""    # ""=自动（未配 Meshy Key 且已登录 Codex 时自动走 Codex，否则 nano-banana）
         self._codex_image_refreshing = False
+        self._houdini_instances = []      # 多实例列表：[{port, pid, houdini, hip_name, hip_path, path, selection, active, label}]
+        self._scanning_instances = False
         self._my_templates = []           # 用户自存模板（templates.json）
         self._scene_path = "/obj"
         self._scene_sel = "no selection"
@@ -804,8 +815,10 @@ class Controller(QObject):
         self._sigSub.connect(self._on_sub_event)
         self._sigModels.connect(self._on_models_refreshed)
         self._sigCodexImageRefresh.connect(self._on_codex_image_refreshed)
+        self._sigInstances.connect(self._on_instances_scanned)
         self.subscriptionChanged.connect(self.imageModelChanged)
         self.langChanged.connect(self.imageModelChanged)
+        self.langChanged.connect(self.houdiniInstancesChanged)
         self.meshyAccountChanged.connect(self.imageModelChanged)
         self.providerChanged.connect(self.effortChanged)
         self.modelChanged.connect(self.effortChanged)
@@ -894,6 +907,8 @@ class Controller(QObject):
                 self._session.history = copy.deepcopy(self._sessions[self._active].get("history", []))
         except Exception:
             pass
+        self.houdiniInstancesChanged.emit()
+        self.scanHoudiniInstances()
         self.refreshContext()
         self._refresh_tokens()      # 后端是异步挂上的：之前算出的上下文是 0，这里补算
         if announce:
@@ -1333,6 +1348,127 @@ class Controller(QObject):
 
     def _get_scene_sel(self): return self._scene_sel
     sceneSelection = Property(str, _get_scene_sel, notify=sceneChanged)
+
+    # ---- 多 Houdini 实例管理（仅独立 Bridge 模式启用） ----
+    def _is_bridge_mode(self):
+        return getattr(self._session, "bridge", None) is not None
+
+    def _active_houdini_instance(self):
+        for inst in self._houdini_instances:
+            if inst.get("active"):
+                return inst
+        return self._houdini_instances[0] if self._houdini_instances else None
+
+    def _get_active_instance_label(self):
+        if not self._is_bridge_mode():
+            return ""
+        inst = self._active_houdini_instance()
+        if inst:
+            return str(inst.get("label") or ("Houdini :%s" % inst.get("port", "")))
+        return self.tr("未连接 Houdini")
+    activeInstanceLabel = Property(str, _get_active_instance_label, notify=houdiniInstancesChanged)
+
+    def _get_houdini_instance_count(self):
+        return len(self._houdini_instances)
+    houdiniInstanceCount = Property(int, _get_houdini_instance_count, notify=houdiniInstancesChanged)
+
+    def _get_houdini_connected_prop(self):
+        return bool(self._houdini_instances)
+    houdiniConnected = Property(bool, _get_houdini_connected_prop, notify=houdiniInstancesChanged)
+
+    def update_houdini_instances(self, instances):
+        """UI 线程：更新多实例列表（由协调器心跳或扫描线程回传）。"""
+        clean = [dict(x) for x in (instances or []) if isinstance(x, dict)]
+        if clean != self._houdini_instances:
+            self._houdini_instances = clean
+            self.houdiniInstancesChanged.emit()
+        active = self._active_houdini_instance()
+        if active:
+            new_path = active.get("path") or self._scene_path
+            new_sel = active.get("selection") or self._scene_sel
+            if new_path != self._scene_path or new_sel != self._scene_sel:
+                self._scene_path = new_path
+                self._scene_sel = new_sel
+                self.sceneChanged.emit()
+
+    @Slot(str)
+    def _on_instances_scanned(self, js):
+        self._scanning_instances = False
+        try:
+            items = json.loads(js) if js else []
+        except Exception:
+            items = []
+        if isinstance(items, list):
+            self.update_houdini_instances(items)
+
+    @Slot()
+    def scanHoudiniInstances(self):
+        """后台异步扫描本机全部在线 Houdini 实例。"""
+        if not self._is_bridge_mode() or self._scanning_instances:
+            return
+        self._scanning_instances = True
+
+        def work():
+            try:
+                from houdini_agent.bridge import doctor
+                items = doctor.discover_all_bridges(include_context=True)
+            except Exception:
+                items = []
+            try:
+                self._sigInstances.emit(json.dumps(items, ensure_ascii=False, default=str))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot(result="QVariantList")
+    def houdiniInstanceItems(self):
+        """ContextBar 实例切换下拉菜单项。"""
+        items = []
+        for inst in self._houdini_instances:
+            lbl = inst.get("label") or ("Houdini :%s" % inst.get("port", ""))
+            # 同名 .hip（如两个 untitled.hip）时附加端口号以便一眼区分
+            same_label = sum(1 for x in self._houdini_instances if x.get("label") == lbl) > 1
+            if same_label:
+                lbl = "%s  (:%s)" % (lbl, inst.get("port", ""))
+            items.append({
+                "label": lbl,
+                "val": str(inst.get("port", "")),
+                "checked": bool(inst.get("active")),
+            })
+        if not items:
+            items.append({"label": self.tr("没有已连接的 Houdini 实例"), "val": "__refresh__", "checked": False})
+        items.append({"sep": True})
+        items.append({"label": self.tr("刷新实例列表"), "val": "__refresh__", "checked": False})
+        items.append({"label": self.tr("启动另一个 Houdini…"), "val": "__launch__", "checked": False})
+        return items
+
+    @Slot(str)
+    def selectHoudiniInstance(self, val):
+        v = str(val or "").strip()
+        if v == "__refresh__":
+            self.scanHoudiniInstances()
+            self.refreshContext()
+            return
+        if v == "__launch__":
+            self.requestLaunchAnotherHoudini.emit()
+            return
+        if not v.isdigit():
+            return
+        port = int(v)
+        try:
+            from houdini_agent.bridge import doctor
+            doctor.adopt_port(port)
+        except Exception:
+            return
+        chosen_lbl = ":%d" % port
+        for inst in self._houdini_instances:
+            inst["active"] = (int(inst.get("port") or 0) == port)
+            if inst["active"]:
+                chosen_lbl = inst.get("label") or chosen_lbl
+        self.houdiniInstancesChanged.emit()
+        self.toast.emit(self.tr("已切换到 ") + chosen_lbl)
+        self.refreshContext()
 
     # ---- menu data for QML ----
     @Slot(result="QVariantList")
@@ -3591,6 +3727,7 @@ class Controller(QObject):
                 self._scene_sel = ctx.get("selection") or "no selection"
             else:
                 self._scene_sel = "Houdini 未连接"
+            self.scanHoudiniInstances()
         self.sceneChanged.emit()
 
     @Slot()
@@ -3741,23 +3878,54 @@ class Controller(QObject):
         return False
 
     def _run_connection_tool(self, tool_name, kwargs):
-        """check_houdini_connection / repair_houdini_connection：app 侧执行。"""
+        """连接诊断/修复及多 Houdini 实例协作工具：app 侧执行。"""
         if getattr(self._session, "bridge", None) is None:
             return {"success": True,
-                    "result": "当前直接运行在 Houdini 进程内，不经过 Bridge，无需连接诊断。"}
+                    "result": "当前直接运行在 Houdini 进程内，不经过 Bridge，无需连接诊断或多实例切换。"}
         try:
             from houdini_agent.bridge import doctor
             if tool_name == "check_houdini_connection":
                 res = doctor.diagnose()
-            else:
+            elif tool_name == "repair_houdini_connection":
                 res = doctor.repair(kwargs.get("action") or "",
                                     version=kwargs.get("version"),
                                     wait_seconds=kwargs.get("wait_seconds"),
                                     heartbeat=self._touch_activity)
+            elif tool_name == "list_houdini_instances":
+                res = doctor.list_instances_result(heartbeat=self._touch_activity)
+            elif tool_name == "switch_houdini_instance":
+                res = doctor.switch_instance(kwargs.get("instance") or "",
+                                             heartbeat=self._touch_activity)
+            elif tool_name == "run_in_houdini_instance":
+                res = doctor.run_in_instance(
+                    kwargs.get("instance") or "",
+                    kwargs.get("tool_name") or "",
+                    arguments=kwargs.get("arguments") or {},
+                    heartbeat=self._touch_activity,
+                    read_only=(self._mode in ("Ask", "Plan")))
+            elif tool_name == "transfer_nodes_between_instances":
+                if self._mode in ("Ask", "Plan"):
+                    return {"success": False,
+                            "error": "当前处于只读模式（Ask/Plan），禁止跨实例写入节点。请切换到 Agent 模式。"}
+                res = doctor.transfer_nodes(
+                    kwargs.get("source_instance") or "",
+                    kwargs.get("target_instance") or "",
+                    kwargs.get("node_paths") or [],
+                    target_parent=kwargs.get("target_parent") or "/obj",
+                    create_parent=bool(kwargs.get("create_parent", True)),
+                    heartbeat=self._touch_activity)
+            else:
+                return {"success": False, "error": "未知连接/多实例工具: %s" % tool_name}
         except Exception as e:
-            return {"success": False, "error": "连接诊断/修复执行失败: %s" % e}
-        if isinstance(res, dict) and res.get("reconnected"):
-            self._sigCtxRefresh.emit()
+            return {"success": False, "error": "连接/多实例工具执行失败: %s" % e}
+        if isinstance(res, dict):
+            if isinstance(res.get("instances"), list):
+                try:
+                    self._sigInstances.emit(json.dumps(res["instances"], ensure_ascii=False, default=str))
+                except Exception:
+                    pass
+            if res.get("reconnected") or res.get("switched"):
+                self._sigCtxRefresh.emit()
         return res
 
     def _watchdog_tick(self):
@@ -3938,8 +4106,10 @@ class Controller(QObject):
         if self._confirm_mode and tool_name in CONFIRM_TOOLS:
             if not self._await_confirm(tool_name, kwargs):
                 return {"success": False, "error": "用户取消了该操作"}
-        # 连接诊断/修复：必须在 app 侧执行——连接坏了才需要它，绝不能走 bridge
-        if tool_name in ("check_houdini_connection", "repair_houdini_connection"):
+        # 连接诊断/修复与多 Houdini 实例协作：必须在 app 侧执行，绝不走单一默认 bridge
+        if tool_name in ("check_houdini_connection", "repair_houdini_connection",
+                         "list_houdini_instances", "switch_houdini_instance",
+                         "run_in_houdini_instance", "transfer_nodes_between_instances"):
             return self._run_connection_tool(tool_name, kwargs)
         # Meshy 网络工具：app 侧后台线程执行，绝不进 Houdini/bridge
         if tool_name in MESHY_NETWORK_TOOLS and _meshy is not None:

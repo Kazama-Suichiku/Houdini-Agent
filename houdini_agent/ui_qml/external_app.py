@@ -109,22 +109,35 @@ class ExternalCoordinator(QObject):
 
     @staticmethod
     def _probe():
-        """探一次 Bridge：先 ping 当前解析端口，不通就全端口扫描并自动采纳
-        （治愈端口发现文件过期/环境变量指错/服务器顺延换端口）。可能阻塞 ~1 秒，
-        只允许在后台线程调用。返回 ping 结果或 None。"""
+        """并发扫描所有候选端口发现全部在线 Houdini 实例（支持同版本多开与跨版本）。
+        若当前活跃端口已断开但仍有其它活实例，自动切换过去并上报。
+        只允许在后台线程调用。返回 {"instances": [...], "switched_to": dict|None}。"""
         try:
             from houdini_agent.bridge import doctor
-            _port, info = doctor.ensure_connected()
-            return info
+            instances = doctor.discover_all_bridges(include_context=True)
+            if not instances:
+                return {"instances": [], "switched_to": None}
+            switched_to = None
+            if not any(i.get("active") for i in instances):
+                doctor.adopt_port(instances[0]["port"])
+                instances[0]["active"] = True
+                switched_to = instances[0]
+            return {"instances": instances, "switched_to": switched_to}
         except Exception:
-            return None
+            return {"instances": [], "switched_to": None}
 
     def check_bridge(self):
         """同步探测一次（仅用于用户主动触发的 prompt_relaunch；周期探测走 _poll_tick）。"""
         if self.connected:
             return True
-        if not self._probe():
+        res = self._probe()
+        instances = (res or {}).get("instances") or []
+        if not instances:
             return False
+        try:
+            self.controller.update_houdini_instances(instances)
+        except Exception:
+            pass
         return self._attach()
 
     def _attach(self):
@@ -218,13 +231,26 @@ class ExternalCoordinator(QObject):
 
         threading.Thread(target=worker, name="HAgentBridgeProbe", daemon=True).start()
 
-    def _on_poll_result(self, info):
-        """运行在 UI 线程：应用后台探测结果（连接/断开状态机）。"""
+    def _on_poll_result(self, data):
+        """运行在 UI 线程：应用后台探测结果（多实例列表刷新 + 连接/断开状态机）。"""
         self._probing = False
-        if info:
+        instances = (data or {}).get("instances") if isinstance(data, dict) else []
+        switched_to = (data or {}).get("switched_to") if isinstance(data, dict) else None
+        try:
+            self.controller.update_houdini_instances(instances)
+        except Exception:
+            pass
+        if instances:
             self._misses = 0
             if not self.connected:
                 self._attach()
+            elif switched_to:
+                self.controller.toast.emit(
+                    "原 Houdini 实例已关闭，已自动切换到 %s" % switched_to.get("label", "Houdini"))
+                try:
+                    self.controller.refreshContext()
+                except Exception:
+                    pass
             return
         if self.connected:
             self._misses += 1
@@ -247,6 +273,21 @@ class ExternalCoordinator(QObject):
             try:
                 launch_houdini(self.repo_root, selected)
                 self.controller.toast.emit("已启动 Houdini，正在等待 Bridge 连接…")
+                self.poll.start()
+            except Exception as exc:
+                self.controller.toast.emit("启动 Houdini 失败：%s" % exc)
+
+    def launch_another(self):
+        """允许在已连接一个 Houdini 的情况下再启动另一个同版本或不同版本 Houdini。"""
+        if not self.installs:
+            self.installs = find_houdini_installs()
+        selected = pick_houdini(self.installs, self.win)
+        if selected:
+            try:
+                launch_houdini(self.repo_root, selected)
+                self.controller.toast.emit(
+                    "正在启动 Houdini %s，就绪后会自动出现在实例列表中…" % selected.get("version", ""))
+                self.poll.setInterval(2000)
                 self.poll.start()
             except Exception as exc:
                 self.controller.toast.emit("启动 Houdini 失败：%s" % exc)
@@ -315,6 +356,7 @@ def show_tool():
     coord = ExternalCoordinator(win, controller, repo_root)
     try:
         controller.requestOpenHoudini.connect(coord.prompt_relaunch)
+        controller.requestLaunchAnotherHoudini.connect(coord.launch_another)
     except Exception:
         pass
     win._controller = controller
