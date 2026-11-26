@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.7</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.8</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (24)</span><span class="en">All (24)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (25)</span><span class="en">All (25)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.7", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:false, badge:"UPDATER FIX",
+  {ver:"2.1.8", date:"2026-11-26", size:"71.2 MB", latest:true, series:"2.1", milestone:true, badge:"DELTA UPDATER",
+   sha:"732ff0d18f7dc861b69b1d1225b8a5a18bc07256eb2bc5175dc01a136b357769",
+   zh:"全面升级自动更新器至现代桌面标准：引入运行时指纹校验与仅 4.6 MB 的增量补丁包（较 110 MB 全量包节省 96% 下载体积，逐文件覆盖且 Houdini 开着也不锁目录）；新增 HTTP Range 断点续传、GitHub 镜像兜底与单飞并发下载锁；新增退出秒开互斥锁、系统注册表版本号同步、启动健康检查与连续闪退自动回滚，以及 Ed25519 清单非对称验签能力。",
+   en:"Modernized auto-updater: introduces runtime-hash delta patch packages (~4.6 MB vs 110 MB full zip, 96% smaller and Houdini-lock resilient), HTTP Range resumable downloads, GitHub mirror fallback, single-flight download lock, startup mutex & crash-loop auto-rollback, Windows Uninstall DisplayVersion sync, and Ed25519 manifest signature verification."},
+  {ver:"2.1.7", date:"2026-11-26", size:"71.1 MB", latest:false, series:"2.1", milestone:false, badge:"UPDATER FIX",
    sha:"a544538a21658ab2e4af428afe9f74ebba254963bd5af34528e07ea9dce05dcb",
    zh:"修复后台静默更新不生效且不自动重启的问题：移除 Windows 上互斥的 CREATE_NO_WINDOW | DETACHED_PROCESS 标志；支持跨盘符安装目录（如 C:\\ 暂存到 D:\\ 安装目录）先预拷贝再同盘原子替换，增加文件锁重试与自动回滚，并保护 unins000.exe/dat 卸载程序不被误删。装过本版后，后续所有后台静默更新均可自动完成替换并重启。",
    en:"Fixed silent background update failing to swap or relaunch on Windows: removed mutually exclusive CREATE_NO_WINDOW | DETACHED_PROCESS flags, added cross-volume staging (e.g. C:\\ to D:\\) with atomic same-volume swap, file-lock retries, rollback safety, and uninstaller preservation."},

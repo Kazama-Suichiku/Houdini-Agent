@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Houdini Agent v2.1.7 — The Procedural AI Workstation for SideFX Houdini</title>
+<title>Houdini Agent v2.1.8 — The Procedural AI Workstation for SideFX Houdini</title>
 <meta name="description" content="SideFX Houdini 原生 AI 智能体：50+ 节点/VEX/Python 工具、交互式节点管线、ChatGPT/Claude 订阅直连与 Codex 生图、Meshy 3D 生成与角色绑定动画。" />
 <link rel="canonical" href="https://houdini-agent.com/" />
 <meta name="theme-color" content="#060608" />
@@ -719,7 +719,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
     <a class="brand" href="#top">
       <span class="brand-mark">&#9671;</span>
       <span class="brand-name">Houdini Agent</span>
-      <span class="live-tag">v2.1.7</span>
+      <span class="live-tag">v2.1.8</span>
     </a>
     <nav class="nav-links">
       <a href="#patchbay"><span class="zh">节点工坊</span><span class="en">Node Lab</span></a>
@@ -739,7 +739,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight" aria-label="Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="#download"><span class="zh">下载</span><span class="en">Get v2.1.7</span></a>
+    <a class="nav-btn solid" href="#download"><span class="zh">下载</span><span class="en">Get v2.1.8</span></a>
   </header>
 </div>
 
@@ -761,7 +761,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
   <div class="hero-content">
     <div class="hero-eyebrow">
       <span class="dot"></span>
-      <span><b>v2.1.7</b> &middot; <span class="zh">修复后台静默更新自动替换与重启（支持跨盘安装） · Claude Agent SDK 上下文压缩 · 多实例写锁</span><span class="en">Fixed Silent Auto-Update Swap &amp; Relaunch (Cross-Drive Ready) · Claude Agent SDK Compaction · Multi-Instance Write Lock</span></span>
+      <span><b>v2.1.8</b> &middot; <span class="zh">4.6 MB 增量补丁静默更新 · 断点续传与闪退自动回滚 · Claude Agent SDK 上下文压缩</span><span class="en">4.6 MB Delta Silent Updates · Range Resume &amp; Crash Auto-Rollback · Claude Agent SDK Compaction</span></span>
     </div>
     <h1>
       <span class="zh">一句话，让节点<em>自己生长</em>。</span>
@@ -772,7 +772,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
       <span class="en">An <strong>autonomous procedural agent</strong> engineered for SideFX Houdini. Wires SOPs, writes VEX, runs Python, profiles cooks, and bridges <strong>Codex 2D &rarr; Meshy 3D &rarr; auto-rigged animation</strong>.</span>
     </p>
     <div class="hero-cta">
-      <a class="btn solid" id="heroDlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">下载 Windows 安装包 (v2.1.7)</span><span class="en">Download Installer (v2.1.7)</span></a>
+      <a class="btn solid" id="heroDlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">下载 Windows 安装包 (v2.1.8)</span><span class="en">Download Installer (v2.1.8)</span></a>
       <a class="btn" href="#patchbay">&#9672; <span class="zh">试玩真实节点工坊</span><span class="en">Play Interactive Node Lab</span></a>
       <button class="btn" id="heroCmdBtn">&#8984;K / Tab <span class="zh">呼出命令面板</span><span class="en">Command Palette</span></button>
     </div>
@@ -1017,6 +1017,10 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
         <div class="kicker">05 — Recent Releases</div>
         <h2 style="font-family:var(--display);font-weight:300;font-size:36px;color:var(--text-bright);margin-bottom:18px"><span class="zh">持续<em>高速演进</em>。</span><span class="en">Shipping, <em>fast</em>.</span></h2>
         <div class="cl-card now">
+          <div class="cl-top"><span class="cl-ver">v2.1.8</span><b><span class="zh">4.6 MB 增量补丁更新 · 断点续传与闪退自动回滚</span><span class="en">4.6 MB delta updates · Range resume &amp; crash auto-rollback</span></b><span class="cl-date">2026-11-26</span></div>
+          <p><span class="zh">全面升级自动更新器至现代桌面标准：新增运行时指纹校验与仅 <strong>4.6 MB</strong> 的业务层增量补丁包（较 110 MB 全量包省 96% 流量，逐文件覆盖且 Houdini 开着也不冲突）；支持 HTTP <code>Range</code> 断点续传、GitHub 镜像兜底与单飞并发下载锁；新增退出/重启互斥锁、注册表版本号同步、新版启动健康检查与连续闪退自动回滚，并内置 Ed25519 清单验签能力。</span><span class="en">Upgraded the auto-updater to modern desktop standards: runtime-hash delta patch packages (~<strong>4.6 MB</strong> vs 110 MB full bundle, 96% smaller and Houdini-lock resilient), HTTP <code>Range</code> resumable downloads, GitHub mirror fallback, single-flight download locking, startup mutex &amp; automatic crash-loop rollback, HKCU version sync, and Ed25519 manifest signature verification.</span></p>
+        </div>
+        <div class="cl-card">
           <div class="cl-top"><span class="cl-ver">v2.1.7</span><b><span class="zh">修复后台静默更新自动替换与重启（支持跨盘安装）</span><span class="en">Fixed silent auto-update swap &amp; relaunch (cross-drive ready)</span></b><span class="cl-date">2026-11-26</span></div>
           <p><span class="zh">修复 Windows 上 <code>CREATE_NO_WINDOW | DETACHED_PROCESS</code> 互斥标志导致后台替换脚本直接跳过、更新后不自动重启的问题；新增跨盘符（如 <code>C:\</code> 暂存 → <code>D:\</code> 安装目录）先预拷贝再同盘原子替换与文件锁重试机制，并保护 <code>unins000.exe/dat</code> 卸载程序不被误删。</span><span class="en">Fixed mutually exclusive Windows process flags (<code>CREATE_NO_WINDOW | DETACHED_PROCESS</code>) that caused the silent update helper to exit without swapping or relaunching; added cross-drive staging (e.g. <code>C:\</code> to <code>D:\</code>) with atomic same-volume swap, file-lock retries, and uninstaller preservation.</span></p>
         </div>
@@ -1084,9 +1088,9 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
     <div class="final-cta reveal">
       <h2><span class="zh">把 AI 装进<em>你的节点网络</em>。</span><span class="en">Put AI <em>in your node graph</em>.</span></h2>
       <p><span class="zh">免费、开源。一个独立安装包自动桥接 Houdini —— 建网、写 VEX、Codex 生图、Meshy 3D 与角色绑定，全在一句话之间。</span><span class="en">Free &amp; open source. One installer auto-bridged to Houdini — SOPs, VEX, Codex images, Meshy 3D and auto-rigging, all in one sentence.</span></p>
-      <div class="meta">v2.1.7 &middot; 71.1 MB &middot; SHA-256 Verified &middot; Houdini 19.5+ / 20.5+ / 21+ &middot; MIT License</div>
+      <div class="meta">v2.1.8 &middot; 71.2 MB &middot; SHA-256 Verified &middot; Houdini 19.5+ / 20.5+ / 21+ &middot; MIT License</div>
       <div class="acts">
-        <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">立即下载 v2.1.7</span><span class="en">Download v2.1.7</span></a>
+        <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">立即下载 v2.1.8</span><span class="en">Download v2.1.8</span></a>
         <a class="btn" href="/downloads/"><span class="zh">所有历史版本</span><span class="en">All versions</span></a>
         <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener">GitHub</a>
       </div>
@@ -1998,7 +2002,7 @@ function getCommands(){
     {t: en?'Theme → Midnight Blue':'切换主题 → 午夜蓝 Midnight', k:'THEME', fn:()=>setTheme('midnight')},
     {t: en?'Theme → Daylight (Light)':'切换主题 → 日光 Daylight', k:'THEME', fn:()=>setTheme('day')},
     {t: en?'Toggle Language (ZH / EN)':'切换中英文界面 (ZH / EN)', k:'LANG', fn:()=>setLang(curLang()==='zh'?'en':'zh')},
-    {t: en?'Download Houdini Agent v2.1.7':'立即下载 Houdini Agent v2.1.7', k:'DOWNLOAD', fn:()=>document.getElementById('download').scrollIntoView({behavior:'smooth'})},
+    {t: en?'Download Houdini Agent v2.1.8':'立即下载 Houdini Agent v2.1.8', k:'DOWNLOAD', fn:()=>document.getElementById('download').scrollIntoView({behavior:'smooth'})},
   ];
 }
 let filteredCmds = [];
