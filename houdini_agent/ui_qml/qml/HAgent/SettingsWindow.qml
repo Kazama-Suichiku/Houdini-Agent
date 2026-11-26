@@ -568,8 +568,22 @@ Popup {
                     color: Theme.textDim; font.family: Theme.fontMono; font.pixelSize: Theme.fSm }
             }
             FieldRow {
+                name: win.loc("后台自动静默更新")
+                desc: win.loc("在后台静默下载并校验新版本，重启或重新打开应用即可自动生效，无需等待下载或安装向导。")
+                Toggle { on: controller ? controller.autoSilentUpdate : true
+                    onToggled: if (controller) controller.setAutoSilentUpdate(!controller.autoSilentUpdate) }
+            }
+            FieldRow {
                 name: win.loc("检查更新")
-                TButton { label: win.loc("检查更新"); onClicked: if (controller) controller.menuAction("update") }
+                RowLayout {
+                    spacing: 8
+                    TButton {
+                        visible: controller && controller.updateState === "staged"
+                        label: win.loc("立即重启更新")
+                        onClicked: { win.close(); if (controller) controller.startUpdate() }
+                    }
+                    TButton { label: win.loc("检查更新"); onClicked: if (controller) controller.menuAction("update") }
+                }
             }
         }
     }

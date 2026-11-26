@@ -434,15 +434,403 @@ def download_installer(progress_callback=None, url=None) -> dict:
     return {'success': False, 'path': '', 'error': "；".join(errors) or "没有可用的下载地址"}
 
 
-def launch_installer(path):
-    """拉起 Inno 安装器静默覆盖安装。返回可 poll() 的进程对象；只能走 ShellExecute
-    兜底时返回 None（拿不到进程句柄，调用方只能按旧方式直接退出）。
+def _updates_dir() -> Path:
+    return _user_state_dir() / "updates"
 
-    调用方不要立刻退出：装在 Program Files 时 Inno 会自己弹 UAC，用户点"否"安装就不会
-    进行。应等 installer_window_visible() 为真（已过授权、开始安装）再退出，
-    进程先于窗口结束则说明被取消或失败。安装器 [Run] 段在静默模式下会自动重启应用。"""
+
+def _staged_meta_file() -> Path:
+    return _updates_dir() / "staged.json"
+
+
+def app_install_dir() -> Path:
+    """返回当前应用安装根目录（打包版 = exe 所在目录；源码模式 = 仓库根）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return _PROJECT_ROOT
+
+
+def is_dir_writable(path) -> bool:
+    """探测目录当前权限是否可直接写入/替换文件（区分用户目录安装与 Program Files 只读安装）。"""
+    p = Path(path)
+    if not p.is_dir():
+        return False
+    probe = p / (".ha_write_probe_%d" % os.getpid())
+    try:
+        probe.write_bytes(b"ok")
+        probe.unlink()
+        return True
+    except OSError:
+        try:
+            if probe.exists():
+                probe.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def app_zip_sources(cache=None) -> list:
+    """列出可用的应用静默更新包（HoudiniAgent-App-<ver>.zip）来源。"""
+    cache = cache if cache is not None else _load_etag_cache()
+    m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
+    if not m:
+        return []
+    az = m.get("app_zip")
+    if not isinstance(az, dict) or not az.get("url"):
+        return []
+    return [{
+        "url": str(az["url"]),
+        "size": int(az.get("size") or 0),
+        "sha256": str(az.get("sha256") or "").lower(),
+        "version": str(m.get("version") or "").strip().lstrip("vV"),
+        "label": "官网更新包",
+    }]
+
+
+def _cleanup_old_staged(keep_ver=None):
+    """清理 updates/staged 下不再需要的旧版本暂存文件。"""
+    sdir = _updates_dir() / "staged"
+    if not sdir.is_dir():
+        return
+    keep_names = set()
+    if keep_ver:
+        keep_names.add(str(keep_ver))
+        keep_names.add("HoudiniAgent-Setup-%s.exe" % keep_ver)
+    for item in sdir.iterdir():
+        if item.name in keep_names:
+            continue
+        try:
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink()
+        except OSError:
+            pass
+
+
+def clear_staged_update():
+    """清除已暂存的更新元数据与文件。"""
+    try:
+        mf = _staged_meta_file()
+        if mf.is_file():
+            mf.unlink()
+    except OSError:
+        pass
+    _cleanup_old_staged(keep_ver=None)
+
+
+def _read_staged_version_file(staged_dir: Path) -> str:
+    for rel in ("_internal/VERSION", "VERSION"):
+        f = staged_dir / rel
+        if f.is_file():
+            try:
+                return f.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+    return ""
+
+
+def get_staged_update():
+    """读取并校验已后台下载就绪的暂存更新。
+    若本机版本已追平或超过暂存版本，自动清理暂存并返回 None。"""
+    mf = _staged_meta_file()
+    if not mf.is_file():
+        return None
+    try:
+        data = json.loads(mf.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    ver = str(data.get("version") or "").strip().lstrip("vV")
+    if not ver or not _version_gt(ver, get_local_version()):
+        clear_staged_update()
+        return None
+    mode = str(data.get("mode") or "")
+    if mode == "swap":
+        sd = Path(str(data.get("staged_dir") or ""))
+        exe = sd / "Houdini Agent.exe"
+        if not (sd.is_dir() and exe.is_file()):
+            return None
+        sver = _read_staged_version_file(sd)
+        if sver and sver != ver:
+            return None
+        return data
+    if mode == "installer":
+        ip = Path(str(data.get("path") or ""))
+        if not ip.is_file():
+            return None
+        exp_sz = int(data.get("size") or 0)
+        if exp_sz and ip.stat().st_size != exp_sz:
+            return None
+        return data
+    return None
+
+
+def stage_update(progress_callback=None, cache=None) -> dict:
+    """后台静默下载并预解压/校验新版更新包，供重启或关闭应用时秒级切换。
+    - 安装目录可写且清单提供 app_zip → 走 mode='swap'（预解压目录，重启/关闭直接原子替换，免安装程序、免 UAC）
+    - 否则回退 mode='installer'（预下载校验好的安装程序到 updates/staged/，点击重启时无需等待下载）"""
+    def _p(pct):
+        if progress_callback:
+            try:
+                progress_callback(int(pct))
+            except Exception:
+                pass
+
+    cache = cache if cache is not None else _load_etag_cache()
+    m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
+    rel = cache.get("release_data") or {}
+    mv = m["version"].strip().lstrip("vV") if m else ""
+    rv = _release_version(rel)
+    target_ver = mv if _parse_version(mv or "0") >= _parse_version(rv or "0") else rv
+    if not target_ver or not _version_gt(target_ver, get_local_version()):
+        clear_staged_update()
+        return {"success": False, "up_to_date": True, "staged": None, "error": ""}
+
+    existing = get_staged_update()
+    if existing and existing.get("version") == target_ver:
+        _p(100)
+        return {"success": True, "cached": True, "staged": existing, "error": ""}
+
+    requests = _requests()
+    notes = _first_line((m or {}).get("notes", "") or (rel or {}).get("body", ""))
+    rel_name = (m or {}).get("name") or (rel or {}).get("name") or ("v" + target_ver)
+    writable = is_dir_writable(app_install_dir())
+    staged_root = _updates_dir() / "staged"
+    staged_root.mkdir(parents=True, exist_ok=True)
+
+    # 1) 优先走免安装器静默原子替换（用户可写目录 + manifest 含 app_zip）
+    zips = app_zip_sources(cache) if writable else []
+    if zips and zips[0].get("version") == target_ver:
+        src = zips[0]
+        tmp_dir = _updates_dir() / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = tmp_dir / ("HoudiniAgent-App-%s.zip" % target_ver)
+        try:
+            err = _download_one(requests, src, str(zip_path), lambda pct: _p(int(pct * 0.85)))
+            if not err:
+                extract_tmp = staged_root / ("%s.tmp" % target_ver)
+                final_dir = staged_root / target_ver
+                if extract_tmp.exists():
+                    shutil.rmtree(extract_tmp, ignore_errors=True)
+                with zipfile.ZipFile(str(zip_path), "r") as zf:
+                    zf.extractall(str(extract_tmp))
+                # 兼容 zip 顶层带一层 "Houdini Agent/" 目录或直接平铺文件
+                cand = extract_tmp
+                if not (cand / "Houdini Agent.exe").is_file():
+                    sub = extract_tmp / "Houdini Agent"
+                    if (sub / "Houdini Agent.exe").is_file():
+                        cand = sub
+                if (cand / "Houdini Agent.exe").is_file():
+                    if final_dir.exists():
+                        shutil.rmtree(final_dir, ignore_errors=True)
+                    if cand == extract_tmp:
+                        os.replace(str(extract_tmp), str(final_dir))
+                    else:
+                        os.replace(str(cand), str(final_dir))
+                        shutil.rmtree(extract_tmp, ignore_errors=True)
+                    meta = {
+                        "version": target_ver,
+                        "name": rel_name,
+                        "notes": notes,
+                        "mode": "swap",
+                        "staged_dir": str(final_dir),
+                        "sha256": src.get("sha256") or "",
+                        "writable": True,
+                    }
+                    _staged_meta_file().write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                    _cleanup_old_staged(keep_ver=target_ver)
+                    _p(100)
+                    return {"success": True, "cached": False, "staged": meta, "error": ""}
+                shutil.rmtree(extract_tmp, ignore_errors=True)
+        except Exception:
+            pass
+        finally:
+            try:
+                if zip_path.exists():
+                    zip_path.unlink()
+            except OSError:
+                pass
+
+    # 2) 回退：静默预下载并校验安装包到 staged 目录（点击重启无需再等下载）
+    sources = installer_sources(cache)
+    inst_target = staged_root / ("HoudiniAgent-Setup-%s.exe" % target_ver)
+    part_target = staged_root / ("HoudiniAgent-Setup-%s.exe.part" % target_ver)
+    errors = []
+    for src in sources:
+        _p(0)
+        try:
+            err = _download_one(requests, src, str(part_target), _p)
+        except Exception as e:
+            err = str(e) or type(e).__name__
+        if not err:
+            os.replace(str(part_target), str(inst_target))
+            meta = {
+                "version": target_ver,
+                "name": rel_name,
+                "notes": notes,
+                "mode": "installer",
+                "path": str(inst_target),
+                "size": inst_target.stat().st_size,
+                "sha256": src.get("sha256") or "",
+                "writable": writable,
+            }
+            _staged_meta_file().write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            _cleanup_old_staged(keep_ver=target_ver)
+            _p(100)
+            return {"success": True, "cached": False, "staged": meta, "error": ""}
+        errors.append("%s：%s" % (src.get("label") or src["url"], err))
+        try:
+            if part_target.exists():
+                part_target.unlink()
+        except OSError:
+            pass
+    return {"success": False, "cached": False, "staged": None,
+            "error": "；".join(errors) or "没有可用的下载地址"}
+
+
+def can_apply_silently_on_exit(staged=None) -> bool:
+    """关闭应用时能否完全无感、免 UAC 地在后台自动完成更新。"""
+    if not getattr(sys, "frozen", False):
+        return False
+    st = staged if staged is not None else get_staged_update()
+    if not isinstance(st, dict):
+        return False
+    if st.get("mode") == "swap":
+        return is_dir_writable(app_install_dir())
+    if st.get("mode") == "installer":
+        return bool(st.get("writable")) and is_dir_writable(app_install_dir())
+    return False
+
+
+_SWAP_SCRIPT_TEMPLATE = r"""param(
+    [int]$WaitPid,
+    [string]$AppDir,
+    [string]$StagedDir,
+    [string]$MetaFile,
+    [int]$Relaunch,
+    [string]$LogFile
+)
+$ErrorActionPreference = "Stop"
+function Log($m) {
+    try { Add-Content -Path $LogFile -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] " + $m) -Encoding UTF8 } catch {}
+}
+Log ("start wait_pid=" + $WaitPid + " app=" + $AppDir + " staged=" + $StagedDir + " relaunch=" + $Relaunch)
+# 1. 等待旧主进程完全退出（最长 30 秒）
+for ($i = 0; $i -lt 120; $i++) {
+    $p = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+    if (-not $p) { break }
+    Start-Sleep -Milliseconds 250
+}
+Start-Sleep -Milliseconds 350
+
+$preserve = @("config", "cache", "trainData", "plugins", "rules", "_update_bak")
+$bakDir = Join-Path $AppDir "_update_bak"
+try {
+    if (Test-Path $bakDir) { Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Path $bakDir -Force | Out-Null
+
+    # 2. 移走旧版应用文件到备份目录（保留用户数据目录）
+    $moved = @()
+    foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
+        if ($preserve -contains $item.Name) { continue }
+        $dst = Join-Path $bakDir $item.Name
+        Move-Item -LiteralPath $item.FullName -Destination $dst -Force
+        $moved += $item.Name
+    }
+
+    # 3. 移入已预解压校验的新版文件
+    foreach ($item in (Get-ChildItem -LiteralPath $StagedDir -Force)) {
+        if ($preserve -contains $item.Name) { continue }
+        $dst = Join-Path $AppDir $item.Name
+        if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+        Move-Item -LiteralPath $item.FullName -Destination $dst -Force
+    }
+
+    # 4. 清理备份与暂存标记
+    Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $StagedDir -ErrorAction SilentlyContinue
+    if (Test-Path $MetaFile) { Remove-Item -Force $MetaFile -ErrorAction SilentlyContinue }
+    Log "swap succeeded"
+} catch {
+    Log ("swap failed, rolling back: " + $_.Exception.Message)
+    try {
+        foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
+            if ($preserve -contains $item.Name) { continue }
+            Remove-Item -Recurse -Force $item.FullName -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $bakDir) {
+            foreach ($item in (Get-ChildItem -LiteralPath $bakDir -Force)) {
+                Move-Item -LiteralPath $item.FullName -Destination (Join-Path $AppDir $item.Name) -Force
+            }
+            Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue
+        }
+        Log "rollback complete"
+    } catch {
+        Log ("rollback error: " + $_.Exception.Message)
+    }
+}
+
+if ($Relaunch -eq 1) {
+    $exe = Join-Path $AppDir "Houdini Agent.exe"
+    if (Test-Path $exe) {
+        Log ("relaunching " + $exe)
+        Start-Process -FilePath $exe -WorkingDirectory $AppDir
+    }
+}
+"""
+
+
+def _launch_swap_helper(staged_dir, relaunch=True):
+    """拉起完全隐藏的后台 PowerShell 脚本：等当前进程退出 → 秒级原子替换文件 → 按需自动重启。"""
     import subprocess
-    args = "/SILENT /NORESTART /SUPPRESSMSGBOXES"
+    udir = _updates_dir()
+    udir.mkdir(parents=True, exist_ok=True)
+    script = udir / "apply_update.ps1"
+    script.write_text(_SWAP_SCRIPT_TEMPLATE, encoding="utf-8")
+    log_file = _user_state_dir() / "update_apply.log"
+    cmd = [
+        "powershell.exe", "-NoProfile", "-NonInteractive",
+        "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+        "-File", str(script),
+        "-WaitPid", str(os.getpid()),
+        "-AppDir", str(app_install_dir()),
+        "-StagedDir", str(staged_dir),
+        "-MetaFile", str(_staged_meta_file()),
+        "-Relaunch", "1" if relaunch else "0",
+        "-LogFile", str(log_file),
+    ]
+    flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
+             | getattr(subprocess, "DETACHED_PROCESS", 0)
+             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return subprocess.Popen(cmd, close_fds=True, creationflags=flags)
+
+
+def apply_staged_update(staged=None, relaunch=True) -> dict:
+    """应用已暂存的更新。
+    - mode='swap': 拉起隐藏替换脚本，退出后 <1 秒完成替换，无安装程序、无弹窗；
+    - mode='installer': 拉起 /VERYSILENT 无窗口静默安装（relaunch=False 时带 /NORELAUNCH=1）。"""
+    st = staged if staged is not None else get_staged_update()
+    if not isinstance(st, dict):
+        return {"started": False, "error": "没有已就绪的暂存更新"}
+    mode = st.get("mode")
+    if mode == "swap":
+        proc = _launch_swap_helper(st["staged_dir"], relaunch=relaunch)
+        return {"started": True, "mode": "swap", "proc": proc, "needs_watch": False}
+    if mode == "installer":
+        proc = launch_installer(st["path"], relaunch=relaunch)
+        return {"started": True, "mode": "installer", "proc": proc,
+                "needs_watch": bool(proc is not None and relaunch and not st.get("writable"))}
+    return {"started": False, "error": "未知暂存模式: %s" % mode}
+
+
+def launch_installer(path, relaunch=True):
+    """拉起 Inno 安装器静默覆盖安装（/VERYSILENT 无向导窗口）。返回可 poll() 的进程对象；
+    只能走 ShellExecute 兜底时返回 None。relaunch=False 时传 /NORELAUNCH=1（关闭应用静默更新不重开）。"""
+    import subprocess
+    args = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
+    if not relaunch:
+        args += " /NORELAUNCH=1"
     try:
         return subprocess.Popen(
             [str(path)] + args.split(),

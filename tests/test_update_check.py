@@ -243,3 +243,101 @@ class TestInstallWatchStep:
 
 def test_installer_window_detection_is_safe_without_installer():
     assert updater.installer_window_visible() is False
+
+
+# ---------------------------------------------------------------- silent background staging & swap
+def _make_app_zip(ver="2.1.5", payload_pad=1100 * 1024):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("Houdini Agent.exe", b"MZ" + b"\x00" * payload_pad)
+        zf.writestr("_internal/VERSION", ver + "\n")
+        zf.writestr("_internal/app.py", "VERSION = %r\n" % ver)
+    return buf.getvalue()
+
+
+class TestSilentBackgroundUpdate:
+    def test_stage_swap_fast_path_and_cache_and_cleanup(self, env, tmp_path, monkeypatch):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        state_dir = tmp_path / "state"
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+
+        zbytes = _make_app_zip("2.1.5")
+        zsha = hashlib.sha256(zbytes).hexdigest()
+        zurl = "https://houdini-agent.com/download/HoudiniAgent-App-2.1.5.zip"
+        m = manifest("2.1.5")
+        m["app_zip"] = {"url": zurl, "size": len(zbytes), "sha256": zsha}
+        updater._save_etag_cache({"manifest": m})
+        fake = env({zurl: Resp(200, content=zbytes)})
+
+        r1 = updater.stage_update()
+        assert r1["success"] and not r1["cached"]
+        st = r1["staged"]
+        assert st["mode"] == "swap" and st["version"] == "2.1.5"
+        assert (tmp_path / "state" / "updates" / "staged" / "2.1.5" / "Houdini Agent.exe").is_file()
+        assert not (tmp_path / "state" / "updates" / "tmp" / "HoudiniAgent-App-2.1.5.zip").exists()
+        assert updater.can_apply_silently_on_exit(st) is True
+
+        # 二次调用命中本地暂存，不再发网络请求
+        r2 = updater.stage_update()
+        assert r2["success"] and r2["cached"] is True
+        assert len(fake.calls) == 1
+
+        # 升级完成后本机版本追平 → get_staged_update 自动清理暂存并返回 None
+        monkeypatch.setattr(updater, "get_local_version", lambda: "2.1.5")
+        assert updater.get_staged_update() is None
+        assert not (state_dir / "updates" / "staged.json").exists()
+
+    def test_stage_falls_back_to_installer_when_app_dir_readonly(self, env, tmp_path, monkeypatch):
+        app_dir = tmp_path / "progfiles"
+        app_dir.mkdir()
+        state_dir = tmp_path / "state"
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater, "is_dir_writable", lambda p: False)
+        monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+
+        inst_bytes = b"MZ" + b"x" * (1200 * 1024)
+        isha = hashlib.sha256(inst_bytes).hexdigest()
+        m = manifest("2.1.5", sha=isha, size=len(inst_bytes))
+        m["app_zip"] = {"url": "https://houdini-agent.com/download/HoudiniAgent-App-2.1.5.zip",
+                        "size": 123, "sha256": "00" * 32}
+        updater._save_etag_cache({"manifest": m})
+        env({m["installer"]["url"]: Resp(200, content=inst_bytes)})
+
+        r = updater.stage_update()
+        assert r["success"] and r["staged"]["mode"] == "installer"
+        assert os.path.isfile(r["staged"]["path"])
+        # Program Files 只读目录需要 UAC，退出时不应静默弹 UAC
+        assert updater.can_apply_silently_on_exit(r["staged"]) is False
+
+    def test_apply_staged_swap_spawns_hidden_helper(self, tmp_path, monkeypatch):
+        state_dir = tmp_path / "state"
+        app_dir = tmp_path / "app"
+        staged_dir = state_dir / "updates" / "staged" / "2.1.5"
+        app_dir.mkdir()
+        staged_dir.mkdir(parents=True)
+        (staged_dir / "Houdini Agent.exe").write_bytes(b"MZ")
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+
+        calls = []
+        import subprocess
+
+        def fake_popen(cmd, **kw):
+            calls.append((cmd, kw))
+            return object()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        res = updater.apply_staged_update(
+            {"version": "2.1.5", "mode": "swap", "staged_dir": str(staged_dir)},
+            relaunch=False,
+        )
+        assert res["started"] is True and res["mode"] == "swap" and res["needs_watch"] is False
+        assert calls and "apply_update.ps1" in " ".join(calls[0][0])
+        assert "-Relaunch" in calls[0][0] and calls[0][0][calls[0][0].index("-Relaunch") + 1] == "0"
+        assert (state_dir / "updates" / "apply_update.ps1").is_file()

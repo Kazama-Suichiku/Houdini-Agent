@@ -36,6 +36,7 @@ def main():
     ap.add_argument("installer")
     ap.add_argument("--notes", required=True)
     ap.add_argument("--name", default="")
+    ap.add_argument("--app-zip", default="", help="可选：静默更新用的 HoudiniAgent-App-<ver>.zip 路径")
     a = ap.parse_args()
 
     path = a.installer
@@ -73,6 +74,28 @@ def main():
         "source_zip": "%s/archive/refs/tags/v%s.zip" % (REPO_URL, ver),
         "release_page": "%s/releases/tag/v%s" % (REPO_URL, ver),
     }
+
+    # 若同目录存在静默更新包 HoudiniAgent-App-<ver>.zip 且线上已上传同大小文件，则写入 app_zip 字段
+    app_zip_path = a.app_zip or os.path.join(os.path.dirname(os.path.abspath(path)),
+                                             "HoudiniAgent-App-%s.zip" % ver)
+    if app_zip_path and os.path.isfile(app_zip_path):
+        zsize = os.path.getsize(app_zip_path)
+        zh = hashlib.sha256()
+        with open(app_zip_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                zh.update(chunk)
+        zurl = SITE + "HoudiniAgent-App-%s.zip" % ver
+        try:
+            zreq = urllib.request.Request(zurl, method="HEAD", headers={"User-Agent": "ha-publish"})
+            with urllib.request.urlopen(zreq, timeout=30) as zr:
+                zremote_len = int(zr.headers.get("Content-Length") or 0)
+            if zremote_len == zsize:
+                manifest["app_zip"] = {"url": zurl, "size": zsize, "sha256": zh.hexdigest()}
+                print("附带静默更新包 %s (%d bytes, sha256 %s…)" % (zurl, zsize, zh.hexdigest()[:12]))
+            else:
+                print("警告：线上 %s 大小 %d 与本地 %d 不一致，跳过 app_zip" % (zurl, zremote_len, zsize))
+        except Exception as ze:
+            print("提示：线上未检测到 %s（%s），本次清单仅写 installer" % (zurl, ze))
     body = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
 
     c = paramiko.SSHClient()

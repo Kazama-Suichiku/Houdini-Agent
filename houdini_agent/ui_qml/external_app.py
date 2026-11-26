@@ -39,6 +39,8 @@ class ExternalWindow(QMainWindow):
             if ctrl is not None:
                 ctrl._snapshot_active()
                 ctrl._save_all()
+                # 若后台已静默准备好新版更新且无需 UAC，退出后自动完成替换，下次打开即已是新版
+                ctrl.apply_staged_on_exit()
         except Exception:
             pass
         super().closeEvent(event)

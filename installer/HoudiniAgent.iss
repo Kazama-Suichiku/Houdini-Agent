@@ -27,7 +27,11 @@ VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
-; 默认装到 Program Files\Houdini Agent；用户可在向导里改目录
+; 默认安装到当前用户目录（%LOCALAPPDATA%\Programs\Houdini Agent）：免管理员权限、免 UAC，
+; 支持 Claude 桌面版式后台静默更新；已有旧版装在 Program Files 的用户仍会沿用原目录平滑覆盖。
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+UsePreviousAppDir=yes
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -41,9 +45,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; 没有管理员权限时允许用户改装到个人目录
-PrivilegesRequiredOverridesAllowed=dialog
-; 应用内一键更新：若旧进程仍占用文件则请求关闭；装完由 [Run] 重启
+; 应用内更新：若旧进程仍占用文件则请求关闭；装完按需重启
 CloseApplications=yes
 RestartApplications=no
 
@@ -65,7 +67,12 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-; 安装结束后启动：交互安装显示复选框（默认勾选）；静默安装（应用内一键更新）
-; 也会执行——这是升级后自动重启应用的机制，故不加 skipifsilent。
-; postinstall 自带 runasoriginaluser：即使安装器提权，应用也以普通权限重启。
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall
+; 安装结束后启动：交互安装显示复选框（默认勾选）；静默安装（立即重启更新）也会执行；
+; 若由“退出时静默更新”传入 /NORELAUNCH=1，则装完不重开窗口，等用户下次打开即是新版。
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: ShouldRelaunch
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:NORELAUNCH|0}') <> '1';
+end;

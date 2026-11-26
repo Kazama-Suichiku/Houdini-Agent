@@ -42,7 +42,7 @@ Rectangle {
         }
 
         // 更新提示横幅 —— 紧贴输入框上方（沿用 1.5 的“输入区域上方”位置）
-        // updateState: available（可一键更新）/ downloading（显示进度、禁止关闭）/ ready
+        // updateState: available（需手动点更新）/ staged（后台已就绪，重启即生效）/ downloading / waiting / installing
         Rectangle {
             Layout.fillWidth: true
             visible: controller && controller.updateText.length > 0
@@ -61,11 +61,12 @@ Rectangle {
                 Rectangle {
                     id: updateBtn
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: controller && controller.updateState === "available"
+                    visible: controller && (controller.updateState === "available" || controller.updateState === "staged")
                     width: visible ? updateBtnLabel.implicitWidth + 22 : 0
                     height: 22; radius: 11
                     color: "transparent"; border.width: 1; border.color: Theme.accent
-                    Text { id: updateBtnLabel; anchors.centerIn: parent; text: "立即更新"
+                    Text { id: updateBtnLabel; anchors.centerIn: parent
+                           text: (controller && controller.updateState === "staged") ? controller.tr("立即重启") : (controller ? controller.tr("立即更新") : "立即更新")
                            color: Theme.accent; font.family: Theme.fontBody; font.pixelSize: Theme.fXs }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         onClicked: if (controller) controller.startUpdate() }

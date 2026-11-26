@@ -216,6 +216,10 @@ UI_EN = {
     "压缩上下文": "Compress context", "已压缩上下文": "Context compressed",
     "新建会话": "New session", "字号…": "Font size…", "字号": "Font size",
     "重置": "Reset", "关闭": "Close", "稍后": "Later", "立即更新": "Update now",
+    "立即重启": "Restart now", "立即重启更新": "Restart to update",
+    "后台自动静默更新": "Silent background updates",
+    "在后台静默下载并校验新版本，重启或重新打开应用即可自动生效，无需等待下载或安装向导。":
+        "Download and verify new versions quietly in the background. Restart or reopen the app to apply instantly with no installer wizard.",
     "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
     "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
     "刷新模型": "Refresh models", "复制": "Copy",
@@ -589,6 +593,7 @@ class Controller(QObject):
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
     statusChanged = Signal()              # running phase label
     updateAvailableChanged = Signal()
+    autoSilentUpdateChanged = Signal()
     toast = Signal(str)                   # transient message
     prefillComposer = Signal(str)         # text -> 预填输入框并聚焦（库里"+用 Meshy 生成"）
     requestOpenHoudini = Signal()         # 断开时请求外部协调器弹启动器/重连 Houdini
@@ -660,6 +665,10 @@ class Controller(QObject):
         self._memory_enabled = False
         self._ask_delete_session = True   # 删除会话前弹确认（可在设置里关）
         self._cook_realtime = True
+        self._auto_silent_update = True   # 后台自动静默下载更新（类似 Claude 桌面版，重启即生效）
+        self._staged_update = None        # 已后台下载校验就绪的暂存更新元数据
+        self._update_applying = False     # 防止退出时重复拉起更新器
+        self._silent_checking = False
         self._cook_suspended = False     # set when a cook is interrupted/too slow (per run)
         self._font_scale = 1.0
         # 外观（主题/强调色/字体方案/密度）——驱动 Theme.qml 换肤
@@ -976,6 +985,7 @@ class Controller(QObject):
             self._memory_enabled = self._qbool(s.value("memory_enabled", False), False)
             self._ask_delete_session = self._qbool(s.value("ask_delete_session", True), True)
             self._cook_realtime = self._qbool(s.value("cook_realtime", True), True)
+            self._auto_silent_update = self._qbool(s.value("auto_silent_update", True), True)
             try:
                 self._font_scale = float(s.value("font_scale", 1.0))
             except Exception:
@@ -1109,6 +1119,19 @@ class Controller(QObject):
 
     def _get_cook_realtime(self): return self._cook_realtime
     cookRealtime = Property(bool, _get_cook_realtime, notify=cookRealtimeChanged)
+
+    def _get_auto_silent_update(self): return self._auto_silent_update
+    autoSilentUpdate = Property(bool, _get_auto_silent_update, notify=autoSilentUpdateChanged)
+
+    @Slot(bool)
+    def setAutoSilentUpdate(self, on):
+        on = bool(on)
+        if on != self._auto_silent_update:
+            self._auto_silent_update = on
+            self._set_pref("auto_silent_update", on)
+            self.autoSilentUpdateChanged.emit()
+            if on:
+                self.silentUpdateCheck()
 
     def _get_app_version(self):
         try:
@@ -2633,20 +2656,48 @@ class Controller(QObject):
 
     @Slot()
     def silentUpdateCheck(self):
+        """静默检查更新；打包版开启自动静默更新时，在后台直接下载预解压校验，重启即秒级生效。"""
+        # 启动 4 小时周期巡检（仅建一次），长开窗口也能后台拿新版本
+        if getattr(self, "_periodic_update_timer", None) is None:
+            t = QTimer(self)
+            t.setInterval(4 * 3600 * 1000)
+            t.timeout.connect(self.silentUpdateCheck)
+            t.start()
+            self._periodic_update_timer = t
+        if self._silent_checking or self._update_state in ("downloading", "waiting", "installing"):
+            return
+        self._silent_checking = True
+        auto_stage = bool(self._auto_silent_update and getattr(sys, "frozen", False))
+
         def work():
             try:
-                from houdini_agent.utils.updater import check_update
+                from houdini_agent.utils.updater import check_update, get_staged_update, stage_update
+                existing = get_staged_update()
+                if existing:
+                    self._sigUpdateState.emit("staged", 100, json.dumps(existing, ensure_ascii=False))
                 r = check_update()
                 if isinstance(r, dict) and r.get("has_update"):
-                    self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
+                    rver = str(r.get("remote_version") or "")
+                    if auto_stage:
+                        if existing and existing.get("version") == rver:
+                            return
+                        st = stage_update()
+                        if st.get("success") and st.get("staged"):
+                            self._sigUpdateState.emit("staged", 100, json.dumps(st["staged"], ensure_ascii=False))
+                            return
+                    if not existing:
+                        self._sigUpdateFound.emit("发现新版本 %s" % rver)
             except Exception:
                 pass
+            finally:
+                self._silent_checking = False
+
         threading.Thread(target=work, daemon=True).start()
 
     @Slot()
     def startUpdate(self):
-        """一键更新：下载新版安装包 → 拉起静默安装 → 退出应用（装完自动重启）。
-        仅打包 exe 可用；源码运行没有可覆盖的安装，引导去官网。"""
+        """一键更新 / 立即重启应用已就绪更新。
+        若后台已完成静默下载（state=='staged'），零等待直接切换并重启；否则下载后立即应用。"""
         if self._update_state in ("downloading", "waiting", "installing"):
             return
         if not getattr(sys, "frozen", False):
@@ -2657,14 +2708,27 @@ class Controller(QObject):
                 pass
             self.toast.emit("源码运行无法就地更新，请 git pull 或从官网安装")
             return
+        # 后台静默预下载已就绪 → 直接跳过下载，零等待重启切换！
+        if self._update_state == "staged" and isinstance(self._staged_update, dict):
+            self._try_install()
+            return
+        try:
+            from houdini_agent.utils.updater import get_staged_update
+            st = get_staged_update()
+            if st:
+                self._staged_update = st
+                self._try_install()
+                return
+        except Exception:
+            pass
         self._update_state = "downloading"
         self._update_progress = 0
         self.updateAvailableChanged.emit()
 
         def work():
             try:
-                from houdini_agent.utils.updater import check_update, download_installer
-                check_update()          # 刷新 release 缓存，拿到资产直链
+                from houdini_agent.utils.updater import check_update, stage_update
+                check_update()          # 刷新清单缓存，拿到最新 app_zip / installer 直链
                 last = [-1]
 
                 def prog(pct):
@@ -2672,10 +2736,11 @@ class Controller(QObject):
                         last[0] = pct
                         self._sigUpdateState.emit("downloading", int(pct), "")
 
-                r = download_installer(progress_callback=prog)
-                if r.get("success"):
-                    self._update_installer_path = r["path"]
-                    self._sigUpdateState.emit("ready", 100, "")
+                r = stage_update(progress_callback=prog)
+                if r.get("success") and r.get("staged"):
+                    self._sigUpdateState.emit("ready", 100, json.dumps(r["staged"], ensure_ascii=False))
+                elif r.get("up_to_date"):
+                    self._sigUpdateState.emit("uptodate", 100, "")
                 else:
                     self._sigUpdateState.emit("failed", 0, r.get("error") or "下载失败")
             except Exception as e:
@@ -2684,15 +2749,35 @@ class Controller(QObject):
         threading.Thread(target=work, daemon=True).start()
 
     def _on_update_state(self, state, percent, message):
-        """运行在 UI 线程：应用更新状态机。ready → 拉起安装器并退出。"""
+        """运行在 UI 线程：应用更新状态机。staged → 提示重启即可；ready → 立即切换重启。"""
         self._update_state = state
         self._update_progress = percent
         if state == "downloading":
-            self._update_info = "正在下载新版本… %d%%" % percent
+            self._update_info = "正在准备新版本… %d%%" % percent
+        elif state == "staged":
+            try:
+                st = json.loads(message) if message else {}
+            except Exception:
+                st = {}
+            if isinstance(st, dict) and st.get("version"):
+                self._staged_update = st
+                self._update_info = "新版本 %s 已就绪 · 重启即可生效" % st["version"]
+            else:
+                self._update_info = "新版本已就绪 · 重启即可生效"
+        elif state == "uptodate":
+            self._update_state = ""
+            self._update_info = None
+            self.toast.emit("当前已是最新版本")
         elif state == "failed":
             self._update_info = "更新下载失败：%s — 点「立即更新」重试" % (message or "")[:80]
             self._update_state = "available"
         elif state == "ready":
+            try:
+                st = json.loads(message) if message else None
+            except Exception:
+                st = None
+            if isinstance(st, dict) and st.get("version"):
+                self._staged_update = st
             self._try_install()
             return
         self.updateAvailableChanged.emit()
@@ -2700,8 +2785,8 @@ class Controller(QObject):
     # ---- 安装阶段（主线程） ----
     # 1) Agent 正在回答或还有后台 Meshy 任务时不安装（安装要退出应用，会打断它们），
     #    进入 waiting，空闲后自动继续；
-    # 2) 拉起安装器后先不退出：等安装器进度窗口出现（已过 UAC、开始安装）再保存退出；
-    #    安装器先于窗口退出 = 取消授权或出错，应用保持运行并提示重试。
+    # 2) 免安装器原子替换（mode='swap'）或用户目录静默安装直接保存退出，1 秒内无窗口换新重启；
+    # 3) 若装在 Program Files 需要 UAC，等授权通过再退出，拒绝授权时保持运行并可重试。
     def _update_busy(self):
         if self._running:
             return True
@@ -2730,7 +2815,7 @@ class Controller(QObject):
         if self._update_busy():
             self._update_state = "waiting"
             self._update_progress = 100
-            self._update_info = "新版本已下载，等当前任务结束后自动安装并重启（关闭横幅可取消）"
+            self._update_info = "新版本已就绪，等当前任务结束后自动重启更新（关闭横幅可取消）"
             self.updateAvailableChanged.emit()
             self._update_timer("_update_wait_timer", 1500, self._try_install).start()
             return
@@ -2739,24 +2824,50 @@ class Controller(QObject):
 
     def _begin_install(self):
         try:
-            from houdini_agent.utils.updater import launch_installer
-            proc = launch_installer(self._update_installer_path)
+            from houdini_agent.utils.updater import apply_staged_update, get_staged_update
+            st = self._staged_update or get_staged_update()
+            res = apply_staged_update(st, relaunch=True)
         except Exception as e:
-            self._update_state = "available"
-            self._update_info = "启动安装器失败：%s — 点「立即更新」重试" % e
+            self._update_state = "staged" if self._staged_update else "available"
+            self._update_info = "应用更新失败：%s — 点「立即重启」重试" % e
             self.updateAvailableChanged.emit()
             return
-        if proc is None:
-            # 拿不到进程句柄（ShellExecute 兜底），无法判断授权结果，只能按旧方式退出
-            self._update_info = "正在安装并重启…"
+        if not res.get("started"):
+            self._update_state = "available"
+            self._update_info = "应用更新失败：%s — 点「立即更新」重试" % (res.get("error") or "未知错误")
+            self.updateAvailableChanged.emit()
+            return
+        self._update_applying = True
+        if not res.get("needs_watch"):
+            # 免安装程序原子替换 / 无 UAC 静默安装：直接保存并退出，1 秒后自动以新版重启
+            self._update_state = "installing"
+            self._update_info = "正在应用更新并重启…"
             self.updateAvailableChanged.emit()
             self._quit_for_update()
             return
-        self._update_proc = proc
+        self._update_proc = res.get("proc")
         self._update_state = "installing"
-        self._update_info = "正在启动安装程序…如弹出管理员授权，请点「是」"
+        self._update_info = "正在应用更新…如弹出管理员授权，请点「是」"
         self.updateAvailableChanged.emit()
         self._update_timer("_update_watch_timer", 300, self._install_watch).start()
+
+    def apply_staged_on_exit(self):
+        """用户正常关闭应用时触发（ExternalWindow.closeEvent）：
+        若后台已静默下载好且无需 UAC，则在退出后静默完成替换且不重开窗口，下次打开即已是新版。"""
+        if self._update_applying or not getattr(sys, "frozen", False):
+            return False
+        try:
+            from houdini_agent.utils.updater import (
+                apply_staged_update, can_apply_silently_on_exit, get_staged_update,
+            )
+            st = self._staged_update or get_staged_update()
+            if not st or not can_apply_silently_on_exit(st):
+                return False
+            self._update_applying = True
+            res = apply_staged_update(st, relaunch=False)
+            return bool(res.get("started"))
+        except Exception:
+            return False
 
     def _install_watch(self):
         from houdini_agent.utils.updater import install_watch_step, installer_window_visible
@@ -2772,8 +2883,9 @@ class Controller(QObject):
             self.updateAvailableChanged.emit()
             self._quit_for_update()
         else:
-            self._update_state = "available"
-            self._update_info = "%s。点「立即更新」重试" % reason
+            self._update_applying = False
+            self._update_state = "staged" if self._staged_update else "available"
+            self._update_info = "%s。点「立即重启」重试" % reason
             self.updateAvailableChanged.emit()
 
     def _quit_for_update(self):

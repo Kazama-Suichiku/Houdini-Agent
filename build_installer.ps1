@@ -55,10 +55,18 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller 失败 (exit $LASTEXITCODE)" }
 $App = Join-Path $Root "dist\Houdini Agent\Houdini Agent.exe"
 if (!(Test-Path $App)) { throw "未找到打包产物：$App" }
 
-# 先给主程序 exe 签名（再打进安装包）
+# 先给主程序 exe 签名（再打进安装包与静默更新包）
 Sign-File $App
 
-Write-Host "==> [2/2] Inno Setup 编译安装程序..." -ForegroundColor Cyan
+Write-Host "==> [2/3] 生成静默更新包 HoudiniAgent-App-<版本>.zip ..." -ForegroundColor Cyan
+$Ver = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
+$DistInstaller = Join-Path $Root "dist_installer"
+if (!(Test-Path $DistInstaller)) { New-Item -ItemType Directory -Path $DistInstaller | Out-Null }
+$AppZip = Join-Path $DistInstaller ("HoudiniAgent-App-" + $Ver + ".zip")
+python -c "import os, sys, zipfile; src, dst = sys.argv[1], sys.argv[2]; zf = zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED, compresslevel=6); [zf.write(os.path.join(dp, f), os.path.relpath(os.path.join(dp, f), src)) for dp, _, fs in os.walk(src) for f in fs]; zf.close(); print('App zip:', dst, os.path.getsize(dst))" (Join-Path $Root "dist\Houdini Agent") $AppZip
+if ($LASTEXITCODE -ne 0) { throw "生成静默更新包失败 (exit $LASTEXITCODE)" }
+
+Write-Host "==> [3/3] Inno Setup 编译安装程序..." -ForegroundColor Cyan
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (!(Test-Path $iscc)) { $iscc = "$env:ProgramFiles\Inno Setup 6\ISCC.exe" }
 # winget 默认按用户安装到 %LOCALAPPDATA%\Programs
