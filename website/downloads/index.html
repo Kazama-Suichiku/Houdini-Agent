@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.5</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.6</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (22)</span><span class="en">All (22)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (23)</span><span class="en">All (23)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.5", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"SILENT UPDATE",
+  {ver:"2.1.6", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"CORE OVERHAUL",
+   sha:"27a70a46ee715dba4f95d61e94ed09739e4d9cf2c43f83b902af0d116ea08c70",
+   zh:"对齐 Claude Agent SDK 的上下文压缩与核心现代化重构：平时零改动保护 Prompt Cache、逼近上限时一次性结构化交接摘要并回写会话历史（保活 Plan/Todo 并在对话流显示压缩条）；为 Anthropic 挂载 4 处 cache_control 断点、动态 RAG 改为尾部追加不再打穿缓存；系统提示词瘦身 85%；修复 Token 统计与计费口径、Anthropic thinking/temperature 冲突、同轮去重脏读、DeepSeek V4 Pro 视觉误标；新增多 Houdini 实例写操作目标锁，防止关窗自动重连误改另一份 .hip 文件。",
+   en:"Claude Agent SDK-aligned compaction & core modernization: append-only cache-safe turns, one-shot structured LLM handoff compaction with history write-back, Plan/Todo state preservation & inline compaction divider; 4 Anthropic cache_control breakpoints and tail-appended RAG; 85% slimmer system prompt; fixed multi-provider token/cost accounting, Anthropic thinking/temperature conflict, stale dedup reads, DeepSeek V4 Pro text-only gating; added multi-instance Houdini write-target lock so auto-reconnect never mutates another open .hip file."},
+  {ver:"2.1.5", date:"2026-11-26", size:"71.1 MB", latest:false, series:"2.1", milestone:true, badge:"SILENT UPDATE",
    sha:"efbbb66dbe9cec82aeacd17bb7e92cd488be02135c8112109f2fcd64adbb77ee",
    zh:"后台静默自动更新（重启即生效）：应用启动后及每 4 小时自动在后台静默下载、校验 SHA-256 并预解压新版更新包，无需等待下载或安装向导——点击「立即重启」或直接关闭后重新打开应用即可在 1 秒内原子替换升级（异常自动回滚）。新安装默认落入用户目录免 UAC；「设置 → 关于」可随时开关后台静默更新。",
    en:"Silent background auto-updates (restart to apply): downloads, SHA-256 verifies, and pre-extracts new releases quietly in the background on startup and every 4 hours. Click 'Restart now' or simply close and reopen the app for an atomic <1s swap with zero installer wizard and automatic rollback. Fresh installs default to per-user (no UAC)."},
@@ -310,8 +314,8 @@ const RELEASES = [
    en:"Full multi-instance Houdini & cross-file support (same-version multiple windows + cross-version e.g. 20.5 & 21.0): fixed Windows port collision, added per-instance discovery with PID, version & .hip filename, added a 1-click instance switcher in the context bar, and introduced 4 cross-instance Agent tools including lossless node transfer across open .hip files."},
   {ver:"2.1.2", date:"2026-11-24", size:"71.0 MB", latest:false, series:"2.1", milestone:false, badge:"DEEPSEEK VISION",
    sha:"cd8bb6b440729cd96c1d053be3c31a39d6e67a85426d73d7cd2543c70b00c485",
-   zh:"DeepSeek 全系模型（含直连 deepseek-v4-flash / deepseek-v4-pro、OpenRouter 及后续动态拉取的新模型）默认开启多模态图片输入与视口截图能力，无需再单独切换视觉实验版。",
-   en:"All DeepSeek models (direct deepseek-v4-flash / deepseek-v4-pro, OpenRouter, and newly synced models) now support multimodal image input and viewport capture by default."},
+   zh:"DeepSeek Flash / Vision 路线（直连 deepseek-flash / deepseek-v4-flash、OpenRouter deepseek/deepseek-v4.1-flash）默认开启图片输入与视口截图能力；deepseek-v4-pro 等 Pro 路线按上游接口保持仅文本。",
+   en:"DeepSeek Flash / Vision routes (direct deepseek-flash / deepseek-v4-flash and OpenRouter deepseek/deepseek-v4.1-flash) support multimodal image input and viewport capture by default; V4 Pro routes remain text-only."},
   {ver:"2.1.1", date:"2026-11-23", size:"71.0 MB", latest:false, series:"2.1", milestone:true, badge:"CODEX IMAGE",
    sha:"7678cbb22a2999c6ded81a11ea8e252e166cbe8444ba9bc358c766b55dc3ec74",
    zh:"支持使用已登录的 ChatGPT 订阅（Codex）直接生成与编辑概念图/参考图（文生图与多参考图图生图，无需 Meshy API Key），生成的图片可照常在画廊挑选或升级为 3D。在「设置 → 常规 → 图片生成」新增默认生图模型配置，可在 Meshy 与 Codex 生图模型间切换；Codex 生图模型自动随本机 CPA /v1/models 同步更新（覆盖 gpt-image-2.5 系列及后续新模型），画廊顶栏动态区分 CODEX / MESHY 并支持即时换模型重出。",

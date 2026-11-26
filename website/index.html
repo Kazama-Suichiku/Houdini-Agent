@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Houdini Agent v2.1.5 — The Procedural AI Workstation for SideFX Houdini</title>
+<title>Houdini Agent v2.1.6 — The Procedural AI Workstation for SideFX Houdini</title>
 <meta name="description" content="SideFX Houdini 原生 AI 智能体：50+ 节点/VEX/Python 工具、交互式节点管线、ChatGPT/Claude 订阅直连与 Codex 生图、Meshy 3D 生成与角色绑定动画。" />
 <link rel="canonical" href="https://houdini-agent.com/" />
 <meta name="theme-color" content="#060608" />
@@ -719,7 +719,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
     <a class="brand" href="#top">
       <span class="brand-mark">&#9671;</span>
       <span class="brand-name">Houdini Agent</span>
-      <span class="live-tag">v2.1.5</span>
+      <span class="live-tag">v2.1.6</span>
     </a>
     <nav class="nav-links">
       <a href="#patchbay"><span class="zh">节点工坊</span><span class="en">Node Lab</span></a>
@@ -739,7 +739,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight" aria-label="Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="#download"><span class="zh">下载</span><span class="en">Get v2.1.5</span></a>
+    <a class="nav-btn solid" href="#download"><span class="zh">下载</span><span class="en">Get v2.1.6</span></a>
   </header>
 </div>
 
@@ -761,7 +761,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
   <div class="hero-content">
     <div class="hero-eyebrow">
       <span class="dot"></span>
-      <span><b>v2.1.5</b> &middot; <span class="zh">后台静默自动更新（重启即生效） · Google 反重力 OAuth · 多 Houdini 跨文件协作</span><span class="en">Silent Background Updates (Restart to Apply) · Google Antigravity OAuth · Multi-Houdini Cross-File</span></span>
+      <span><b>v2.1.6</b> &middot; <span class="zh">Claude Agent SDK 上下文压缩 · Prompt Cache 断点优化 · 多实例写操作安全锁</span><span class="en">Claude Agent SDK Compaction · Prompt Cache Breakpoints · Multi-Instance Write Safety Lock</span></span>
     </div>
     <h1>
       <span class="zh">一句话，让节点<em>自己生长</em>。</span>
@@ -772,7 +772,7 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
       <span class="en">An <strong>autonomous procedural agent</strong> engineered for SideFX Houdini. Wires SOPs, writes VEX, runs Python, profiles cooks, and bridges <strong>Codex 2D &rarr; Meshy 3D &rarr; auto-rigged animation</strong>.</span>
     </p>
     <div class="hero-cta">
-      <a class="btn solid" id="heroDlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">下载 Windows 安装包 (v2.1.5)</span><span class="en">Download Installer (v2.1.5)</span></a>
+      <a class="btn solid" id="heroDlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">下载 Windows 安装包 (v2.1.6)</span><span class="en">Download Installer (v2.1.6)</span></a>
       <a class="btn" href="#patchbay">&#9672; <span class="zh">试玩真实节点工坊</span><span class="en">Play Interactive Node Lab</span></a>
       <button class="btn" id="heroCmdBtn">&#8984;K / Tab <span class="zh">呼出命令面板</span><span class="en">Command Palette</span></button>
     </div>
@@ -1017,6 +1017,10 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
         <div class="kicker">05 — Recent Releases</div>
         <h2 style="font-family:var(--display);font-weight:300;font-size:36px;color:var(--text-bright);margin-bottom:18px"><span class="zh">持续<em>高速演进</em>。</span><span class="en">Shipping, <em>fast</em>.</span></h2>
         <div class="cl-card now">
+          <div class="cl-top"><span class="cl-ver">v2.1.6</span><b><span class="zh">Claude Agent SDK 上下文压缩 · 核心重构与多实例写锁</span><span class="en">Claude Agent SDK compaction · core overhaul &amp; write-target lock</span></b><span class="cl-date">2026-11-26</span></div>
+          <p><span class="zh">全面重构上下文压缩与 Token 统计：对齐 Claude Agent SDK 风格（平时零改动保 Prompt Cache、逼近上限时一次性结构化交接摘要并回写历史、保活 Plan/Todo 并在对话流展示压缩条），为 Anthropic 挂载 4 处 <code>cache_control</code> 断点，动态 RAG 改为尾部追加不再打穿缓存；系统提示词瘦身 85%；修复 Anthropic thinking/temperature 冲突、同轮去重脏读、DeepSeek V4 Pro 视觉误标，并新增多实例场景写锁防止关窗重连误改另一份 <code>.hip</code>。</span><span class="en">Full context compaction &amp; token accounting overhaul aligned with Claude Agent SDK (append-only cache-safe turns, structured LLM handoff compaction with history write-back, Plan/Todo preservation &amp; inline compaction dividers), 4 Anthropic <code>cache_control</code> breakpoints, tail-appended RAG, 85% slimmer system prompt, fixed Anthropic thinking/temperature conflict, stale dedup reads, DeepSeek V4 Pro text-only gating, and multi-instance write-target locking to protect open <code>.hip</code> files.</span></p>
+        </div>
+        <div class="cl-card">
           <div class="cl-top"><span class="cl-ver">v2.1.5</span><b><span class="zh">后台静默自动更新 · 重启即生效</span><span class="en">Silent background updates · restart to apply</span></b><span class="cl-date">2026-11-26</span></div>
           <p><span class="zh">对标 Claude 桌面版的无感更新体验：启动后及每 4 小时自动在后台静默下载、校验并预解压新版更新包，无需等待下载或安装向导——点击「立即重启」或正常关闭再打开应用即可 1 秒内原子切换为新版（失败自动回滚）。新安装默认用户目录免 UAC，并在「设置 → 关于」提供后台静默更新开关。</span><span class="en">Claude-Desktop-style zero-wait silent updates: automatically downloads, SHA-256 verifies, and pre-extracts updates quietly in the background. Click 'Restart now' or simply close and reopen the app to atomically swap to the new version in under a second with automatic rollback. Fresh installs default to per-user (no UAC), with a toggle in Settings › About.</span></p>
         </div>
@@ -1029,8 +1033,8 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
           <p><span class="zh">修复 Windows 多开 Houdini 端口冲突问题，支持同版本多开与跨版本（如 20.5 + 21.0）同时接入并按 <code>.hip</code> 文件名/版本/端口准确区分；状态栏新增一键切换实例与再启动入口；Agent 新增 <code>list_houdini_instances</code>、<code>switch_houdini_instance</code>、<code>run_in_houdini_instance</code> 与 <code>transfer_nodes_between_instances</code>，可跨打开的工程文件直接查看、修改与无损复制节点网络。</span><span class="en">Fixed Windows multi-instance port collision so multiple same-version or cross-version Houdini windows (e.g. 20.5 + 21.0) connect simultaneously and are cleanly distinguished by <code>.hip</code> filename, version &amp; port. Added a 1-click instance switcher in the context bar and 4 new cross-instance Agent tools including lossless cross-file node transfer.</span></p>
         </div>
         <div class="cl-card">
-          <div class="cl-top"><span class="cl-ver">v2.1.2</span><b><span class="zh">DeepSeek 默认支持图片输入</span><span class="en">DeepSeek vision input enabled by default</span></b><span class="cl-date">2026-11-24</span></div>
-          <p><span class="zh">DeepSeek 全系模型（含直连 <code>deepseek-v4-flash</code> / <code>deepseek-v4-pro</code>、OpenRouter 以及后续动态拉取的新模型）默认开启多模态图片输入与视口截图能力，无需再单独切换视觉实验版。</span><span class="en">All DeepSeek models (direct <code>deepseek-v4-flash</code> / <code>deepseek-v4-pro</code>, OpenRouter, and newly synced models) now support multimodal image input and viewport capture by default.</span></p>
+          <div class="cl-top"><span class="cl-ver">v2.1.2</span><b><span class="zh">DeepSeek Flash 支持图片与视口截图</span><span class="en">DeepSeek Flash vision &amp; viewport capture</span></b><span class="cl-date">2026-11-24</span></div>
+          <p><span class="zh">DeepSeek Flash / Vision 路线（含直连 <code>deepseek-flash</code> / <code>deepseek-v4-flash</code> 与 OpenRouter <code>deepseek/deepseek-v4.1-flash</code>）默认开启多模态图片输入与视口截图能力；<code>deepseek-v4-pro</code> 等 Pro 路线按上游能力保持仅文本。</span><span class="en">DeepSeek Flash / Vision routes (direct <code>deepseek-flash</code> / <code>deepseek-v4-flash</code> and OpenRouter <code>deepseek/deepseek-v4.1-flash</code>) now support multimodal image input and viewport capture by default; text-only Pro routes such as <code>deepseek-v4-pro</code> remain text-only.</span></p>
         </div>
         <div class="cl-card">
           <div class="cl-top"><span class="cl-ver">v2.1.1</span><b><span class="zh">ChatGPT 订阅生图 · 默认生图模型设置</span><span class="en">Codex native image gen · default picker</span></b><span class="cl-date">2026-11-23</span></div>
@@ -1076,9 +1080,9 @@ footer{padding:40px 0 34px;border-top:1px solid var(--border-soft);font-family:v
     <div class="final-cta reveal">
       <h2><span class="zh">把 AI 装进<em>你的节点网络</em>。</span><span class="en">Put AI <em>in your node graph</em>.</span></h2>
       <p><span class="zh">免费、开源。一个独立安装包自动桥接 Houdini —— 建网、写 VEX、Codex 生图、Meshy 3D 与角色绑定，全在一句话之间。</span><span class="en">Free &amp; open source. One installer auto-bridged to Houdini — SOPs, VEX, Codex images, Meshy 3D and auto-rigging, all in one sentence.</span></p>
-      <div class="meta">v2.1.5 &middot; 71.1 MB &middot; SHA-256 Verified &middot; Houdini 19.5+ / 20.5+ / 21+ &middot; MIT License</div>
+      <div class="meta">v2.1.6 &middot; 71.1 MB &middot; SHA-256 Verified &middot; Houdini 19.5+ / 20.5+ / 21+ &middot; MIT License</div>
       <div class="acts">
-        <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">立即下载 v2.1.5</span><span class="en">Download v2.1.5</span></a>
+        <a class="btn solid" id="dlBtn" href="/download/HoudiniAgent-Setup.exe" download>&#8595; <span class="zh">立即下载 v2.1.6</span><span class="en">Download v2.1.6</span></a>
         <a class="btn" href="/downloads/"><span class="zh">所有历史版本</span><span class="en">All versions</span></a>
         <a class="btn" href="https://github.com/Kazama-Suichiku/Houdini-Agent" target="_blank" rel="noopener">GitHub</a>
       </div>
@@ -1990,7 +1994,7 @@ function getCommands(){
     {t: en?'Theme → Midnight Blue':'切换主题 → 午夜蓝 Midnight', k:'THEME', fn:()=>setTheme('midnight')},
     {t: en?'Theme → Daylight (Light)':'切换主题 → 日光 Daylight', k:'THEME', fn:()=>setTheme('day')},
     {t: en?'Toggle Language (ZH / EN)':'切换中英文界面 (ZH / EN)', k:'LANG', fn:()=>setLang(curLang()==='zh'?'en':'zh')},
-    {t: en?'Download Houdini Agent v2.1.5':'立即下载 Houdini Agent v2.1.5', k:'DOWNLOAD', fn:()=>document.getElementById('download').scrollIntoView({behavior:'smooth'})},
+    {t: en?'Download Houdini Agent v2.1.6':'立即下载 Houdini Agent v2.1.6', k:'DOWNLOAD', fn:()=>document.getElementById('download').scrollIntoView({behavior:'smooth'})},
   ];
 }
 let filteredCmds = [];
