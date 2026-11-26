@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.6</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.7</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (23)</span><span class="en">All (23)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (24)</span><span class="en">All (24)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.6", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"CORE OVERHAUL",
+  {ver:"2.1.7", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:false, badge:"UPDATER FIX",
+   sha:"a544538a21658ab2e4af428afe9f74ebba254963bd5af34528e07ea9dce05dcb",
+   zh:"修复后台静默更新不生效且不自动重启的问题：移除 Windows 上互斥的 CREATE_NO_WINDOW | DETACHED_PROCESS 标志；支持跨盘符安装目录（如 C:\\ 暂存到 D:\\ 安装目录）先预拷贝再同盘原子替换，增加文件锁重试与自动回滚，并保护 unins000.exe/dat 卸载程序不被误删。装过本版后，后续所有后台静默更新均可自动完成替换并重启。",
+   en:"Fixed silent background update failing to swap or relaunch on Windows: removed mutually exclusive CREATE_NO_WINDOW | DETACHED_PROCESS flags, added cross-volume staging (e.g. C:\\ to D:\\) with atomic same-volume swap, file-lock retries, rollback safety, and uninstaller preservation."},
+  {ver:"2.1.6", date:"2026-11-26", size:"71.1 MB", latest:false, series:"2.1", milestone:true, badge:"CORE OVERHAUL",
    sha:"27a70a46ee715dba4f95d61e94ed09739e4d9cf2c43f83b902af0d116ea08c70",
    zh:"对齐 Claude Agent SDK 的上下文压缩与核心现代化重构：平时零改动保护 Prompt Cache、逼近上限时一次性结构化交接摘要并回写会话历史（保活 Plan/Todo 并在对话流显示压缩条）；为 Anthropic 挂载 4 处 cache_control 断点、动态 RAG 改为尾部追加不再打穿缓存；系统提示词瘦身 85%；修复 Token 统计与计费口径、Anthropic thinking/temperature 冲突、同轮去重脏读、DeepSeek V4 Pro 视觉误标；新增多 Houdini 实例写操作目标锁，防止关窗自动重连误改另一份 .hip 文件。",
    en:"Claude Agent SDK-aligned compaction & core modernization: append-only cache-safe turns, one-shot structured LLM handoff compaction with history write-back, Plan/Todo state preservation & inline compaction divider; 4 Anthropic cache_control breakpoints and tail-appended RAG; 85% slimmer system prompt; fixed multi-provider token/cost accounting, Anthropic thinking/temperature conflict, stale dedup reads, DeepSeek V4 Pro text-only gating; added multi-instance Houdini write-target lock so auto-reconnect never mutates another open .hip file."},
