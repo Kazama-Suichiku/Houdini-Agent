@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.4</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.5</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (21)</span><span class="en">All (21)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (22)</span><span class="en">All (22)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.4", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"ANTIGRAVITY + LIVE CPA",
+  {ver:"2.1.5", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"SILENT UPDATE",
+   sha:"efbbb66dbe9cec82aeacd17bb7e92cd488be02135c8112109f2fcd64adbb77ee",
+   zh:"后台静默自动更新（重启即生效）：应用启动后及每 4 小时自动在后台静默下载、校验 SHA-256 并预解压新版更新包，无需等待下载或安装向导——点击「立即重启」或直接关闭后重新打开应用即可在 1 秒内原子替换升级（异常自动回滚）。新安装默认落入用户目录免 UAC；「设置 → 关于」可随时开关后台静默更新。",
+   en:"Silent background auto-updates (restart to apply): downloads, SHA-256 verifies, and pre-extracts new releases quietly in the background on startup and every 4 hours. Click 'Restart now' or simply close and reopen the app for an atomic <1s swap with zero installer wizard and automatic rollback. Fresh installs default to per-user (no UAC)."},
+  {ver:"2.1.4", date:"2026-11-26", size:"71.1 MB", latest:false, series:"2.1", milestone:true, badge:"ANTIGRAVITY + LIVE CPA",
    sha:"e22e9dc662ff7d0d4c111c9e089579cf099dc3987bbf7e5f74694d5c6b7d7660",
    zh:"新增内置「Google 反重力（Antigravity）」OAuth 订阅登录（免 API Key 直连 Gemini 4 / Claude 5.5 系列）；升级本机 CPA 至 8.1.4 并开启远程模型目录自动拉新，已登录用户无感自动升级；Claude 订阅同步最新 claude-fable-5-2 并自动过滤已退役的 3.x / 4.0 旧快照，Codex 同步最新 gpt-6.2-sol / gpt-6.2-astra / gpt-6.1-terra 与 gpt-image-2.6* 生图模型。",
    en:"Added built-in Google Antigravity OAuth sign-in (Gemini 4 & Claude models, zero API key); upgraded local CPA to 8.1.4 with automatic live catalog syncing and seamless background upgrade; Claude picks up claude-fable-5-2 while filtering retired legacy snapshots, and Codex picks up gpt-6.2-sol / gpt-6.2-astra / gpt-image-2.6*."},
