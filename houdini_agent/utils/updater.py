@@ -712,58 +712,116 @@ _SWAP_SCRIPT_TEMPLATE = r"""param(
     [string]$LogFile
 )
 $ErrorActionPreference = "Stop"
+
 function Log($m) {
-    try { Add-Content -Path $LogFile -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] " + $m) -Encoding UTF8 } catch {}
+    try {
+        Add-Content -Path $LogFile -Value ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] " + $m) -Encoding UTF8
+    } catch {}
 }
+
+function ShouldPreserve($name) {
+    $keep = @("config", "cache", "trainData", "plugins", "rules", "_update_bak", "_update_new")
+    if ($keep -contains $name) { return $true }
+    if ($name -match '^unins\d+\.(exe|dat|msg)$') { return $true }
+    return $false
+}
+
 Log ("start wait_pid=" + $WaitPid + " app=" + $AppDir + " staged=" + $StagedDir + " relaunch=" + $Relaunch)
-# 1. 等待旧主进程完全退出（最长 30 秒）
-for ($i = 0; $i -lt 120; $i++) {
-    $p = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
-    if (-not $p) { break }
-    Start-Sleep -Milliseconds 250
+
+# 1. Wait for old app process to exit (up to 30s)
+if ($WaitPid -gt 0) {
+    for ($i = 0; $i -lt 120; $i++) {
+        $p = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+        if (-not $p) { break }
+        Start-Sleep -Milliseconds 250
+    }
 }
 Start-Sleep -Milliseconds 350
 
-$preserve = @("config", "cache", "trainData", "plugins", "rules", "_update_bak")
 $bakDir = Join-Path $AppDir "_update_bak"
+$newDir = Join-Path $AppDir "_update_new"
+
 try {
-    if (Test-Path $bakDir) { Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue }
+    if (-not (Test-Path -LiteralPath $StagedDir)) {
+        throw ("StagedDir not found: " + $StagedDir)
+    }
+
+    # 2. If StagedDir and AppDir are on different drives (e.g. C:\ -> D:\),
+    # copy staged files into AppDir\_update_new first while old app is untouched.
+    # That makes the actual swap step guaranteed same-volume atomic Move-Item.
+    $srcRoot = [System.IO.Path]::GetPathRoot($StagedDir).ToUpperInvariant()
+    $dstRoot = [System.IO.Path]::GetPathRoot($AppDir).ToUpperInvariant()
+    $swapSrc = $StagedDir
+    if ($srcRoot -ne $dstRoot) {
+        Log ("cross-volume detected (" + $srcRoot + " -> " + $dstRoot + "), pre-copying to _update_new")
+        if (Test-Path -LiteralPath $newDir) {
+            Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Path $newDir -Force | Out-Null
+        foreach ($item in (Get-ChildItem -LiteralPath $StagedDir -Force)) {
+            if (ShouldPreserve $item.Name) { continue }
+            Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $newDir $item.Name) -Recurse -Force
+        }
+        $swapSrc = $newDir
+    }
+
+    if (Test-Path -LiteralPath $bakDir) {
+        Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     New-Item -ItemType Directory -Path $bakDir -Force | Out-Null
 
-    # 2. 移走旧版应用文件到备份目录（保留用户数据目录）
-    $moved = @()
+    # 3. Move old app files into _update_bak with short lock retries
     foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
-        if ($preserve -contains $item.Name) { continue }
+        if (ShouldPreserve $item.Name) { continue }
         $dst = Join-Path $bakDir $item.Name
-        Move-Item -LiteralPath $item.FullName -Destination $dst -Force
-        $moved += $item.Name
+        $ok = $false
+        $lastErr = $null
+        for ($retry = 0; $retry -lt 15; $retry++) {
+            try {
+                Move-Item -LiteralPath $item.FullName -Destination $dst -Force
+                $ok = $true
+                break
+            } catch {
+                $lastErr = $_
+                Start-Sleep -Milliseconds 300
+            }
+        }
+        if (-not $ok) { throw $lastErr }
     }
 
-    # 3. 移入已预解压校验的新版文件
-    foreach ($item in (Get-ChildItem -LiteralPath $StagedDir -Force)) {
-        if ($preserve -contains $item.Name) { continue }
+    # 4. Move new app files into AppDir (guaranteed same volume)
+    foreach ($item in (Get-ChildItem -LiteralPath $swapSrc -Force)) {
+        if (ShouldPreserve $item.Name) { continue }
         $dst = Join-Path $AppDir $item.Name
-        if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+        if (Test-Path -LiteralPath $dst) {
+            Remove-Item -LiteralPath $dst -Recurse -Force
+        }
         Move-Item -LiteralPath $item.FullName -Destination $dst -Force
     }
 
-    # 4. 清理备份与暂存标记
-    Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force $StagedDir -ErrorAction SilentlyContinue
-    if (Test-Path $MetaFile) { Remove-Item -Force $MetaFile -ErrorAction SilentlyContinue }
+    # 5. Cleanup backup, staging dir, and staged.json
+    Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StagedDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($MetaFile -and (Test-Path -LiteralPath $MetaFile)) {
+        Remove-Item -LiteralPath $MetaFile -Force -ErrorAction SilentlyContinue
+    }
     Log "swap succeeded"
 } catch {
     Log ("swap failed, rolling back: " + $_.Exception.Message)
     try {
         foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
-            if ($preserve -contains $item.Name) { continue }
-            Remove-Item -Recurse -Force $item.FullName -ErrorAction SilentlyContinue
+            if (ShouldPreserve $item.Name) { continue }
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
         }
-        if (Test-Path $bakDir) {
+        if (Test-Path -LiteralPath $bakDir) {
             foreach ($item in (Get-ChildItem -LiteralPath $bakDir -Force)) {
                 Move-Item -LiteralPath $item.FullName -Destination (Join-Path $AppDir $item.Name) -Force
             }
-            Remove-Item -Recurse -Force $bakDir -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $newDir) {
+            Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
         }
         Log "rollback complete"
     } catch {
@@ -773,21 +831,32 @@ try {
 
 if ($Relaunch -eq 1) {
     $exe = Join-Path $AppDir "Houdini Agent.exe"
-    if (Test-Path $exe) {
+    if (Test-Path -LiteralPath $exe) {
         Log ("relaunching " + $exe)
-        Start-Process -FilePath $exe -WorkingDirectory $AppDir
+        try {
+            Start-Process -FilePath $exe -WorkingDirectory $AppDir
+        } catch {
+            Log ("relaunch error: " + $_.Exception.Message)
+        }
+    } else {
+        Log ("relaunch skipped, exe missing: " + $exe)
     }
 }
 """
 
 
 def _launch_swap_helper(staged_dir, relaunch=True):
-    """拉起完全隐藏的后台 PowerShell 脚本：等当前进程退出 → 秒级原子替换文件 → 按需自动重启。"""
+    """拉起完全隐藏的后台 PowerShell 脚本：等当前进程退出 → 秒级原子替换文件 → 按需自动重启。
+
+    注意：Windows 上 CREATE_NO_WINDOW 与 DETACHED_PROCESS 互斥，同时传入会导致
+    powershell.exe 直接以 0 退出且不执行任何脚本行！因此仅用
+    CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP，并重定向标准流到 DEVNULL。
+    """
     import subprocess
     udir = _updates_dir()
     udir.mkdir(parents=True, exist_ok=True)
     script = udir / "apply_update.ps1"
-    script.write_text(_SWAP_SCRIPT_TEMPLATE, encoding="utf-8")
+    script.write_text(_SWAP_SCRIPT_TEMPLATE, encoding="utf-8-sig")
     log_file = _user_state_dir() / "update_apply.log"
     cmd = [
         "powershell.exe", "-NoProfile", "-NonInteractive",
@@ -801,9 +870,15 @@ def _launch_swap_helper(staged_dir, relaunch=True):
         "-LogFile", str(log_file),
     ]
     flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
-             | getattr(subprocess, "DETACHED_PROCESS", 0)
              | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-    return subprocess.Popen(cmd, close_fds=True, creationflags=flags)
+    return subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=flags,
+    )
 
 
 def apply_staged_update(staged=None, relaunch=True) -> dict:

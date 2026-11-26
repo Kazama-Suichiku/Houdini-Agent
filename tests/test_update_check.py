@@ -340,4 +340,46 @@ class TestSilentBackgroundUpdate:
         assert res["started"] is True and res["mode"] == "swap" and res["needs_watch"] is False
         assert calls and "apply_update.ps1" in " ".join(calls[0][0])
         assert "-Relaunch" in calls[0][0] and calls[0][0][calls[0][0].index("-Relaunch") + 1] == "0"
+        # Windows 上绝不能把 DETACHED_PROCESS 与 CREATE_NO_WINDOW 同时传给 powershell.exe
+        flags = calls[0][1].get("creationflags", 0)
+        assert not (flags & getattr(subprocess, "DETACHED_PROCESS", 0))
         assert (state_dir / "updates" / "apply_update.ps1").is_file()
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell swap test")
+    def test_swap_helper_actually_executes_and_swaps_on_windows(self, tmp_path, monkeypatch):
+        """真机端到端验证：隐藏拉起 powershell.exe 能真正执行替换、保留 unins000/config 并写日志。"""
+        state_dir = tmp_path / "state"
+        app_dir = tmp_path / "app"
+        staged_dir = state_dir / "updates" / "staged" / "2.1.7"
+        meta = state_dir / "updates" / "staged.json"
+        (app_dir / "_internal").mkdir(parents=True)
+        (app_dir / "config").mkdir()
+        (app_dir / "Houdini Agent.exe").write_bytes(b"OLD_EXE")
+        (app_dir / "_internal" / "VERSION").write_text("2.1.6\n", encoding="utf-8")
+        (app_dir / "config" / "user.ini").write_text("k=v\n", encoding="utf-8")
+        (app_dir / "unins000.exe").write_bytes(b"UNINS")
+        (app_dir / "unins000.dat").write_bytes(b"DAT")
+
+        (staged_dir / "_internal").mkdir(parents=True)
+        (staged_dir / "Houdini Agent.exe").write_bytes(b"NEW_EXE")
+        (staged_dir / "_internal" / "VERSION").write_text("2.1.7\n", encoding="utf-8")
+        meta.write_text('{"version":"2.1.7"}', encoding="utf-8")
+
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater.os, "getpid", lambda: 0)
+
+        proc = updater._launch_swap_helper(str(staged_dir), relaunch=False)
+        rc = proc.wait(timeout=20)
+        assert rc == 0
+        log_file = state_dir / "update_apply.log"
+        assert log_file.is_file(), "apply_update.ps1 did not execute!"
+        log_text = log_file.read_text(encoding="utf-8")
+        assert "swap succeeded" in log_text, log_text
+        assert (app_dir / "Houdini Agent.exe").read_bytes() == b"NEW_EXE"
+        assert (app_dir / "_internal" / "VERSION").read_text(encoding="utf-8").strip() == "2.1.7"
+        assert (app_dir / "config" / "user.ini").read_text(encoding="utf-8").strip() == "k=v"
+        assert (app_dir / "unins000.exe").read_bytes() == b"UNINS"
+        assert (app_dir / "unins000.dat").read_bytes() == b"DAT"
+        assert not meta.exists()
+        assert not staged_dir.exists()
