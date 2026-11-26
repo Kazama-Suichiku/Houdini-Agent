@@ -368,11 +368,37 @@ def show_tool():
     win.activateWindow()
     QTimer.singleShot(100, coord.start)
     QTimer.singleShot(4000, controller.silentUpdateCheck)
+
+    def _mark_healthy():
+        try:
+            from houdini_agent.utils.updater import mark_update_healthy
+            mark_update_healthy()
+        except Exception:
+            pass
+
+    QTimer.singleShot(5000, _mark_healthy)
     app._hagent_external_window = win
     return win
 
 
 def main():
+    import sys
+    if getattr(sys, "frozen", False):
+        try:
+            from houdini_agent.utils.updater import check_startup_health, wait_for_pending_update
+            wait_for_pending_update(timeout=15.0)
+            health = check_startup_health(max_failures=2)
+            if health.get("rolled_back"):
+                # 已自动回滚到上一健康版本，重新拉起当前 exe 并退出本次损坏进程
+                import subprocess
+                subprocess.Popen(
+                    [sys.executable] + sys.argv[1:],
+                    cwd=os.path.dirname(sys.executable),
+                    close_fds=True,
+                )
+                return 0
+        except Exception:
+            pass
     app = QApplication.instance() or QApplication([])
     show_tool()
     return app.exec_()

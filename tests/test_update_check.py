@@ -383,3 +383,233 @@ class TestSilentBackgroundUpdate:
         assert (app_dir / "unins000.dat").read_bytes() == b"DAT"
         assert not meta.exists()
         assert not staged_dir.exists()
+
+    def test_single_flight_stage_update_deduplicates_concurrent_downloads(self, env, tmp_path, monkeypatch):
+        """后台静默下载进行中时，手动点击立即更新应挂载到同一任务，只发一次 HTTP 请求。"""
+        import threading
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        state_dir = tmp_path / "state"
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+
+        zbytes = _make_app_zip("2.1.8")
+        zsha = hashlib.sha256(zbytes).hexdigest()
+        zurl = "https://houdini-agent.com/download/HoudiniAgent-App-2.1.8.zip"
+        m = manifest("2.1.8")
+        m["app_zip"] = {"url": zurl, "size": len(zbytes), "sha256": zsha}
+        updater._save_etag_cache({"manifest": m})
+
+        started = threading.Event()
+        release = threading.Event()
+
+        class _SlowResp(Resp):
+            def iter_content(self, chunk_size=65536):
+                started.set()
+                release.wait(timeout=5)
+                yield self._content
+
+        fake = env({zurl: _SlowResp(200, content=zbytes)})
+        results = [None, None]
+        pcts = [[], []]
+
+        def t1():
+            results[0] = updater.stage_update(progress_callback=pcts[0].append)
+
+        def t2():
+            started.wait(timeout=5)
+            results[1] = updater.stage_update(progress_callback=pcts[1].append)
+
+        th1 = threading.Thread(target=t1)
+        th2 = threading.Thread(target=t2)
+        th1.start()
+        th2.start()
+        started.wait(timeout=5)
+        import time as _t
+        _t.sleep(0.1)
+        release.set()
+        th1.join(timeout=10)
+        th2.join(timeout=10)
+
+        assert len(fake.calls) == 1
+        assert results[0]["success"] and results[1]["success"]
+        assert results[0]["staged"]["version"] == "2.1.8"
+        assert results[1]["staged"]["version"] == "2.1.8"
+        assert 100 in pcts[0] and 100 in pcts[1]
+
+    def test_download_one_resumes_via_http_range(self, tmp_path):
+        """大文件下载中途截断时，重试应携带 Range 头续传并最终通过 SHA-256 校验。"""
+        payload = b"ABCD" * (300 * 1024)  # 1.2 MB
+        split = 500 * 1024
+        sha = hashlib.sha256(payload).hexdigest()
+        seen_headers = []
+
+        class _FakeReq:
+            def get(self, url, stream=True, timeout=60, headers=None):
+                seen_headers.append(dict(headers or {}))
+                rng = (headers or {}).get("Range", "")
+                if rng.startswith("bytes="):
+                    offset = int(rng.split("=")[1].split("-")[0])
+                    part = payload[offset:]
+                    return Resp(206, content=part, headers={"content-length": str(len(part))})
+                # 首次模拟中途断流，只返回前半段
+                return Resp(200, content=payload[:split], headers={"content-length": str(len(payload))})
+
+        target = tmp_path / "pkg.zip.part"
+        err = updater._download_one(
+            _FakeReq(),
+            {"url": "https://example.com/pkg.zip", "size": len(payload), "sha256": sha},
+            str(target),
+            lambda pct: None,
+        )
+        assert err == ""
+        assert len(seen_headers) == 2
+        assert seen_headers[1].get("Range") == f"bytes={split}-"
+        assert target.read_bytes() == payload
+
+    def test_delta_patch_selected_when_runtime_hash_matches_and_falls_back_when_mismatch(self, env, tmp_path, monkeypatch):
+        """RUNTIME_HASH 一致时走 ~1.5 MB 增量补丁 mode='patch'；不一致时自动回退全量 mode='swap'。"""
+        app_dir = tmp_path / "app"
+        (app_dir / "_internal" / "houdini_agent").mkdir(parents=True)
+        (app_dir / "Houdini Agent.exe").write_bytes(b"FROZEN_EXE_BIN")
+        (app_dir / "_internal" / "Qt6Core.dll").write_bytes(b"QT_RUNTIME_DLL")
+        (app_dir / "_internal" / "VERSION").write_text("2.1.7\n", encoding="utf-8")
+        (app_dir / "_internal" / "houdini_agent" / "a.py").write_text("V=1\n", encoding="utf-8")
+        rt_hash = updater.compute_runtime_hash(app_dir)
+        (app_dir / "_internal" / "RUNTIME_HASH").write_text(rt_hash + "\n", encoding="utf-8")
+
+        state_dir = tmp_path / "state"
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater.sys, "frozen", True, raising=False)
+
+        # 构造极小增量补丁包（仅业务文件，不含 exe/dll）
+        import io, zipfile
+        pbuf = io.BytesIO()
+        with zipfile.ZipFile(pbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("_internal/VERSION", "2.1.8\n")
+            zf.writestr("_internal/RUNTIME_HASH", rt_hash + "\n")
+            zf.writestr("_internal/houdini_agent/a.py", "V=2\n" + ("# pad\n" * 400))
+        pbytes = pbuf.getvalue()
+        psha = hashlib.sha256(pbytes).hexdigest()
+        purl = "https://houdini-agent.com/download/HoudiniAgent-Patch-2.1.8.zip"
+
+        zbytes = _make_app_zip("2.1.8")
+        zsha = hashlib.sha256(zbytes).hexdigest()
+        zurl = "https://houdini-agent.com/download/HoudiniAgent-App-2.1.8.zip"
+
+        m = manifest("2.1.8")
+        m["patch_zip"] = {"url": purl, "size": len(pbytes), "sha256": psha, "runtime_hash": rt_hash}
+        m["app_zip"] = {"url": zurl, "size": len(zbytes), "sha256": zsha}
+        updater._save_etag_cache({"manifest": m})
+        fake = env({purl: Resp(200, content=pbytes), zurl: Resp(200, content=zbytes)})
+
+        r = updater.stage_update()
+        assert r["success"] and r["staged"]["mode"] == "patch"
+        assert fake.calls == [purl]  # 只下了增量补丁，没下全量包！
+
+        # 若远端 runtime_hash 变化（例如升级了 PySide6），应自动回退全量 app_zip
+        updater.clear_staged_update()
+        m["patch_zip"]["runtime_hash"] = "0" * 64
+        updater._save_etag_cache({"manifest": m})
+        r2 = updater.stage_update()
+        assert r2["success"] and r2["staged"]["mode"] == "swap"
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell patch test")
+    def test_patch_mode_executes_and_health_check_rolls_back_on_crash_loop(self, tmp_path, monkeypatch):
+        """真机验证 mode='patch' 逐文件覆盖 + 写 pending_verify.json + 连续闪退自动回滚 + 健康确认清理。"""
+        state_dir = tmp_path / "state"
+        app_dir = tmp_path / "app"
+        staged_dir = state_dir / "updates" / "staged" / "2.1.9-patch"
+        meta = state_dir / "updates" / "staged.json"
+        (app_dir / "_internal" / "houdini_agent").mkdir(parents=True)
+        (app_dir / "Houdini Agent.exe").write_bytes(b"UNCHANGED_EXE")
+        (app_dir / "_internal" / "VERSION").write_text("2.1.8\n", encoding="utf-8")
+        (app_dir / "_internal" / "houdini_agent" / "mod.py").write_text("OLD_CODE\n", encoding="utf-8")
+
+        (staged_dir / "_internal" / "houdini_agent").mkdir(parents=True)
+        (staged_dir / "_internal" / "VERSION").write_text("2.1.9\n", encoding="utf-8")
+        (staged_dir / "_internal" / "houdini_agent" / "mod.py").write_text("NEW_CODE\n", encoding="utf-8")
+        meta.write_text('{"version":"2.1.9"}', encoding="utf-8")
+
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+        monkeypatch.setattr(updater, "get_local_version", lambda: "2.1.8")
+        monkeypatch.setattr(updater.os, "getpid", lambda: 0)
+
+        proc = updater._launch_swap_helper(str(staged_dir), relaunch=False, mode="patch", to_version="2.1.9")
+        assert proc.wait(timeout=20) == 0
+        assert (app_dir / "_internal" / "VERSION").read_text(encoding="utf-8").strip() == "2.1.9"
+        assert (app_dir / "_internal" / "houdini_agent" / "mod.py").read_text(encoding="utf-8").strip() == "NEW_CODE"
+        assert (app_dir / "Houdini Agent.exe").read_bytes() == b"UNCHANGED_EXE"
+        assert not (state_dir / "updates" / "applying.lock").exists()
+        assert (state_dir / "updates" / "pending_verify.json").is_file()
+
+        # 模拟新版连续 2 次闪退 → 第 3 次启动 check_startup_health 自动回滚回 2.1.8！
+        h1 = updater.check_startup_health(max_failures=2)
+        assert h1["pending"] is True and h1["rolled_back"] is False and h1["attempts"] == 1
+        h2 = updater.check_startup_health(max_failures=2)
+        assert h2["pending"] is True and h2["rolled_back"] is False and h2["attempts"] == 2
+        h3 = updater.check_startup_health(max_failures=2)
+        assert h3["rolled_back"] is True and h3["from_version"] == "2.1.8"
+        assert (app_dir / "_internal" / "VERSION").read_text(encoding="utf-8").strip() == "2.1.8"
+        assert (app_dir / "_internal" / "houdini_agent" / "mod.py").read_text(encoding="utf-8").strip() == "OLD_CODE"
+        assert not (state_dir / "updates" / "pending_verify.json").exists()
+
+    def test_mark_update_healthy_cleans_verify_and_rollback(self, tmp_path, monkeypatch):
+        state_dir = tmp_path / "state"
+        app_dir = tmp_path / "app"
+        rb = state_dir / "updates" / "rollback"
+        rb.mkdir(parents=True)
+        (rb / "old.txt").write_text("old", encoding="utf-8")
+        vf = state_dir / "updates" / "pending_verify.json"
+        vf.write_text(json.dumps({"rollback_dir": str(rb), "attempts": 1}), encoding="utf-8")
+        monkeypatch.setattr(updater, "_user_state_dir", lambda: state_dir)
+        monkeypatch.setattr(updater, "app_install_dir", lambda: app_dir)
+
+        assert updater.mark_update_healthy() is True
+        assert not vf.exists()
+        assert not rb.exists()
+
+    def test_ed25519_manifest_signature_verification(self):
+        pytest.importorskip("cryptography")
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
+
+        priv = Ed25519PrivateKey.generate()
+        priv_b64 = base64.b64encode(priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode("ascii")
+        pub_b64 = base64.b64encode(priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode("ascii")
+
+        m = manifest("2.1.9")
+        m["signature"] = updater.sign_manifest(m, priv_b64)
+        assert updater.verify_manifest_signature(m, pubkey_b64=pub_b64) is True
+
+        # 篡改任意字段后验签必须失败
+        tampered = dict(m, version="9.9.9")
+        assert updater.verify_manifest_signature(tampered, pubkey_b64=pub_b64) is False
+        # 缺少 signature 时在配置了公钥下必须失败
+        unsigned = {k: v for k, v in m.items() if k != "signature"}
+        assert updater.verify_manifest_signature(unsigned, pubkey_b64=pub_b64) is False
+
+    def test_app_zip_sources_includes_github_release_mirror(self):
+        m = manifest("2.1.9")
+        m["app_zip"] = {"url": "https://houdini-agent.com/download/HoudiniAgent-App-2.1.9.zip",
+                        "size": 100, "sha256": "ab" * 32}
+        cache = {
+            "manifest": m,
+            "release_data": {
+                "tag_name": "v2.1.9",
+                "assets": [{
+                    "name": "HoudiniAgent-App-2.1.9.zip",
+                    "browser_download_url": "https://github.com/x/y/releases/download/v2.1.9/HoudiniAgent-App-2.1.9.zip",
+                    "size": 100,
+                }],
+            },
+        }
+        srcs = updater.app_zip_sources(cache)
+        assert len(srcs) == 2
+        assert srcs[0]["label"] == "官网更新包"
+        assert srcs[1]["label"] == "GitHub 更新包"
+        assert srcs[1]["sha256"] == "ab" * 32

@@ -10,15 +10,18 @@ Houdini Agent - 自动更新模块
 UI 回调通过 Qt Signal 回到主线程。
 """
 
+import base64
 import os
 import sys
 import json
+import time
 import hashlib
 import shutil
+import threading
 import zipfile
 import tempfile
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 # ---------- 常量 ----------
 
@@ -183,9 +186,63 @@ def _first_line(text) -> str:
     return ""
 
 
+# 可选 Ed25519 清单验签公钥（Base64 编码的 32 字节 raw public key）。
+# 留空时兼容未签名清单；一旦配置（或设环境变量 HA_UPDATE_PUBKEY_B64），
+# 客户端会强制校验 latest.json 的 signature 字段，防 CDN/镜像篡改。
+_MANIFEST_ED25519_PUBKEY_B64: str = ""
+
+
+def _canonical_manifest_bytes(m: dict) -> bytes:
+    """生成用于 Ed25519 签名/验签的规范化 JSON 字节串（剔除 signature 字段）。"""
+    clean = {k: v for k, v in m.items() if k != "signature"}
+    return json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def sign_manifest(manifest: dict, private_key_b64: str) -> str:
+    """使用 Ed25519 私钥（Base64 32 字节 raw seed 或 PEM）为 manifest 生成签名。"""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    raw_in = private_key_b64.strip()
+    if raw_in.startswith("-----BEGIN"):
+        priv = load_pem_private_key(raw_in.encode("utf-8"), password=None)
+    else:
+        priv = Ed25519PrivateKey.from_private_bytes(base64.b64decode(raw_in))
+    sig = priv.sign(_canonical_manifest_bytes(manifest))
+    return base64.b64encode(sig).decode("ascii")
+
+
+def verify_manifest_signature(manifest: dict, pubkey_b64: Optional[str] = None) -> bool:
+    """校验 latest.json 的 Ed25519 签名。
+    - 未配置公钥时返回 True（向后兼容未签名清单）；
+    - 已配置公钥时必须存在合法 signature 且通过 Ed25519 验证。"""
+    pk = (pubkey_b64 if pubkey_b64 is not None else (
+        os.environ.get("HA_UPDATE_PUBKEY_B64") or _MANIFEST_ED25519_PUBKEY_B64
+    )).strip()
+    if not pk:
+        return True
+    sig_b64 = manifest.get("signature") if isinstance(manifest, dict) else None
+    if not isinstance(sig_b64, str) or not sig_b64.strip():
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+        if pk.startswith("-----BEGIN"):
+            pub = load_pem_public_key(pk.encode("utf-8"))
+        else:
+            pub = Ed25519PublicKey.from_public_bytes(base64.b64decode(pk))
+        pub.verify(base64.b64decode(sig_b64.strip()), _canonical_manifest_bytes(manifest))
+        return True
+    except Exception:
+        return False
+
+
 def _valid_manifest(m) -> bool:
-    return (isinstance(m, dict) and isinstance(m.get("version"), str) and m["version"].strip()
-            and isinstance(m.get("installer"), dict) and m["installer"].get("url"))
+    if not (isinstance(m, dict) and isinstance(m.get("version"), str) and m["version"].strip()
+            and isinstance(m.get("installer"), dict) and m["installer"].get("url")):
+        return False
+    return verify_manifest_signature(m)
 
 
 def _fetch_manifest(requests, timeout):
@@ -377,28 +434,101 @@ def installer_sources(cache=None) -> list:
     return out
 
 
-def _download_one(requests, src, target, _p):
-    """下载单个来源并校验。成功返回 ''，失败返回原因。"""
-    resp = requests.get(src["url"], stream=True, timeout=60)
-    resp.raise_for_status()
-    total = int(resp.headers.get("content-length", 0)) or src.get("size") or 0
+def _file_sha256(path) -> str:
     h = hashlib.sha256()
-    done = 0
-    with open(target, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=65536):
-            if chunk:
-                f.write(chunk)
-                h.update(chunk)
-                done += len(chunk)
-                if total > 0:
-                    _p(min(99, done * 100 / total))
-    if done < 1024 * 1024:      # 装不进 1MB 的一定不是安装包（挡 404 页面之类）
-        return "下载内容异常（%d 字节）" % done
-    if src.get("size") and done != src["size"]:
-        return "文件大小不符（%d / %d）" % (done, src["size"])
-    if src.get("sha256") and h.hexdigest() != src["sha256"]:
-        return "校验值不符（可能下载到了旧版安装包）"
-    return ""
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_one(requests, src, target, _p, min_size=1024 * 1024, max_retries=3):
+    """下载单个来源并校验，支持 HTTP Range 断点续传与瞬断重试。成功返回 ''，失败返回原因。"""
+    exp_size = int(src.get("size") or 0)
+    exp_sha = str(src.get("sha256") or "").lower()
+    last_err = ""
+
+    for attempt in range(max_retries):
+        existing = 0
+        try:
+            if os.path.isfile(target):
+                existing = os.path.getsize(target)
+        except OSError:
+            existing = 0
+
+        # 本地残留分片已达到/超过预期大小：先校验，直接命中则免重下，损坏则清空重下
+        if exp_size and existing >= exp_size:
+            if existing == exp_size and (not exp_sha or _file_sha256(target) == exp_sha):
+                _p(99)
+                return ""
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            existing = 0
+
+        headers = {"Range": f"bytes={existing}-"} if existing > 0 else {}
+        try:
+            resp = requests.get(src["url"], stream=True, timeout=60, headers=headers)
+            status = getattr(resp, "status_code", 200)
+            if status == 416:
+                # 服务端范围不合法（分片过期/已下完），清掉从头下
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+                existing = 0
+                resp = requests.get(src["url"], stream=True, timeout=60)
+                status = getattr(resp, "status_code", 200)
+            resp.raise_for_status()
+
+            resuming = (existing > 0 and status == 206)
+            mode = "ab" if resuming else "wb"
+            done = existing if resuming else 0
+            clen = int(resp.headers.get("content-length", 0) or 0)
+            total = (done + clen) if (resuming and clen > 0) else (clen or exp_size or 0)
+
+            with open(target, mode) as f:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+                        done += len(chunk)
+                        if total > 0:
+                            _p(min(99, done * 100 / total))
+
+            if exp_size and done != exp_size:
+                last_err = "文件大小不符（%d / %d）" % (done, exp_size)
+                # 网络提前截断时保留分片，下次携带 Range 头断点续传
+                if attempt + 1 < max_retries and 0 < done < exp_size:
+                    time.sleep(0.3 * (attempt + 1))
+                    continue
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+                return last_err
+            if done < min_size:
+                last_err = "下载内容异常（%d 字节）" % done
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+                return last_err
+            if exp_sha and _file_sha256(target) != exp_sha:
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+                return "校验值不符（可能下载到了旧版安装包）"
+            return ""
+        except Exception as e:
+            last_err = str(e) or type(e).__name__
+            if attempt + 1 < max_retries:
+                time.sleep(0.6 * (attempt + 1))
+                continue
+            return last_err
+
+    return last_err or "下载失败"
 
 
 def download_installer(progress_callback=None, url=None) -> dict:
@@ -468,22 +598,159 @@ def is_dir_writable(path) -> bool:
         return False
 
 
-def app_zip_sources(cache=None) -> list:
-    """列出可用的应用静默更新包（HoudiniAgent-App-<ver>.zip）来源。"""
+# 轻量化业务差异包（HoudiniAgent-Patch-<ver>.zip）覆盖范围：
+# 仅打包频繁变动的 Python/QML/bridge_payload/VERSION（~1.5 MB），
+# 其余 ~108 MB 的 PySide6/Python/exe 冻结运行时通过 RUNTIME_HASH 校验一致性。
+PATCH_LAYER_ITEMS = (
+    "_internal/VERSION",
+    "_internal/RUNTIME_HASH",
+    "_internal/houdini_agent",
+    "_internal/bridge_payload",
+    "_internal/shared",
+    "_internal/rules",
+    "_internal/plugins",
+)
+
+_PATCH_SKIP_PREFIXES = (
+    "_internal/houdini_agent/",
+    "_internal/bridge_payload/",
+    "_internal/shared/",
+    "_internal/rules/",
+    "_internal/plugins/",
+    "_internal/config/",
+    "_update_bak/",
+    "_update_new/",
+)
+_PATCH_SKIP_EXACT = frozenset({
+    "_internal/VERSION",
+    "_internal/RUNTIME_HASH",
+})
+
+
+def compute_runtime_hash(app_dir) -> str:
+    """计算冻结运行时指纹（排除业务层与卸载/更新临时文件）。
+    两个版本的 runtime_hash 相同，即可直接下 ~1.5 MB 差异包，免下 110 MB 全量包！"""
+    root = Path(app_dir)
+    if not root.is_dir():
+        return ""
+    entries = []
+    for dp, dns, fns in os.walk(root):
+        dns.sort()
+        fns.sort()
+        for fn in fns:
+            full = Path(dp) / fn
+            rel = full.relative_to(root).as_posix()
+            if rel in _PATCH_SKIP_EXACT or any(rel.startswith(p) for p in _PATCH_SKIP_PREFIXES):
+                continue
+            low = fn.lower()
+            if low.startswith("unins") and low.endswith((".exe", ".dat", ".msg")):
+                continue
+            if rel.startswith(("config/", "cache/", "trainData/", "plugins/", "rules/")):
+                continue
+            try:
+                sz = full.stat().st_size
+                sha = _file_sha256(full)
+            except OSError:
+                continue
+            entries.append(f"{rel}|{sz}|{sha}")
+    h = hashlib.sha256()
+    for line in sorted(entries):
+        h.update((line + "\n").encode("utf-8"))
+    return h.hexdigest()
+
+
+def get_local_runtime_hash() -> str:
+    """读取本机已安装的运行时指纹（_internal/RUNTIME_HASH）。旧版无此文件时返回空串。"""
+    p = app_install_dir() / "_internal" / "RUNTIME_HASH"
+    try:
+        if p.is_file():
+            return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def patch_zip_sources(cache=None) -> list:
+    """列出可用的轻量化差异更新包（HoudiniAgent-Patch-<ver>.zip）来源（官网 + GitHub 镜像）。"""
     cache = cache if cache is not None else _load_etag_cache()
     m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
-    if not m:
-        return []
-    az = m.get("app_zip")
-    if not isinstance(az, dict) or not az.get("url"):
-        return []
-    return [{
-        "url": str(az["url"]),
-        "size": int(az.get("size") or 0),
-        "sha256": str(az.get("sha256") or "").lower(),
-        "version": str(m.get("version") or "").strip().lstrip("vV"),
-        "label": "官网更新包",
-    }]
+    rel = cache.get("release_data") or {}
+    mv = m["version"].strip().lstrip("vV") if m else ""
+    rv = _release_version(rel)
+    target = mv if _parse_version(mv or "0") >= _parse_version(rv or "0") else rv
+    out = []
+    pz = (m or {}).get("patch_zip") if (m and mv == target) else None
+    pz_sha = str(pz.get("sha256") or "").lower() if isinstance(pz, dict) else ""
+    pz_rt = str(pz.get("runtime_hash") or "").strip().lower() if isinstance(pz, dict) else ""
+    if isinstance(pz, dict) and pz.get("url") and pz_rt:
+        out.append({
+            "url": str(pz["url"]),
+            "size": int(pz.get("size") or 0),
+            "sha256": pz_sha,
+            "runtime_hash": pz_rt,
+            "version": target,
+            "label": "官网增量补丁",
+        })
+    if rv and rv == target and pz_rt:
+        expected_name = f"HoudiniAgent-Patch-{target}.zip"
+        for a in (rel.get("assets") or []):
+            if str(a.get("name") or "") == expected_name and a.get("browser_download_url"):
+                out.append({
+                    "url": str(a["browser_download_url"]),
+                    "size": int(a.get("size") or 0),
+                    "sha256": pz_sha,
+                    "runtime_hash": pz_rt,
+                    "version": target,
+                    "label": "GitHub 增量补丁",
+                })
+                break
+    return out
+
+
+def app_zip_sources(cache=None) -> list:
+    """列出可用的应用静默更新包（HoudiniAgent-App-<ver>.zip）来源（官网 + GitHub 镜像兜底）。"""
+    cache = cache if cache is not None else _load_etag_cache()
+    m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
+    rel = cache.get("release_data") or {}
+    mv = m["version"].strip().lstrip("vV") if m else ""
+    rv = _release_version(rel)
+    target = mv if _parse_version(mv or "0") >= _parse_version(rv or "0") else rv
+    out = []
+    az = (m or {}).get("app_zip") if (m and mv == target) else None
+    az_sha = str(az.get("sha256") or "").lower() if isinstance(az, dict) else ""
+    if isinstance(az, dict) and az.get("url"):
+        out.append({
+            "url": str(az["url"]),
+            "size": int(az.get("size") or 0),
+            "sha256": az_sha,
+            "version": target,
+            "label": "官网更新包",
+        })
+    if rv and rv == target:
+        expected_name = f"HoudiniAgent-App-{target}.zip"
+        for a in (rel.get("assets") or []):
+            if str(a.get("name") or "") == expected_name and a.get("browser_download_url"):
+                out.append({
+                    "url": str(a["browser_download_url"]),
+                    "size": int(a.get("size") or 0),
+                    "sha256": az_sha,
+                    "version": target,
+                    "label": "GitHub 更新包",
+                })
+                break
+    return out
+
+
+def _apply_lock_file() -> Path:
+    return _updates_dir() / "applying.lock"
+
+
+def _pending_verify_file() -> Path:
+    return _updates_dir() / "pending_verify.json"
+
+
+def _rollback_dir() -> Path:
+    return _updates_dir() / "rollback"
 
 
 def _cleanup_old_staged(keep_ver=None):
@@ -494,6 +761,7 @@ def _cleanup_old_staged(keep_ver=None):
     keep_names = set()
     if keep_ver:
         keep_names.add(str(keep_ver))
+        keep_names.add(f"{keep_ver}-patch")
         keep_names.add("HoudiniAgent-Setup-%s.exe" % keep_ver)
     for item in sdir.iterdir():
         if item.name in keep_names:
@@ -546,6 +814,18 @@ def get_staged_update():
         clear_staged_update()
         return None
     mode = str(data.get("mode") or "")
+    if mode == "patch":
+        sd = Path(str(data.get("staged_dir") or ""))
+        if not sd.is_dir():
+            return None
+        sver = _read_staged_version_file(sd)
+        if not sver or sver != ver:
+            return None
+        req_rt = str(data.get("runtime_hash") or "").strip().lower()
+        cur_rt = get_local_runtime_hash().lower()
+        if req_rt and cur_rt != req_rt:
+            return None
+        return data
     if mode == "swap":
         sd = Path(str(data.get("staged_dir") or ""))
         exe = sd / "Houdini Agent.exe"
@@ -566,17 +846,73 @@ def get_staged_update():
     return None
 
 
+# 进程级单飞下载锁：后台 silentUpdateCheck 正在下载时，用户手动点「立即更新」
+# 会直接挂载到同一个下载任务接收进度并共享结果，彻底杜绝双线程写同一文件踩踏。
+_STAGE_LOCK = threading.Lock()
+_INFLIGHT_STAGE: Optional[dict] = None
+
+
 def stage_update(progress_callback=None, cache=None) -> dict:
-    """后台静默下载并预解压/校验新版更新包，供重启或关闭应用时秒级切换。
-    - 安装目录可写且清单提供 app_zip → 走 mode='swap'（预解压目录，重启/关闭直接原子替换，免安装程序、免 UAC）
-    - 否则回退 mode='installer'（预下载校验好的安装程序到 updates/staged/，点击重启时无需等待下载）"""
+    """后台静默下载并预解压/校验新版更新包（单飞去重），供重启或关闭应用时秒级切换。
+    优先级：
+    1. mode='patch'：安装目录可写 + 本机 RUNTIME_HASH 与清单 patch_zip.runtime_hash 一致
+       → 仅下载 ~1.5 MB 业务层增量补丁（秒下、抗 Houdini 文件锁、免 UAC）；
+    2. mode='swap'：安装目录可写 + 有 app_zip（官网或 GitHub 镜像）
+       → 下载全量应用包并预解压，支持跨盘先预拷贝再同盘原子替换；
+    3. mode='installer'：只读目录或上述均不可用 → 预下载校验好的 .exe 安装包。"""
+    global _INFLIGHT_STAGE
+
+    with _STAGE_LOCK:
+        if _INFLIGHT_STAGE is not None:
+            flight = _INFLIGHT_STAGE
+            if progress_callback:
+                flight["callbacks"].append(progress_callback)
+                try:
+                    progress_callback(int(flight["last_pct"]))
+                except Exception:
+                    pass
+            wait_event = flight["event"]
+            is_owner = False
+        else:
+            flight = {
+                "event": threading.Event(),
+                "callbacks": [progress_callback] if progress_callback else [],
+                "last_pct": 0,
+                "result": None,
+            }
+            _INFLIGHT_STAGE = flight
+            wait_event = flight["event"]
+            is_owner = True
+
+    if not is_owner:
+        wait_event.wait(timeout=600)
+        return dict(flight["result"] or {"success": False, "cached": False, "staged": None, "error": "等待后台下载超时"})
+
     def _p(pct):
-        if progress_callback:
+        val = int(pct)
+        with _STAGE_LOCK:
+            flight["last_pct"] = val
+            cbs = list(flight["callbacks"])
+        for cb in cbs:
             try:
-                progress_callback(int(pct))
+                cb(val)
             except Exception:
                 pass
 
+    try:
+        res = _stage_update_impl(_p, cache=cache)
+    except Exception as e:
+        res = {"success": False, "cached": False, "staged": None, "error": str(e)}
+    finally:
+        with _STAGE_LOCK:
+            flight["result"] = res
+            flight["event"].set()
+            if _INFLIGHT_STAGE is flight:
+                _INFLIGHT_STAGE = None
+    return res
+
+
+def _stage_update_impl(_p, cache=None) -> dict:
     cache = cache if cache is not None else _load_etag_cache()
     m = cache.get("manifest") if _valid_manifest(cache.get("manifest")) else None
     rel = cache.get("release_data") or {}
@@ -598,14 +934,57 @@ def stage_update(progress_callback=None, cache=None) -> dict:
     writable = is_dir_writable(app_install_dir())
     staged_root = _updates_dir() / "staged"
     staged_root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = _updates_dir() / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) 优先走免安装器静默原子替换（用户可写目录 + manifest 含 app_zip）
-    zips = app_zip_sources(cache) if writable else []
-    if zips and zips[0].get("version") == target_ver:
-        src = zips[0]
-        tmp_dir = _updates_dir() / "tmp"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = tmp_dir / ("HoudiniAgent-App-%s.zip" % target_ver)
+    # 1) 最快路径：轻量化增量补丁包（~1.5 MB），仅当本机 RUNTIME_HASH 与清单一致且目录可写
+    local_rt = get_local_runtime_hash().lower() if writable else ""
+    if writable and local_rt:
+        patches = [p for p in patch_zip_sources(cache)
+                   if p.get("version") == target_ver and p.get("runtime_hash") == local_rt]
+        for src in patches:
+            zip_path = tmp_dir / ("HoudiniAgent-Patch-%s.zip.part" % target_ver)
+            try:
+                err = _download_one(requests, src, str(zip_path), lambda pct: _p(int(pct * 0.85)), min_size=128)
+                if not err:
+                    extract_tmp = staged_root / ("%s-patch.tmp" % target_ver)
+                    final_dir = staged_root / ("%s-patch" % target_ver)
+                    if extract_tmp.exists():
+                        shutil.rmtree(extract_tmp, ignore_errors=True)
+                    with zipfile.ZipFile(str(zip_path), "r") as zf:
+                        zf.extractall(str(extract_tmp))
+                    if _read_staged_version_file(extract_tmp) == target_ver:
+                        if final_dir.exists():
+                            shutil.rmtree(final_dir, ignore_errors=True)
+                        os.replace(str(extract_tmp), str(final_dir))
+                        meta = {
+                            "version": target_ver,
+                            "name": rel_name,
+                            "notes": notes,
+                            "mode": "patch",
+                            "staged_dir": str(final_dir),
+                            "runtime_hash": local_rt,
+                            "sha256": src.get("sha256") or "",
+                            "writable": True,
+                        }
+                        _staged_meta_file().write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                        _cleanup_old_staged(keep_ver=target_ver)
+                        _p(100)
+                        return {"success": True, "cached": False, "staged": meta, "error": ""}
+                    shutil.rmtree(extract_tmp, ignore_errors=True)
+            except Exception:
+                pass
+            finally:
+                try:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                except OSError:
+                    pass
+
+    # 2) 全量静默原子替换（支持官网 + GitHub 镜像兜底，带 HTTP Range 断点续传）
+    zips = [z for z in app_zip_sources(cache) if z.get("version") == target_ver] if writable else []
+    for src in zips:
+        zip_path = tmp_dir / ("HoudiniAgent-App-%s.zip.part" % target_ver)
         try:
             err = _download_one(requests, src, str(zip_path), lambda pct: _p(int(pct * 0.85)))
             if not err:
@@ -643,16 +1022,23 @@ def stage_update(progress_callback=None, cache=None) -> dict:
                     _p(100)
                     return {"success": True, "cached": False, "staged": meta, "error": ""}
                 shutil.rmtree(extract_tmp, ignore_errors=True)
+                try:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                except OSError:
+                    pass
         except Exception:
             pass
         finally:
-            try:
-                if zip_path.exists():
-                    zip_path.unlink()
-            except OSError:
-                pass
+            # 仅当完整解包后才删 zip；若网络中途断开则保留 .part 供下次断点续传
+            if (staged_root / target_ver / "Houdini Agent.exe").is_file():
+                try:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                except OSError:
+                    pass
 
-    # 2) 回退：静默预下载并校验安装包到 staged 目录（点击重启无需再等下载）
+    # 3) 回退：静默预下载并校验安装包到 staged 目录（点击重启无需再等下载）
     sources = installer_sources(cache)
     inst_target = staged_root / ("HoudiniAgent-Setup-%s.exe" % target_ver)
     part_target = staged_root / ("HoudiniAgent-Setup-%s.exe.part" % target_ver)
@@ -680,11 +1066,6 @@ def stage_update(progress_callback=None, cache=None) -> dict:
             _p(100)
             return {"success": True, "cached": False, "staged": meta, "error": ""}
         errors.append("%s：%s" % (src.get("label") or src["url"], err))
-        try:
-            if part_target.exists():
-                part_target.unlink()
-        except OSError:
-            pass
     return {"success": False, "cached": False, "staged": None,
             "error": "；".join(errors) or "没有可用的下载地址"}
 
@@ -696,7 +1077,7 @@ def can_apply_silently_on_exit(staged=None) -> bool:
     st = staged if staged is not None else get_staged_update()
     if not isinstance(st, dict):
         return False
-    if st.get("mode") == "swap":
+    if st.get("mode") in ("patch", "swap"):
         return is_dir_writable(app_install_dir())
     if st.get("mode") == "installer":
         return bool(st.get("writable")) and is_dir_writable(app_install_dir())
@@ -709,7 +1090,13 @@ _SWAP_SCRIPT_TEMPLATE = r"""param(
     [string]$StagedDir,
     [string]$MetaFile,
     [int]$Relaunch,
-    [string]$LogFile
+    [string]$LogFile,
+    [string]$Mode = "swap",
+    [string]$LockFile = "",
+    [string]$VerifyFile = "",
+    [string]$RollbackDir = "",
+    [string]$FromVer = "",
+    [string]$ToVer = ""
 )
 $ErrorActionPreference = "Stop"
 
@@ -726,106 +1113,221 @@ function ShouldPreserve($name) {
     return $false
 }
 
-Log ("start wait_pid=" + $WaitPid + " app=" + $AppDir + " staged=" + $StagedDir + " relaunch=" + $Relaunch)
-
-# 1. Wait for old app process to exit (up to 30s)
-if ($WaitPid -gt 0) {
-    for ($i = 0; $i -lt 120; $i++) {
-        $p = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
-        if (-not $p) { break }
-        Start-Sleep -Milliseconds 250
+function UpdateRegistryVersion($ver) {
+    if (-not $ver) { return }
+    try {
+        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E4B9C2-3A6D-4F18-9C2E-1D5A7F0E9C44}_is1"
+        if (Test-Path -LiteralPath $regPath) {
+            Set-ItemProperty -LiteralPath $regPath -Name "DisplayVersion" -Value $ver -ErrorAction SilentlyContinue
+            Set-ItemProperty -LiteralPath $regPath -Name "DisplayName" -Value ("Houdini Agent " + $ver) -ErrorAction SilentlyContinue
+            Log ("updated HKCU DisplayVersion=" + $ver)
+        }
+    } catch {
+        Log ("registry update skipped: " + $_.Exception.Message)
     }
 }
-Start-Sleep -Milliseconds 350
+
+function WriteVerifyMeta($bakPath) {
+    if (-not $VerifyFile -or -not $bakPath) { return }
+    try {
+        $obj = @{
+            from_version = $FromVer
+            to_version   = $ToVer
+            mode         = $Mode
+            app_dir      = $AppDir
+            rollback_dir = $bakPath
+            attempts     = 0
+            timestamp    = [int][double]::Parse((Get-Date -UFormat %s))
+        }
+        $json = $obj | ConvertTo-Json -Compress
+        Set-Content -LiteralPath $VerifyFile -Value $json -Encoding UTF8
+    } catch {
+        Log ("write verify meta failed: " + $_.Exception.Message)
+    }
+}
+
+Log ("start mode=" + $Mode + " wait_pid=" + $WaitPid + " app=" + $AppDir + " staged=" + $StagedDir + " relaunch=" + $Relaunch)
+
+# Acquire lock file so reopening app immediately waits for swap completion
+if ($LockFile) {
+    try {
+        $lockParent = Split-Path -Parent $LockFile
+        if ($lockParent -and -not (Test-Path -LiteralPath $lockParent)) {
+            New-Item -ItemType Directory -Path $lockParent -Force | Out-Null
+        }
+        Set-Content -LiteralPath $LockFile -Value ($PID.ToString()) -Encoding UTF8
+    } catch {}
+}
 
 $bakDir = Join-Path $AppDir "_update_bak"
 $newDir = Join-Path $AppDir "_update_new"
+$swapped = $false
 
 try {
+    # 1. Wait for old app process to exit (up to 30s)
+    if ($WaitPid -gt 0) {
+        for ($i = 0; $i -lt 120; $i++) {
+            $p = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+            if (-not $p) { break }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    Start-Sleep -Milliseconds 350
+
     if (-not (Test-Path -LiteralPath $StagedDir)) {
         throw ("StagedDir not found: " + $StagedDir)
     }
 
-    # 2. If StagedDir and AppDir are on different drives (e.g. C:\ -> D:\),
-    # copy staged files into AppDir\_update_new first while old app is untouched.
-    # That makes the actual swap step guaranteed same-volume atomic Move-Item.
-    $srcRoot = [System.IO.Path]::GetPathRoot($StagedDir).ToUpperInvariant()
-    $dstRoot = [System.IO.Path]::GetPathRoot($AppDir).ToUpperInvariant()
-    $swapSrc = $StagedDir
-    if ($srcRoot -ne $dstRoot) {
-        Log ("cross-volume detected (" + $srcRoot + " -> " + $dstRoot + "), pre-copying to _update_new")
-        if (Test-Path -LiteralPath $newDir) {
-            Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($Mode -eq "patch") {
+        # Delta patch mode (~1.5 MB business files): per-file backup & overwrite.
+        # Avoids renaming _internal/ so running Houdini holding bridge_payload cwd never blocks update!
+        $rbPath = if ($RollbackDir) { $RollbackDir } else { $bakDir }
+        if (Test-Path -LiteralPath $rbPath) {
+            Remove-Item -LiteralPath $rbPath -Recurse -Force -ErrorAction SilentlyContinue
         }
-        New-Item -ItemType Directory -Path $newDir -Force | Out-Null
-        foreach ($item in (Get-ChildItem -LiteralPath $StagedDir -Force)) {
-            if (ShouldPreserve $item.Name) { continue }
-            Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $newDir $item.Name) -Recurse -Force
-        }
-        $swapSrc = $newDir
-    }
+        New-Item -ItemType Directory -Path $rbPath -Force | Out-Null
 
-    if (Test-Path -LiteralPath $bakDir) {
-        Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    New-Item -ItemType Directory -Path $bakDir -Force | Out-Null
-
-    # 3. Move old app files into _update_bak with short lock retries
-    foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
-        if (ShouldPreserve $item.Name) { continue }
-        $dst = Join-Path $bakDir $item.Name
-        $ok = $false
-        $lastErr = $null
-        for ($retry = 0; $retry -lt 15; $retry++) {
-            try {
-                Move-Item -LiteralPath $item.FullName -Destination $dst -Force
-                $ok = $true
-                break
-            } catch {
-                $lastErr = $_
-                Start-Sleep -Milliseconds 300
+        $stagedNorm = (Resolve-Path -LiteralPath $StagedDir).Path.TrimEnd('\', '/')
+        $files = Get-ChildItem -LiteralPath $stagedNorm -Recurse -File -Force
+        foreach ($f in $files) {
+            $rel = $f.FullName.Substring($stagedNorm.Length).TrimStart('\', '/')
+            $dstFile = Join-Path $AppDir $rel
+            $dstParent = Split-Path -Parent $dstFile
+            if ($dstParent -and -not (Test-Path -LiteralPath $dstParent)) {
+                New-Item -ItemType Directory -Path $dstParent -Force | Out-Null
             }
+            if (Test-Path -LiteralPath $dstFile) {
+                $rbFile = Join-Path $rbPath $rel
+                $rbParent = Split-Path -Parent $rbFile
+                if ($rbParent -and -not (Test-Path -LiteralPath $rbParent)) {
+                    New-Item -ItemType Directory -Path $rbParent -Force | Out-Null
+                }
+                Copy-Item -LiteralPath $dstFile -Destination $rbFile -Force
+            }
+            $ok = $false
+            $lastErr = $null
+            for ($retry = 0; $retry -lt 15; $retry++) {
+                try {
+                    Copy-Item -LiteralPath $f.FullName -Destination $dstFile -Force
+                    $ok = $true
+                    break
+                } catch {
+                    $lastErr = $_
+                    Start-Sleep -Milliseconds 250
+                }
+            }
+            if (-not $ok) { throw $lastErr }
         }
-        if (-not $ok) { throw $lastErr }
-    }
 
-    # 4. Move new app files into AppDir (guaranteed same volume)
-    foreach ($item in (Get-ChildItem -LiteralPath $swapSrc -Force)) {
-        if (ShouldPreserve $item.Name) { continue }
-        $dst = Join-Path $AppDir $item.Name
-        if (Test-Path -LiteralPath $dst) {
-            Remove-Item -LiteralPath $dst -Recurse -Force
+        Remove-Item -LiteralPath $StagedDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($MetaFile -and (Test-Path -LiteralPath $MetaFile)) {
+            Remove-Item -LiteralPath $MetaFile -Force -ErrorAction SilentlyContinue
         }
-        Move-Item -LiteralPath $item.FullName -Destination $dst -Force
-    }
+        WriteVerifyMeta $rbPath
+        UpdateRegistryVersion $ToVer
+        $swapped = $true
+        Log ("patch succeeded (" + $files.Count + " files)")
+    } else {
+        # Full atomic swap mode: pre-copy to _update_new if cross-drive (C:\ -> D:\)
+        $srcRoot = [System.IO.Path]::GetPathRoot($StagedDir).ToUpperInvariant()
+        $dstRoot = [System.IO.Path]::GetPathRoot($AppDir).ToUpperInvariant()
+        $swapSrc = $StagedDir
+        if ($srcRoot -ne $dstRoot) {
+            Log ("cross-volume detected (" + $srcRoot + " -> " + $dstRoot + "), pre-copying to _update_new")
+            if (Test-Path -LiteralPath $newDir) {
+                Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Path $newDir -Force | Out-Null
+            foreach ($item in (Get-ChildItem -LiteralPath $StagedDir -Force)) {
+                if (ShouldPreserve $item.Name) { continue }
+                Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $newDir $item.Name) -Recurse -Force
+            }
+            $swapSrc = $newDir
+        }
 
-    # 5. Cleanup backup, staging dir, and staged.json
-    Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $StagedDir -Recurse -Force -ErrorAction SilentlyContinue
-    if ($MetaFile -and (Test-Path -LiteralPath $MetaFile)) {
-        Remove-Item -LiteralPath $MetaFile -Force -ErrorAction SilentlyContinue
-    }
-    Log "swap succeeded"
-} catch {
-    Log ("swap failed, rolling back: " + $_.Exception.Message)
-    try {
-        foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
-            if (ShouldPreserve $item.Name) { continue }
-            Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        }
         if (Test-Path -LiteralPath $bakDir) {
-            foreach ($item in (Get-ChildItem -LiteralPath $bakDir -Force)) {
-                Move-Item -LiteralPath $item.FullName -Destination (Join-Path $AppDir $item.Name) -Force
-            }
             Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        if (Test-Path -LiteralPath $newDir) {
-            Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $bakDir -Force | Out-Null
+
+        foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
+            if (ShouldPreserve $item.Name) { continue }
+            $dst = Join-Path $bakDir $item.Name
+            $ok = $false
+            $lastErr = $null
+            for ($retry = 0; $retry -lt 15; $retry++) {
+                try {
+                    Move-Item -LiteralPath $item.FullName -Destination $dst -Force
+                    $ok = $true
+                    break
+                } catch {
+                    $lastErr = $_
+                    Start-Sleep -Milliseconds 300
+                }
+            }
+            if (-not $ok) { throw $lastErr }
+        }
+
+        foreach ($item in (Get-ChildItem -LiteralPath $swapSrc -Force)) {
+            if (ShouldPreserve $item.Name) { continue }
+            $dst = Join-Path $AppDir $item.Name
+            if (Test-Path -LiteralPath $dst) {
+                Remove-Item -LiteralPath $dst -Recurse -Force
+            }
+            Move-Item -LiteralPath $item.FullName -Destination $dst -Force
+        }
+
+        Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $StagedDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($MetaFile -and (Test-Path -LiteralPath $MetaFile)) {
+            Remove-Item -LiteralPath $MetaFile -Force -ErrorAction SilentlyContinue
+        }
+        if ($VerifyFile) {
+            # Keep _update_bak until the new version boots cleanly (mark_update_healthy cleans it)
+            WriteVerifyMeta $bakDir
+        } else {
+            Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        UpdateRegistryVersion $ToVer
+        $swapped = $true
+        Log "swap succeeded"
+    }
+} catch {
+    Log ("update failed, rolling back: " + $_.Exception.Message)
+    try {
+        if ($Mode -eq "patch") {
+            $rbPath = if ($RollbackDir) { $RollbackDir } else { $bakDir }
+            if (Test-Path -LiteralPath $rbPath) {
+                $rbNorm = (Resolve-Path -LiteralPath $rbPath).Path.TrimEnd('\', '/')
+                foreach ($f in (Get-ChildItem -LiteralPath $rbNorm -Recurse -File -Force)) {
+                    $rel = $f.FullName.Substring($rbNorm.Length).TrimStart('\', '/')
+                    $dstFile = Join-Path $AppDir $rel
+                    Copy-Item -LiteralPath $f.FullName -Destination $dstFile -Force
+                }
+                Remove-Item -LiteralPath $rbPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            foreach ($item in (Get-ChildItem -LiteralPath $AppDir -Force)) {
+                if (ShouldPreserve $item.Name) { continue }
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $bakDir) {
+                foreach ($item in (Get-ChildItem -LiteralPath $bakDir -Force)) {
+                    Move-Item -LiteralPath $item.FullName -Destination (Join-Path $AppDir $item.Name) -Force
+                }
+                Remove-Item -LiteralPath $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $newDir) {
+                Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
         Log "rollback complete"
     } catch {
         Log ("rollback error: " + $_.Exception.Message)
+    }
+} finally {
+    if ($LockFile -and (Test-Path -LiteralPath $LockFile)) {
+        Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -845,8 +1347,8 @@ if ($Relaunch -eq 1) {
 """
 
 
-def _launch_swap_helper(staged_dir, relaunch=True):
-    """拉起完全隐藏的后台 PowerShell 脚本：等当前进程退出 → 秒级原子替换文件 → 按需自动重启。
+def _launch_swap_helper(staged_dir, relaunch=True, mode="swap", to_version=""):
+    """拉起完全隐藏的后台 PowerShell 脚本：等当前进程退出 → 秒级替换/补丁 → 按需自动重启。
 
     注意：Windows 上 CREATE_NO_WINDOW 与 DETACHED_PROCESS 互斥，同时传入会导致
     powershell.exe 直接以 0 退出且不执行任何脚本行！因此仅用
@@ -868,6 +1370,12 @@ def _launch_swap_helper(staged_dir, relaunch=True):
         "-MetaFile", str(_staged_meta_file()),
         "-Relaunch", "1" if relaunch else "0",
         "-LogFile", str(log_file),
+        "-Mode", str(mode or "swap"),
+        "-LockFile", str(_apply_lock_file()),
+        "-VerifyFile", str(_pending_verify_file()),
+        "-RollbackDir", str(_rollback_dir()),
+        "-FromVer", str(get_local_version()),
+        "-ToVer", str(to_version or ""),
     ]
     flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
              | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
@@ -883,20 +1391,164 @@ def _launch_swap_helper(staged_dir, relaunch=True):
 
 def apply_staged_update(staged=None, relaunch=True) -> dict:
     """应用已暂存的更新。
-    - mode='swap': 拉起隐藏替换脚本，退出后 <1 秒完成替换，无安装程序、无弹窗；
+    - mode='patch': ~1.5 MB 业务层增量补丁，逐文件备份并覆盖（Houdini 开着也不冲突）；
+    - mode='swap': 全量预解压替换（跨盘先预拷贝再同盘原子换）；
     - mode='installer': 拉起 /VERYSILENT 无窗口静默安装（relaunch=False 时带 /NORELAUNCH=1）。"""
     st = staged if staged is not None else get_staged_update()
     if not isinstance(st, dict):
         return {"started": False, "error": "没有已就绪的暂存更新"}
     mode = st.get("mode")
-    if mode == "swap":
-        proc = _launch_swap_helper(st["staged_dir"], relaunch=relaunch)
-        return {"started": True, "mode": "swap", "proc": proc, "needs_watch": False}
+    if mode in ("patch", "swap"):
+        proc = _launch_swap_helper(
+            st["staged_dir"],
+            relaunch=relaunch,
+            mode=mode,
+            to_version=st.get("version") or "",
+        )
+        return {"started": True, "mode": mode, "proc": proc, "needs_watch": False}
     if mode == "installer":
         proc = launch_installer(st["path"], relaunch=relaunch)
         return {"started": True, "mode": "installer", "proc": proc,
                 "needs_watch": bool(proc is not None and relaunch and not st.get("writable"))}
     return {"started": False, "error": "未知暂存模式: %s" % mode}
+
+
+# ==========================================================
+# 启动期互斥等待 + 健康检查自动回滚（防止刚关又秒开撞车或新版闪退）
+# ==========================================================
+
+def wait_for_pending_update(timeout: float = 15.0) -> bool:
+    """若后台替换脚本正持有 applying.lock（例如用户刚关掉应用又立刻双击图标），
+    最多等待 timeout 秒让替换完成，避免新进程与正在搬运文件的脚本撞车。
+    返回 True 表示确实等待过替换完成。"""
+    lock = _apply_lock_file()
+    if not lock.is_file():
+        return False
+    # 超过 120 秒视为僵尸锁，直接清理不阻塞启动
+    try:
+        if time.time() - lock.stat().st_mtime > 120:
+            lock.unlink()
+            return False
+    except OSError:
+        return False
+    deadline = time.monotonic() + float(timeout)
+    waited = False
+    while lock.is_file() and time.monotonic() < deadline:
+        waited = True
+        time.sleep(0.2)
+    return waited
+
+
+def check_startup_health(max_failures: int = 2) -> dict:
+    """启动健康检查：
+    - 刚完成静默升级后，pending_verify.json 会记录 attempts。
+    - 正常情况下主窗口启动 5 秒后会调用 mark_update_healthy() 清掉它和备份；
+    - 如果新版连续 max_failures 次在到达健康状态前闪退，自动从 rollback_dir 恢复上一版本！"""
+    vf = _pending_verify_file()
+    if not vf.is_file():
+        return {"pending": False, "rolled_back": False}
+    try:
+        meta = json.loads(vf.read_text(encoding="utf-8-sig"))
+    except Exception:
+        try:
+            vf.unlink()
+        except OSError:
+            pass
+        return {"pending": False, "rolled_back": False}
+    if not isinstance(meta, dict):
+        return {"pending": False, "rolled_back": False}
+
+    attempts = int(meta.get("attempts") or 0) + 1
+    from_ver = str(meta.get("from_version") or "")
+    to_ver = str(meta.get("to_version") or "")
+    rb_dir = Path(str(meta.get("rollback_dir") or ""))
+    app_dir = Path(str(meta.get("app_dir") or app_install_dir()))
+    mode = str(meta.get("mode") or "swap")
+
+    if attempts > max_failures and rb_dir.is_dir():
+        # 新版连续多次未能健康启动 → 自动回滚！
+        ok = False
+        try:
+            if mode == "patch":
+                for dp, _, fns in os.walk(rb_dir):
+                    for fn in fns:
+                        src = Path(dp) / fn
+                        rel = src.relative_to(rb_dir)
+                        dst = app_dir / rel
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dst))
+                ok = True
+            else:
+                preserve = {"config", "cache", "trainData", "plugins", "rules", "_update_bak", "_update_new"}
+                for item in app_dir.iterdir():
+                    if item.name in preserve or item.name.lower().startswith("unins"):
+                        continue
+                    try:
+                        if item.is_dir():
+                            shutil.rmtree(item, ignore_errors=True)
+                        else:
+                            item.unlink()
+                    except OSError:
+                        pass
+                for item in rb_dir.iterdir():
+                    dst = app_dir / item.name
+                    if dst.exists():
+                        if dst.is_dir():
+                            shutil.rmtree(dst, ignore_errors=True)
+                        else:
+                            dst.unlink()
+                    shutil.move(str(item), str(dst))
+                ok = True
+        except Exception:
+            ok = False
+        try:
+            vf.unlink()
+        except OSError:
+            pass
+        try:
+            if rb_dir.is_dir():
+                shutil.rmtree(rb_dir, ignore_errors=True)
+        except OSError:
+            pass
+        return {
+            "pending": False,
+            "rolled_back": ok,
+            "from_version": from_ver,
+            "to_version": to_ver,
+        }
+
+    meta["attempts"] = attempts
+    try:
+        vf.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return {"pending": True, "rolled_back": False, "attempts": attempts,
+            "from_version": from_ver, "to_version": to_ver}
+
+
+def mark_update_healthy() -> bool:
+    """新版主窗口健康运行数秒后调用：确认升级成功，清理 pending_verify.json 与回滚备份。"""
+    vf = _pending_verify_file()
+    if not vf.is_file():
+        return False
+    rb_dir = None
+    try:
+        meta = json.loads(vf.read_text(encoding="utf-8-sig"))
+        if isinstance(meta, dict) and meta.get("rollback_dir"):
+            rb_dir = Path(str(meta["rollback_dir"]))
+    except Exception:
+        pass
+    try:
+        vf.unlink()
+    except OSError:
+        pass
+    for d in (rb_dir, _rollback_dir(), app_install_dir() / "_update_bak"):
+        if d and d.is_dir():
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                pass
+    return True
 
 
 def launch_installer(path, relaunch=True):

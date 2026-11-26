@@ -294,8 +294,15 @@ class ControllerUpdaterMixin:
                             msg += "\n\n" + notes
                         if r.get("stale"):
                             msg += "\n\n（暂时连不上更新服务器，以上为最近一次成功检查的结果）"
-                        # 先置横幅状态（available），再弹带按钮的对话框；两个信号按发出顺序到主线程
-                        self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
+                        # 若后台已暂存了同一目标版本，保持 staged（「立即重启」），不被冲回 available
+                        staged_cur = getattr(self, "_staged_update", None)
+                        already_staged = (
+                            self._update_state == "staged"
+                            and isinstance(staged_cur, dict)
+                            and staged_cur.get("version") == str(r.get("remote_version") or "").lstrip("vV")
+                        )
+                        if not already_staged:
+                            self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
                         self._sigUpdateDialog.emit("检查更新", msg)
                         return
                     else:
