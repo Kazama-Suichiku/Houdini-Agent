@@ -169,7 +169,8 @@ class RunMixin:
             stats['output_tokens'] += usage.get('completion_tokens', 0)
             stats['reasoning_tokens'] = stats.get('reasoning_tokens', 0) + usage.get('reasoning_tokens', 0)
             stats['cache_read'] += usage.get('cache_hit_tokens', 0)
-            stats['cache_write'] += usage.get('cache_miss_tokens', 0)
+            stats['cache_write'] += usage.get('cache_write_tokens', 0)
+            stats['cache_miss'] = stats.get('cache_miss', 0) + usage.get('cache_miss_tokens', 0)
             stats['total_tokens'] += usage.get('total_tokens', 0)
             stats['requests'] += 1
 
@@ -182,6 +183,7 @@ class RunMixin:
                 output_tokens=usage.get('completion_tokens', 0),
                 cache_hit=usage.get('cache_hit_tokens', 0),
                 cache_miss=usage.get('cache_miss_tokens', 0),
+                cache_write=usage.get('cache_write_tokens', 0),
                 reasoning_tokens=usage.get('reasoning_tokens', 0),
             )
             stats['estimated_cost'] = stats.get('estimated_cost', 0.0) + this_cost
@@ -198,12 +200,14 @@ class RunMixin:
                 self._update_token_stats_display()
 
             cache_hit = usage.get('cache_hit_tokens', 0)
-            cache_miss = usage.get('cache_miss_tokens', 0)
+            prompt_toks = usage.get('prompt_tokens', 0) or (
+                cache_hit + usage.get('cache_write_tokens', 0) + usage.get('cache_miss_tokens', 0)
+            )
             cache_rate = usage.get('cache_hit_rate', 0)
 
-            if cache_hit > 0 or cache_miss > 0:
+            if cache_hit > 0 and prompt_toks > 0:
                 rate_percent = cache_rate * 100
-                self._addStatus.emit(f"Cache: {cache_hit}/{cache_hit+cache_miss} ({rate_percent:.0f}%)")
+                self._addStatus.emit(f"Cache: {cache_hit}/{prompt_toks} ({rate_percent:.0f}%)")
 
         # ★ 反思钩子：任务完成后触发长期记忆反思（后台线程，不阻塞 UI）
         if self._is_memory_active() and tool_calls_history:

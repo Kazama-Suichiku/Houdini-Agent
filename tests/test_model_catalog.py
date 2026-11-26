@@ -366,14 +366,18 @@ def test_metadata_priorities(tmp_path):
     assert mc.supports_vision("kimi-k9") is True
     assert mc.supports_vision("minimax-m9") is True
     assert mc.supports_vision("vendor/claude-fable-9") is True     # fable
-    assert mc.supports_vision("deepseek-v4-flash") is True         # deepseek 默认支持视觉
-    assert mc.supports_vision("deepseek-v4-pro") is True
-    assert mc.supports_vision("deepseek/deepseek-v4-pro") is True
-    assert mc.supports_vision("deepseek-v9") is True               # 未来 deepseek 新模型默认支持视觉
-    assert mc.supports_vision("custom-ds-model", provider="deepseek") is True
+    assert mc.supports_vision("deepseek-flash") is True            # DeepSeek Flash / Vision 支持图片
+    assert mc.supports_vision("deepseek-v4-flash") is True
+    assert mc.supports_vision("deepseek/deepseek-v4.1-flash") is True
     assert mc.supports_vision("deepseek-v4-flash-vision-exp") is True
+    assert mc.supports_vision("deepseek-v4-pro") is False          # DeepSeek V4 Pro 上游仅文本
+    assert mc.supports_vision("deepseek-v4-pro", provider="deepseek") is False
+    assert mc.supports_vision("deepseek/deepseek-v4-pro") is False
+    assert mc.supports_vision("deepseek/deepseek-v4-pro-0813") is False
+    assert mc.supports_vision("deepseek-chat", provider="deepseek") is False
+    assert mc.supports_vision("deepseek-reasoner", provider="deepseek") is False
     assert mc.model_features("deepseek-v4-flash", cache_path=cp)["supports_vision"] is True
-    assert mc.model_features("deepseek-v4-pro", cache_path=cp)["supports_vision"] is True
+    assert mc.model_features("deepseek-v4-pro", cache_path=cp)["supports_vision"] is False
     assert mc.supports_vision("glm-9.9") is False                  # glm 家族 False
     assert mc.supports_vision("glm-5.3-flashx") is True            # STATIC_VISION 命中
 

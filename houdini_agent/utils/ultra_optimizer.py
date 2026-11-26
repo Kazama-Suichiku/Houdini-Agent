@@ -18,10 +18,8 @@ class UltraOptimizer:
         """压缩系统提示：移除冗余但保留核心规则"""
         if not prompt:
             return ""
-        # 移除多余空行
+        # 移除多余空行（绝不删除 // 注释行，避免破坏 VEX 示例代码）
         prompt = re.sub(r'\n{3,}', '\n\n', prompt)
-        # 移除注释性说明行
-        prompt = re.sub(r'^\s*//.*$', '', prompt, flags=re.MULTILINE)
         return prompt.strip()
     
     @staticmethod

@@ -71,9 +71,212 @@ class AIClientAgentMixin:
                     .rstrip()
                 )
                 out.append(cleaned)
+            elif '_anthropic_thinking_blocks' in msg:
+                cleaned = dict(msg)
+                cleaned.pop('_anthropic_thinking_blocks', None)
+                out.append(cleaned)
             else:
                 out.append(msg)
         return out
+
+    _RE_EPHEMERAL_CONTEXT = re.compile(r'\n*\s*<retrieved_context>[\s\S]*?</retrieved_context>\s*')
+
+    def _extract_persisted_history(self, working_messages):
+        """当 loop 内发生上下文压缩/裁剪时，提取应回写到 session.history 的完整消息链。
+
+        - 剥除所有头部临时 system 消息（基础 system prompt 与每轮临时注入）
+        - 剥除 user 消息末尾附带的临时 <retrieved_context>...</retrieved_context>
+        - 剥除 tool 消息里的 _GUIDANCE_THINK / _GUIDANCE_FAIL 样板
+        - 剥除 reasoning_content，避免污染持久化历史
+        """
+        idx = 0
+        n = len(working_messages)
+        while idx < n and working_messages[idx].get('role') == 'system':
+            idx += 1
+        out = []
+        for msg in working_messages[idx:]:
+            clean = dict(msg)
+            clean.pop('reasoning_content', None)
+            clean.pop('_anthropic_thinking_blocks', None)
+            role = clean.get('role')
+            if role == 'user':
+                c = clean.get('content')
+                if isinstance(c, str) and '<retrieved_context>' in c:
+                    clean['content'] = self._RE_EPHEMERAL_CONTEXT.sub('', c).rstrip()
+                elif isinstance(c, list):
+                    new_parts = []
+                    changed = False
+                    for p in c:
+                        if isinstance(p, dict) and p.get('type') == 'text' and '<retrieved_context>' in str(p.get('text', '')):
+                            stripped = self._RE_EPHEMERAL_CONTEXT.sub('', str(p.get('text', ''))).rstrip()
+                            changed = True
+                            if stripped:
+                                new_parts.append({'type': 'text', 'text': stripped})
+                        else:
+                            new_parts.append(p)
+                    if changed:
+                        clean['content'] = new_parts
+            elif role == 'tool' and isinstance(clean.get('content'), str) \
+                    and (self._GUIDANCE_THINK in clean['content']
+                         or self._GUIDANCE_FAIL in clean['content']):
+                clean['content'] = (
+                    clean['content']
+                    .replace(self._GUIDANCE_THINK, '')
+                    .replace(self._GUIDANCE_FAIL, '')
+                    .rstrip()
+                )
+            out.append(clean)
+        return out
+
+    @staticmethod
+    def _classify_stream_error(error_msg: str, iteration: int) -> Dict[str, bool]:
+        """统一分类流式 API 错误，供 native 与 JSON 两种 Agent Loop 共用。"""
+        err = str(error_msg or '')
+        err_lower = err.lower()
+        is_context_exceeded = any(k in err_lower for k in (
+            'context_length_exceeded', 'maximum context length',
+            'max_tokens', 'token limit', 'too many tokens',
+            'request too large', 'payload too large',
+            'context window', 'input too long',
+        )) or ('HTTP 413' in err)
+        is_server_transient = any(k in err for k in (
+            'HTTP 502', 'HTTP 503', 'HTTP 529', 'no available',
+            'InvalidChunkLength', 'ChunkedEncodingError',
+            'Connection broken', 'IncompleteRead',
+            'ConnectionReset', 'RemoteDisconnected',
+            '连接错误', '连接中断',
+        ))
+        is_image_schema_error = (
+            ('image_url' in err_lower or 'image' in err_lower)
+            and any(k in err_lower for k in (
+                'unknown variant', 'expected `text`', 'invalid type',
+                'does not support', 'unsupported',
+            ))
+        )
+        is_format_error = ('HTTP 4' in err and not is_context_exceeded and iteration > 1)
+        is_compress_fail = '压缩失败' in err
+        return {
+            'context_exceeded': is_context_exceeded,
+            'server_transient': is_server_transient,
+            'image_schema': is_image_schema_error,
+            'format_error': is_format_error,
+            'compress_fail': is_compress_fail,
+            'recoverable': (
+                is_context_exceeded or is_server_transient
+                or is_image_schema_error or is_format_error or is_compress_fail
+            ),
+        }
+
+    @staticmethod
+    def _record_api_call_usage(total_usage: dict, call_records: list, usage: dict,
+                               model: str, iteration: int, call_start: float,
+                               has_tool_calls: bool) -> int:
+        """统一累加单次 API 调用 usage 并写入 call_records，返回最新的实际上下文 token 锚点（0 表示无）。"""
+        import datetime as _dt
+        usage = usage or {}
+        _rec_inp = int(usage.get('prompt_tokens', 0) or 0)
+        _rec_out = int(usage.get('completion_tokens', 0) or 0)
+        _rec_reason = int(usage.get('reasoning_tokens', 0) or 0)
+        _rec_chit = int(usage.get('cache_hit_tokens', 0) or 0)
+        _rec_cwrite = int(usage.get('cache_write_tokens', 0) or 0)
+        _rec_cmiss = int(usage.get('cache_miss_tokens', 0) or 0)
+        _rec_tot = int(usage.get('total_tokens', 0) or 0)
+
+        if usage:
+            total_usage['prompt_tokens'] += _rec_inp
+            total_usage['completion_tokens'] += _rec_out
+            total_usage['reasoning_tokens'] += _rec_reason
+            total_usage['total_tokens'] += _rec_tot
+            total_usage['cache_hit_tokens'] += _rec_chit
+            total_usage['cache_write_tokens'] += _rec_cwrite
+            total_usage['cache_miss_tokens'] += _rec_cmiss
+
+        try:
+            from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
+            _rec_cost = _calc_cost(
+                model, _rec_inp, _rec_out, _rec_chit, _rec_cmiss, _rec_reason,
+                cache_write=_rec_cwrite,
+            )
+        except Exception:
+            _rec_cost = 0.0
+
+        call_records.append({
+            'timestamp': _dt.datetime.now().isoformat(),
+            'model': model,
+            'iteration': iteration,
+            'input_tokens': _rec_inp,
+            'output_tokens': _rec_out,
+            'reasoning_tokens': _rec_reason,
+            'cache_hit': _rec_chit,
+            'cache_write': _rec_cwrite,
+            'cache_miss': _rec_cmiss,
+            'total_tokens': _rec_tot,
+            'latency': round(time.time() - call_start, 2),
+            'has_tool_calls': has_tool_calls,
+            'estimated_cost': _rec_cost,
+        })
+        if _rec_inp:
+            non_reason_out = max(0, _rec_out - _rec_reason) if 0 < _rec_reason <= _rec_out else _rec_out
+            return _rec_inp + non_reason_out
+        return 0
+
+    @staticmethod
+    def _record_compaction_usage(total_usage: dict, call_records: list, meta: dict, iteration: int) -> None:
+        """将压缩摘要 LLM 调用自身的 token 消耗计入 total_usage 与 call_records。"""
+        u = meta.get('usage') if isinstance(meta, dict) else None
+        if not isinstance(u, dict) or not u:
+            return
+        inp = int(u.get('prompt_tokens', 0) or 0)
+        out = int(u.get('completion_tokens', 0) or 0)
+        reason = int(u.get('reasoning_tokens', 0) or 0)
+        chit = int(u.get('cache_hit_tokens', 0) or 0)
+        cwrite = int(u.get('cache_write_tokens', 0) or 0)
+        cmiss = int(u.get('cache_miss_tokens', 0) or 0)
+        tot = int(u.get('total_tokens', 0) or (inp + out))
+        if not (inp or out or tot):
+            return
+        total_usage['prompt_tokens'] += inp
+        total_usage['completion_tokens'] += out
+        total_usage['reasoning_tokens'] += reason
+        total_usage['total_tokens'] += tot
+        total_usage['cache_hit_tokens'] += chit
+        total_usage['cache_write_tokens'] += cwrite
+        total_usage['cache_miss_tokens'] += cmiss
+        model = meta.get('model') or ''
+        try:
+            from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
+            cost = _calc_cost(model, inp, out, chit, cmiss, reason, cache_write=cwrite)
+        except Exception:
+            cost = 0.0
+        import datetime as _dt
+        call_records.append({
+            'timestamp': _dt.datetime.now().isoformat(),
+            'model': model,
+            'iteration': iteration,
+            'input_tokens': inp,
+            'output_tokens': out,
+            'reasoning_tokens': reason,
+            'cache_hit': chit,
+            'cache_write': cwrite,
+            'cache_miss': cmiss,
+            'total_tokens': tot,
+            'latency': 0.0,
+            'has_tool_calls': False,
+            'is_compaction': True,
+            'estimated_cost': cost,
+        })
+
+    @staticmethod
+    def _compute_cache_hit_rate(total_usage: dict) -> float:
+        """按总输入 prompt_tokens 为分母计算缓存命中率（兼容 OpenAI/CPA/Anthropic/DeepSeek）。"""
+        hit = int(total_usage.get('cache_hit_tokens', 0) or 0)
+        prompt = int(total_usage.get('prompt_tokens', 0) or 0)
+        denom = prompt or (
+            hit
+            + int(total_usage.get('cache_write_tokens', 0) or 0)
+            + int(total_usage.get('cache_miss_tokens', 0) or 0)
+        )
+        return (min(hit, denom) / denom) if denom > 0 else 0.0
 
     @staticmethod
     def _tool_signature(tool_name: str, arguments: dict) -> str:
@@ -161,7 +364,11 @@ class AIClientAgentMixin:
                           on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
                           on_iteration_start: Optional[Callable[[int], None]] = None,
                           on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None,
-                          context_limit: int = 128000) -> Dict[str, Any]:
+                          on_compaction: Optional[Callable[[dict], None]] = None,
+                          context_limit: int = 128000,
+                          initial_actual_tokens: int = 0,
+                          state_context: str = '',
+                          think_tags: bool = True) -> Dict[str, Any]:
         """流式 Agent Loop
 
         Args:
@@ -213,8 +420,13 @@ class AIClientAgentMixin:
             'reasoning_tokens': 0,
             'total_tokens': 0,
             'cache_hit_tokens': 0,
+            'cache_write_tokens': 0,
             'cache_miss_tokens': 0,
         }
+        _history_compressed = False
+        _last_actual_tokens = max(0, int(initial_actual_tokens or 0))
+        _compactions_this_turn = 0
+        _compaction_disabled = False
 
         # 防止死循环：检测重复工具调用
         recent_tool_signatures = []  # 最近的工具调用签名
@@ -243,6 +455,10 @@ class AIClientAgentMixin:
                     'content': full_content,
                     'final_content': '',
                     'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+                    'compressed_history': (
+                        self._extract_persisted_history(working_messages)
+                        if _history_compressed else None
+                    ),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -256,6 +472,7 @@ class AIClientAgentMixin:
             # 收集本轮的内容和工具调用
             round_content = ""
             round_thinking = ""
+            round_thinking_blocks = []
             round_tool_calls = []
             should_retry = False  # 错误恢复标志
             should_abort = False  # 不可恢复错误标志
@@ -274,17 +491,46 @@ class AIClientAgentMixin:
                 summary = ', '.join(f"{r}={c}" for r, c in role_counts.items())
                 print(f"[AI Client] iteration={iteration}, messages={len(working_messages)} ({summary})")
 
-            # ★ 主动式上下文压缩（每轮迭代前，从第 4 轮开始检查）
-            # 不等到 context_length_exceeded 错误才压缩，而是提前检测并压缩
-            if iteration > 3 and len(working_messages) > 15:
-                est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
-                if est_tokens > context_limit * 0.85:
-                    print(f"[AI Client] ⚠️ 上下文 ~{est_tokens} tokens（阈值 {int(context_limit * 0.85)}），启动主动压缩")
-                    working_messages = self._smart_compress_in_loop(
-                        working_messages, tool_calls_history,
-                        context_limit, supports_vision, effective_tools
-                    )
+            # ★ Claude Agent SDK 风格自动压缩：优先参考跨轮/上轮真实 API usage + 本地估算；
+            # 未达阈值前绝不修改任何历史前缀（100% 保护 Prompt Cache），且具备防重复压缩保护
+            _compact_thresh = (
+                self._compaction_threshold(context_limit)
+                if hasattr(self, '_compaction_threshold') else int(context_limit * 0.85)
+            ) if context_limit else 0
+            est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
+            cur_tokens = max(_last_actual_tokens, est_tokens)
+            if _compact_thresh and cur_tokens >= _compact_thresh and not _compaction_disabled and _compactions_this_turn < 2:
+                print(f"[AI Client] ⚠️ 上下文 ~{cur_tokens} tokens（阈值 {_compact_thresh}），触发自动压缩")
+                _cmp_meta: Dict[str, Any] = {}
+                compressed_wm = self._smart_compress_in_loop(
+                    working_messages, tool_calls_history,
+                    context_limit, supports_vision, effective_tools,
+                    model=model, provider=provider,
+                    current_tokens=cur_tokens,
+                    state_context=state_context,
+                    meta_out=_cmp_meta,
+                )
+                self._record_compaction_usage(total_usage, call_records, _cmp_meta, iteration)
+                if compressed_wm is not working_messages:
+                    working_messages = compressed_wm
+                    _history_compressed = True
+                    _last_actual_tokens = 0
                     _needs_sanitize = True
+                    _compactions_this_turn += 1
+                    _b_tok = int(_cmp_meta.get('before_tokens') or cur_tokens)
+                    _a_tok = int(_cmp_meta.get('after_tokens') or self._estimate_messages_tokens(working_messages, effective_tools))
+                    if _b_tok > 0 and _a_tok >= int(_b_tok * 0.85):
+                        _compaction_disabled = True
+                    if on_compaction:
+                        try:
+                            on_compaction(_cmp_meta or {
+                                'before_tokens': _b_tok, 'after_tokens': _a_tok,
+                                'used_llm': False,
+                            })
+                        except Exception:
+                            pass
+                else:
+                    _compaction_disabled = True
 
             # ★ 通知 UI 新一轮 API 请求即将开始（用于显示 "Generating..." 状态）
             if on_iteration_start:
@@ -318,6 +564,10 @@ class AIClientAgentMixin:
                         'content': full_content + round_content,
                         'final_content': round_content,
                         'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+                        'compressed_history': (
+                            self._extract_persisted_history(working_messages)
+                            if _history_compressed else None
+                        ),
                         'tool_calls_history': tool_calls_history,
                         'call_records': call_records,
                         'iterations': iteration,
@@ -334,6 +584,10 @@ class AIClientAgentMixin:
                         'content': full_content + round_content,
                         'final_content': round_content,
                         'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+                        'compressed_history': (
+                            self._extract_persisted_history(working_messages)
+                            if _history_compressed else None
+                        ),
                         'tool_calls_history': tool_calls_history,
                         'call_records': call_records,
                         'iterations': iteration,
@@ -379,6 +633,11 @@ class AIClientAgentMixin:
                     if on_thinking and thinking_text:
                         on_thinking(thinking_text)
 
+                elif chunk_type == 'thinking_block':
+                    tb = chunk.get('block')
+                    if isinstance(tb, dict):
+                        round_thinking_blocks.append(tb)
+
                 elif chunk_type == 'tool_args_delta':
                     if on_tool_args_delta:
                         on_tool_args_delta(
@@ -394,42 +653,13 @@ class AIClientAgentMixin:
 
                 elif chunk_type == 'error':
                     error_msg = chunk.get('error', '')
-                    error_lower = error_msg.lower()
                     print(f"[AI Client] Agent loop error at iteration {iteration}: {error_msg}")
-
-                    # ---- 精确分类错误类型 ----
-                    # 1. 真正的上下文超限（API 明确告知 token 超限）
-                    is_context_exceeded = any(k in error_lower for k in (
-                        'context_length_exceeded', 'maximum context length',
-                        'max_tokens', 'token limit', 'too many tokens',
-                        'request too large', 'payload too large',
-                        'context window', 'input too long',
-                    )) or ('HTTP 413' in error_msg)
-
-                    # 2. 临时服务器错误 / 连接中断（502/503/529 / InvalidChunkLength 等）
-                    is_server_transient = any(k in error_msg for k in (
-                        'HTTP 502', 'HTTP 503', 'HTTP 529', 'no available',
-                        'InvalidChunkLength', 'ChunkedEncodingError',
-                        'Connection broken', 'IncompleteRead',
-                        'ConnectionReset', 'RemoteDisconnected',
-                        '连接错误', '连接中断',
-                    ))
-
-                    # 3. 压缩/格式问题
-                    is_image_schema_error = (
-                        ('image_url' in error_lower or 'image' in error_lower)
-                        and any(k in error_lower for k in (
-                            'unknown variant', 'expected `text`', 'invalid type',
-                            'does not support', 'unsupported'
-                        ))
-                    )
-                    is_format_error = ('HTTP 4' in error_msg and not is_context_exceeded and iteration > 1)
-                    is_compress_fail = '压缩失败' in error_msg
-
-                    is_recoverable = (
-                        is_context_exceeded or is_server_transient or
-                        is_image_schema_error or is_format_error or is_compress_fail
-                    )
+                    _ec = self._classify_stream_error(error_msg, iteration)
+                    is_context_exceeded = _ec['context_exceeded']
+                    is_server_transient = _ec['server_transient']
+                    is_image_schema_error = _ec['image_schema']
+                    is_compress_fail = _ec['compress_fail']
+                    is_recoverable = _ec['recoverable']
 
                     if is_recoverable:
                         server_error_retries += 1
@@ -461,8 +691,13 @@ class AIClientAgentMixin:
                             working_messages = self._progressive_trim(
                                 working_messages, tool_calls_history,
                                 trim_level=server_error_retries,  # 逐次加大裁剪力度
-                                supports_vision=supports_vision
+                                supports_vision=supports_vision,
+                                context_limit=context_limit,
+                                model=model, provider=provider,
                             )
+                            _history_compressed = True
+                            _last_actual_tokens = 0
+                            _needs_sanitize = True
                             cleanup_count = old_len - len(working_messages)
 
                         elif is_server_transient or is_compress_fail:
@@ -479,8 +714,13 @@ class AIClientAgentMixin:
                                 working_messages = self._progressive_trim(
                                     working_messages, tool_calls_history,
                                     trim_level=server_error_retries - 1,  # 比上下文超限更温和
-                                    supports_vision=supports_vision
+                                    supports_vision=supports_vision,
+                                    context_limit=context_limit,
+                                    model=model, provider=provider,
                                 )
+                                _history_compressed = True
+                                _last_actual_tokens = 0
+                                _needs_sanitize = True
                                 cleanup_count = old_len - len(working_messages)
 
                         else:
@@ -517,43 +757,12 @@ class AIClientAgentMixin:
                 elif chunk_type == 'done':
                     # 成功收到响应 → 重置服务端错误重试计数
                     server_error_retries = 0
-                    # 收集 usage 信息（包含 cache 统计）
-                    usage = chunk.get('usage', {})
-                    if usage:
-                        total_usage['prompt_tokens'] += usage.get('prompt_tokens', 0)
-                        total_usage['completion_tokens'] += usage.get('completion_tokens', 0)
-                        total_usage['reasoning_tokens'] += usage.get('reasoning_tokens', 0)
-                        total_usage['total_tokens'] += usage.get('total_tokens', 0)
-                        total_usage['cache_hit_tokens'] += usage.get('cache_hit_tokens', 0)
-                        total_usage['cache_miss_tokens'] += usage.get('cache_miss_tokens', 0)
-
-                    # ---- 记录本次 API 调用详情（对齐 Cursor） ----
-                    import datetime as _dt
-                    _call_latency = time.time() - _call_start
-                    _rec_inp = usage.get('prompt_tokens', 0)
-                    _rec_out = usage.get('completion_tokens', 0)
-                    _rec_reason = usage.get('reasoning_tokens', 0)
-                    _rec_chit = usage.get('cache_hit_tokens', 0)
-                    _rec_cmiss = usage.get('cache_miss_tokens', 0)
-                    try:
-                        from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
-                        _rec_cost = _calc_cost(model, _rec_inp, _rec_out, _rec_chit, _rec_cmiss, _rec_reason)
-                    except Exception:
-                        _rec_cost = 0.0
-                    call_records.append({
-                        'timestamp': _dt.datetime.now().isoformat(),
-                        'model': model,
-                        'iteration': iteration,
-                        'input_tokens': _rec_inp,
-                        'output_tokens': _rec_out,
-                        'reasoning_tokens': _rec_reason,
-                        'cache_hit': _rec_chit,
-                        'cache_miss': _rec_cmiss,
-                        'total_tokens': usage.get('total_tokens', 0),
-                        'latency': round(_call_latency, 2),
-                        'has_tool_calls': len(round_tool_calls) > 0,
-                        'estimated_cost': _rec_cost,
-                    })
+                    _actual = self._record_api_call_usage(
+                        total_usage, call_records, chunk.get('usage', {}),
+                        model, iteration, _call_start, has_tool_calls=len(round_tool_calls) > 0,
+                    )
+                    if _actual:
+                        _last_actual_tokens = _actual
                     break
 
             # 错误恢复：跳过本轮剩余逻辑，重新请求 API
@@ -569,6 +778,10 @@ class AIClientAgentMixin:
                     'content': full_content,
                     'final_content': '',
                     'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+                    'compressed_history': (
+                        self._extract_persisted_history(working_messages)
+                        if _history_compressed else None
+                    ),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -604,18 +817,17 @@ class AIClientAgentMixin:
                     continue  # 继续 while 循环，开始新一轮 API 请求
 
                 full_content += round_content
-                # 计算 cache 命中率
-                prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
-                if prompt_total > 0:
-                    total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
-                else:
-                    total_usage['cache_hit_rate'] = 0
+                total_usage['cache_hit_rate'] = self._compute_cache_hit_rate(total_usage)
 
                 _result = {
                     'ok': True,
                     'content': full_content,
                     'final_content': round_content,  # 最后一轮的回复（不含中间轮次）
                     'new_messages': self._extract_new_messages(working_messages, initial_msg_count),  # 原生工具交互链
+                    'compressed_history': (
+                        self._extract_persisted_history(working_messages)
+                        if _history_compressed else None
+                    ),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -672,6 +884,8 @@ class AIClientAgentMixin:
             # Duojie 的 reasoning_content 无需在后续请求中回传
             if self.is_reasoning_model(model) and provider in ('deepseek', 'glm'):
                 assistant_msg['reasoning_content'] = round_thinking or ''
+            if round_thinking_blocks:
+                assistant_msg['_anthropic_thinking_blocks'] = round_thinking_blocks
             working_messages.append(assistant_msg)
 
             # 执行工具调用（web 工具并行，Houdini 工具串行）
@@ -689,14 +903,18 @@ class AIClientAgentMixin:
                 parsed_calls.append((tool_id, tool_name, arguments, tool_call))
 
             # ★ 同轮去重：纯查询类工具用相同参数重复调用时直接返回缓存
-            # 只对无副作用的查询工具去重（execute_python/run_skill/web_search 等有副作用的不去重）
-            _DEDUP_TOOLS = frozenset({
-                'get_network_structure', 'get_node_parameters', 'list_children',
-                'read_selection', 'search_node_types', 'semantic_search_nodes',
-                'find_nodes_by_param', 'check_errors', 'search_local_doc',
-                'get_houdini_node_doc', 'get_node_inputs', 'list_skills',
-                'perf_stop_and_report',
+            # 区分「纯静态文档/类型查询」与「场景状态查询」（场景变动时后者必须全量失效）；
+            # 有副作用/状态变化的工具（含 perf_stop_and_report）绝不进入去重白名单
+            _STATIC_DEDUP_TOOLS = frozenset({
+                'search_node_types', 'semantic_search_nodes',
+                'search_local_doc', 'get_houdini_node_doc', 'list_skills',
             })
+            _SCENE_DEDUP_TOOLS = frozenset({
+                'get_network_structure', 'get_node_parameters', 'list_children',
+                'read_selection', 'find_nodes_by_param', 'check_errors',
+                'get_node_inputs', 'get_node_positions', 'list_network_boxes',
+            })
+            _DEDUP_TOOLS = _STATIC_DEDUP_TOOLS | _SCENE_DEDUP_TOOLS
 
             # 分离可并行工具（web + shell）和 Houdini 工具（需主线程串行）
             _ASYNC_TOOL_NAMES = frozenset({'web_search', 'fetch_webpage', 'execute_shell'})
@@ -767,7 +985,7 @@ class AIClientAgentMixin:
             mutating_calls = [(i, pc) for i, pc in uncached_houdini if pc[1] not in _BATCH_READONLY]
 
             # 批量执行只读工具（如果有 batch executor 且 >1 个只读调用）
-            if len(readonly_batch) > 1 and self._batch_tool_executor:
+            if len(readonly_batch) > 1 and getattr(self, '_batch_tool_executor', None):
                 batch_input = [(tname, targs) for _, (_, tname, targs, _) in readonly_batch]
                 try:
                     batch_results = self._batch_tool_executor(batch_input)
@@ -835,29 +1053,33 @@ class AIClientAgentMixin:
                     print(f"[AI Client] ⏭️ 早期终止: 跳过 {_early_skip_count} 个冗余查询")
 
             # --- 缓存维护 ---
-            # 如果本轮有操作类工具（创建/删除/连接节点等），清除网络结构相关缓存
-            # 因为操作改变了网络状态，之前缓存的查询结果可能已过期
-            _NETWORK_MUTATING_TOOLS = frozenset({
+            # 只要本轮执行了任何会改变场景状态/参数/连接/布局/实例的工具，
+            # 立即清除全部场景状态查询缓存（只保留静态文档/节点类型查询），避免脏读旧参数！
+            _SCENE_MUTATING_TOOLS = frozenset({
                 'create_node', 'create_nodes_batch', 'delete_node', 'connect_nodes',
                 'create_wrangle_node', 'copy_node', 'set_display_flag', 'undo_redo',
+                'set_node_parameter', 'batch_set_parameters', 'execute_python',
+                'run_skill', 'layout_nodes', 'create_network_box', 'add_nodes_to_box',
+                'save_hip', 'switch_houdini_instance', 'run_in_houdini_instance',
+                'transfer_nodes_between_instances',
             })
             has_mutation = any(
-                pc[1] in _NETWORK_MUTATING_TOOLS
+                pc[1] in _SCENE_MUTATING_TOOLS
                 for idx_m, pc in enumerate(parsed_calls)
                 if not dedup_flags[idx_m]
             )
             if has_mutation:
-                # 清除 get_network_structure / list_children / check_errors 的缓存
-                keys_to_remove = [k for k in _turn_dedup_cache
-                                  if k.startswith(('get_network_structure:', 'list_children:', 'check_errors:'))]
+                _scene_prefixes = tuple(f"{t}:" for t in _SCENE_DEDUP_TOOLS)
+                keys_to_remove = [k for k in _turn_dedup_cache if k.startswith(_scene_prefixes)]
                 for k in keys_to_remove:
                     del _turn_dedup_cache[k]
 
-            # 将新执行的查询工具结果写入去重缓存
+            # 将新执行的查询工具结果写入去重缓存（同批次有变更时不缓存场景查询，只缓存静态文档查询）
             for idx, (tid, tname, targs, _tc) in enumerate(parsed_calls):
-                if not dedup_flags[idx] and tname in _DEDUP_TOOLS and results_ordered[idx]:
-                    dedup_key = self._tool_signature(tname, targs)
-                    _turn_dedup_cache[dedup_key] = results_ordered[idx]
+                if not dedup_flags[idx] and results_ordered[idx]:
+                    if tname in _STATIC_DEDUP_TOOLS or (tname in _SCENE_DEDUP_TOOLS and not has_mutation):
+                        dedup_key = self._tool_signature(tname, targs)
+                        _turn_dedup_cache[dedup_key] = results_ordered[idx]
 
             # --- 统一处理结果（保持原始顺序） ---
             should_break_tool_limit = False
@@ -956,6 +1178,10 @@ class AIClientAgentMixin:
                     'content': full_content + f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
                     'final_content': f"\n\n已达到工具调用次数限制({max_tool_calls})，自动停止。",
                     'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+                    'compressed_history': (
+                        self._extract_persisted_history(working_messages)
+                        if _history_compressed else None
+                    ),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -972,10 +1198,17 @@ class AIClientAgentMixin:
 
             # 注意：这些引导样板只供模型在 loop 内阅读，持久化时会被
             # _extract_new_messages 剥除，不会进入历史/训练数据。
+            # 仅在非原生推理模型且明确使用 <think> 标签模式时才注入 _GUIDANCE_THINK，
+            # 避免与 Claude / Codex / DeepSeek-V4 / Gemini-4 等原生推理渠道冲突。
+            _use_native_thinking = (
+                self.is_reasoning_model(model)
+                or (hasattr(self, '_is_anthropic_protocol') and self._is_anthropic_protocol(provider, model))
+                or (hasattr(self, '_sub_kind') and self._sub_kind(provider) is not None)
+            )
             if working_messages and working_messages[-1].get('role') == 'tool':
                 if _round_failed:
                     working_messages[-1]['content'] += self._GUIDANCE_FAIL
-                if enable_thinking:
+                if enable_thinking and think_tags and not _use_native_thinking:
                     working_messages[-1]['content'] += self._GUIDANCE_THINK
 
             # 保存当前轮次的内容
@@ -1012,18 +1245,17 @@ class AIClientAgentMixin:
             full_content = summary_content if summary_content else full_content
 
         print(f"[AI Client] Reached max iterations ({iteration})")
-        # 计算 cache 命中率
-        prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
-        if prompt_total > 0:
-            total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
-        else:
-            total_usage['cache_hit_rate'] = 0
+        total_usage['cache_hit_rate'] = self._compute_cache_hit_rate(total_usage)
         final_text = self._sanitize_final_text(full_content, tool_calls_history)
         return {
             'ok': True,
             'content': final_text if final_text.strip() else "(工具调用完成，但未生成回复)",
             'final_content': final_text,
             'new_messages': self._extract_new_messages(working_messages, initial_msg_count),
+            'compressed_history': (
+                self._extract_persisted_history(working_messages)
+                if _history_compressed else None
+            ),
             'tool_calls_history': tool_calls_history,
             'call_records': call_records,
             'iterations': iteration,
@@ -1245,7 +1477,11 @@ class AIClientAgentMixin:
                               on_tool_args_delta: Optional[Callable[[str, str, str], None]] = None,
                               on_iteration_start: Optional[Callable[[int], None]] = None,
                               on_plan_incomplete: Optional[Callable[[], Optional[str]]] = None,
-                              context_limit: int = 128000) -> Dict[str, Any]:
+                              on_compaction: Optional[Callable[[dict], None]] = None,
+                              context_limit: int = 128000,
+                              initial_actual_tokens: int = 0,
+                              state_context: str = '',
+                              think_tags: bool = True) -> Dict[str, Any]:
         """JSON 模式 Agent Loop（用于不支持 Function Calling 的模型）"""
 
         if not self._tool_executor:
@@ -1294,8 +1530,13 @@ class AIClientAgentMixin:
             'reasoning_tokens': 0,
             'total_tokens': 0,
             'cache_hit_tokens': 0,
+            'cache_write_tokens': 0,
             'cache_miss_tokens': 0,
         }
+        _history_compressed = False
+        _last_actual_tokens = max(0, int(initial_actual_tokens or 0))
+        _compactions_this_turn = 0
+        _compaction_disabled = False
 
         # 防止死循环：检测重复工具调用
         max_tool_calls = 999  # 不限制总调用次数（仅保留连续重复检测）
@@ -1319,29 +1560,44 @@ class AIClientAgentMixin:
             _call_start = time.time()  # 记录本次 API 调用起始时间（对齐 Cursor 延迟统计）
             round_content = ""
 
-            # ★ 主动式上下文压缩（从第 4 轮开始检查，替代旧的简单截断逻辑）
-            if iteration > 3 and len(working_messages) > 15:
-                est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
-                if est_tokens > context_limit * 0.85:
-                    print(f"[AI Client] ⚠️ JSON模式上下文 ~{est_tokens} tokens（阈值 {int(context_limit * 0.85)}），启动主动压缩")
-                    working_messages = self._smart_compress_in_loop(
-                        working_messages, tool_calls_history,
-                        context_limit, supports_vision
-                    )
-            elif iteration > 1 and len(working_messages) > 20:
-                # 轻量级防御：仅在未触发主动压缩时做简单截断
-                protect_start = max(1, len(working_messages) - 6)
-                for i, m in enumerate(working_messages):
-                    if i == 0 or i >= protect_start:
-                        continue
-                    role = m.get('role', '')
-                    if role == 'user':
-                        continue
-                    c = m.get('content') or ''
-                    if role == 'tool' and len(c) > 400:
-                        m['content'] = self._summarize_tool_content(c, 400)
-                    elif role == 'assistant' and len(c) > 600:
-                        m['content'] = c[:600] + '...[已截断]'
+            # ★ Claude Agent SDK 风格自动压缩（JSON 模式同样适用，含防死循环保护）
+            _compact_thresh = (
+                self._compaction_threshold(context_limit)
+                if hasattr(self, '_compaction_threshold') else int(context_limit * 0.85)
+            ) if context_limit else 0
+            est_tokens = self._estimate_messages_tokens(working_messages, effective_tools)
+            cur_tokens = max(_last_actual_tokens, est_tokens)
+            if _compact_thresh and cur_tokens >= _compact_thresh and not _compaction_disabled and _compactions_this_turn < 2:
+                print(f"[AI Client] ⚠️ JSON模式上下文 ~{cur_tokens} tokens（阈值 {_compact_thresh}），触发自动压缩")
+                _cmp_meta_j: Dict[str, Any] = {}
+                compressed_wm = self._smart_compress_in_loop(
+                    working_messages, tool_calls_history,
+                    context_limit, supports_vision,
+                    model=model, provider=provider,
+                    current_tokens=cur_tokens,
+                    state_context=state_context,
+                    meta_out=_cmp_meta_j,
+                )
+                self._record_compaction_usage(total_usage, call_records, _cmp_meta_j, iteration)
+                if compressed_wm is not working_messages:
+                    working_messages = compressed_wm
+                    _history_compressed = True
+                    _last_actual_tokens = 0
+                    _compactions_this_turn += 1
+                    _b_tok = int(_cmp_meta_j.get('before_tokens') or cur_tokens)
+                    _a_tok = int(_cmp_meta_j.get('after_tokens') or self._estimate_messages_tokens(working_messages, effective_tools))
+                    if _b_tok > 0 and _a_tok >= int(_b_tok * 0.85):
+                        _compaction_disabled = True
+                    if on_compaction:
+                        try:
+                            on_compaction(_cmp_meta_j or {
+                                'before_tokens': _b_tok, 'after_tokens': _a_tok,
+                                'used_llm': False,
+                            })
+                        except Exception:
+                            pass
+                else:
+                    _compaction_disabled = True
 
             # ★ 通知 UI 新一轮 API 请求即将开始（用于显示 "Generating..." 状态）
             if on_iteration_start:
@@ -1381,25 +1637,10 @@ class AIClientAgentMixin:
 
                 elif chunk_type == 'error':
                     err_msg = chunk.get('error', '')
-                    err_lower = err_msg.lower()
-
-                    # 精确分类错误
-                    is_context_exceeded = any(k in err_lower for k in (
-                        'context_length_exceeded', 'maximum context length',
-                        'max_tokens', 'token limit', 'too many tokens',
-                        'request too large', 'payload too large',
-                        'context window', 'input too long',
-                    )) or ('HTTP 413' in err_msg)
-                    is_server_transient = any(k in err_msg for k in (
-                        'HTTP 502', 'HTTP 503', 'HTTP 529', '压缩失败', 'no available'
-                    ))
-                    is_image_schema_error = (
-                        ('image_url' in err_lower or 'image' in err_lower)
-                        and any(k in err_lower for k in (
-                            'unknown variant', 'expected `text`', 'invalid type',
-                            'does not support', 'unsupported'
-                        ))
-                    )
+                    _ec = self._classify_stream_error(err_msg, iteration)
+                    is_context_exceeded = _ec['context_exceeded']
+                    is_server_transient = _ec['server_transient'] or _ec['compress_fail']
+                    is_image_schema_error = _ec['image_schema']
 
                     if is_context_exceeded or is_server_transient or is_image_schema_error:
                         server_error_retries += 1
@@ -1425,8 +1666,12 @@ class AIClientAgentMixin:
                             working_messages = self._progressive_trim(
                                 working_messages, tool_calls_history,
                                 trim_level=server_error_retries,
-                                supports_vision=supports_vision
+                                supports_vision=supports_vision,
+                                context_limit=context_limit,
+                                model=model, provider=provider,
                             )
+                            _history_compressed = True
+                            _last_actual_tokens = 0
                         else:
                             # 临时服务器错误：等待，第2次开始才裁剪
                             wait_seconds = 5 * server_error_retries
@@ -1437,8 +1682,12 @@ class AIClientAgentMixin:
                                 working_messages = self._progressive_trim(
                                     working_messages, tool_calls_history,
                                     trim_level=server_error_retries - 1,
-                                    supports_vision=supports_vision
+                                    supports_vision=supports_vision,
+                                    context_limit=context_limit,
+                                    model=model, provider=provider,
                                 )
+                                _history_compressed = True
+                                _last_actual_tokens = 0
                         break  # 退出 for，回到 while 重试
                     return {
                         'ok': False, 'error': err_msg,
@@ -1450,43 +1699,12 @@ class AIClientAgentMixin:
                 elif chunk_type == 'done':
                     # 成功收到响应 → 重置服务端错误重试计数
                     server_error_retries = 0
-                    # 收集 usage 信息（包含 cache 统计）
-                    usage = chunk.get('usage', {})
-                    if usage:
-                        total_usage['prompt_tokens'] += usage.get('prompt_tokens', 0)
-                        total_usage['completion_tokens'] += usage.get('completion_tokens', 0)
-                        total_usage['reasoning_tokens'] += usage.get('reasoning_tokens', 0)
-                        total_usage['total_tokens'] += usage.get('total_tokens', 0)
-                        total_usage['cache_hit_tokens'] += usage.get('cache_hit_tokens', 0)
-                        total_usage['cache_miss_tokens'] += usage.get('cache_miss_tokens', 0)
-
-                    # ---- 记录本次 API 调用详情（对齐 Cursor） ----
-                    import datetime as _dt
-                    _call_latency = time.time() - _call_start
-                    _rec_inp = usage.get('prompt_tokens', 0)
-                    _rec_out = usage.get('completion_tokens', 0)
-                    _rec_reason = usage.get('reasoning_tokens', 0)
-                    _rec_chit = usage.get('cache_hit_tokens', 0)
-                    _rec_cmiss = usage.get('cache_miss_tokens', 0)
-                    try:
-                        from houdini_agent.utils.token_optimizer import calculate_cost as _calc_cost
-                        _rec_cost = _calc_cost(model, _rec_inp, _rec_out, _rec_chit, _rec_cmiss, _rec_reason)
-                    except Exception:
-                        _rec_cost = 0.0
-                    call_records.append({
-                        'timestamp': _dt.datetime.now().isoformat(),
-                        'model': model,
-                        'iteration': iteration,
-                        'input_tokens': _rec_inp,
-                        'output_tokens': _rec_out,
-                        'reasoning_tokens': _rec_reason,
-                        'cache_hit': _rec_chit,
-                        'cache_miss': _rec_cmiss,
-                        'total_tokens': usage.get('total_tokens', 0),
-                        'latency': round(_call_latency, 2),
-                        'has_tool_calls': False,
-                        'estimated_cost': _rec_cost,
-                    })
+                    _actual = self._record_api_call_usage(
+                        total_usage, call_records, chunk.get('usage', {}),
+                        model, iteration, _call_start, has_tool_calls=False,
+                    )
+                    if _actual:
+                        _last_actual_tokens = _actual
                     break
 
             # 清理内容中的XML标签和格式问题（使用预编译正则）
@@ -1525,15 +1743,14 @@ class AIClientAgentMixin:
                     working_messages.append({'role': 'user', 'content': _plan_resume_msg})
                     continue
 
-                # 计算 cache 命中率
-                prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
-                if prompt_total > 0:
-                    total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
-                else:
-                    total_usage['cache_hit_rate'] = 0
+                total_usage['cache_hit_rate'] = self._compute_cache_hit_rate(total_usage)
                 return {
                     'ok': True,
                     'content': full_content,
+                    'compressed_history': (
+                        self._extract_persisted_history(working_messages)
+                        if _history_compressed else None
+                    ),
                     'tool_calls_history': tool_calls_history,
                     'call_records': call_records,
                     'iterations': iteration,
@@ -1811,16 +2028,15 @@ class AIClientAgentMixin:
                 on_content(summary_content)
             full_content = summary_content if summary_content else full_content
 
-        # 计算 cache 命中率
-        prompt_total = total_usage['cache_hit_tokens'] + total_usage['cache_miss_tokens']
-        if prompt_total > 0:
-            total_usage['cache_hit_rate'] = total_usage['cache_hit_tokens'] / prompt_total
-        else:
-            total_usage['cache_hit_rate'] = 0
+        total_usage['cache_hit_rate'] = self._compute_cache_hit_rate(total_usage)
 
         _result = {
             'ok': True,
             'content': self._sanitize_final_text(full_content, tool_calls_history) if full_content.strip() else "(工具调用完成，但未生成回复)",
+            'compressed_history': (
+                self._extract_persisted_history(working_messages)
+                if _history_compressed else None
+            ),
             'tool_calls_history': tool_calls_history,
             'call_records': call_records,
             'iterations': iteration,

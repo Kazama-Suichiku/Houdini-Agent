@@ -353,39 +353,49 @@ class AIClientProvidersMixin:
         """解析 API 返回的 usage 数据为统一格式（含 reasoning tokens 和缓存指标）
 
         缓存字段兼容多种 API 返回格式：
-        - DeepSeek/OpenAI: prompt_cache_hit_tokens / prompt_cache_miss_tokens
-        - Anthropic 原生: cache_read_input_tokens / cache_creation_input_tokens
+        - OpenAI / CPA / Codex: prompt_tokens（含缓存） + prompt_tokens_details.cached_tokens
+        - DeepSeek: prompt_tokens（含缓存） + prompt_cache_hit_tokens + prompt_cache_miss_tokens
+        - Anthropic 原生: input_tokens（仅未命中且未写入部分！）+ cache_read_input_tokens + cache_creation_input_tokens
         - Factory/Duojie 代理: claude_cache_creation_*_tokens, input_tokens_details 内嵌
         """
-        if not usage:
+        if not usage or not isinstance(usage, dict):
             return {}
 
         # 诊断：首次收到 usage 时打印完整结构（含嵌套 details）
         if not AIClientProvidersMixin._usage_keys_logged:
             AIClientProvidersMixin._usage_keys_logged = True
             print(f"[AI Client] Raw usage keys (首次): {sorted(usage.keys())}")
-            for k in ('input_tokens_details', 'prompt_tokens_details', 'completion_tokens_details'):
+            for k in ('input_tokens_details', 'prompt_tokens_details',
+                      'completion_tokens_details', 'output_tokens_details'):
                 v = usage.get(k)
                 if v:
                     print(f"[AI Client]   {k}: {v}")
 
-        prompt_tokens = usage.get('prompt_tokens', 0) or usage.get('input_tokens', 0)
+        has_prompt_tokens = 'prompt_tokens' in usage and usage.get('prompt_tokens') is not None
+        raw_prompt = int(usage.get('prompt_tokens') or 0)
+        raw_input = int(usage.get('input_tokens') or 0)
+        is_anthropic_style = (not has_prompt_tokens) and ('input_tokens' in usage)
 
         # ── 缓存读取（hit）：从多级来源查找 ──
-        # 优先从 details 子字段中提取（Factory/Anthropic 风格）
         input_details = usage.get('input_tokens_details') or usage.get('prompt_tokens_details') or {}
         if isinstance(input_details, dict):
-            cache_hit = (
-                input_details.get('cached_tokens')           # OpenAI 新格式
-                or input_details.get('cache_read_input_tokens')  # Anthropic
+            cache_hit = int(
+                input_details.get('cached_tokens')
+                or input_details.get('cache_read_input_tokens')
                 or input_details.get('cache_read_tokens')
+                or 0
+            )
+            cache_write_from_details = int(
+                input_details.get('cache_creation_input_tokens')
+                or input_details.get('cache_creation_tokens')
                 or 0
             )
         else:
             cache_hit = 0
-        # 顶级字段后备
+            cache_write_from_details = 0
+
         if not cache_hit:
-            cache_hit = (
+            cache_hit = int(
                 usage.get('prompt_cache_hit_tokens')
                 or usage.get('cache_read_input_tokens')
                 or usage.get('cache_read_tokens')
@@ -393,43 +403,63 @@ class AIClientProvidersMixin:
                 or 0
             )
 
-        # ── 缓存写入（miss/creation） ──
-        # Factory 特有: claude_cache_creation_1_h_tokens / claude_cache_creation_5_m_tokens
-        cache_write_1h = usage.get('claude_cache_creation_1_h_tokens', 0) or 0
-        cache_write_5m = usage.get('claude_cache_creation_5_m_tokens', 0) or 0
+        # ── 缓存写入（仅真正的 cache creation，绝不与未命中 miss 混淆） ──
+        cache_write_1h = int(usage.get('claude_cache_creation_1_h_tokens') or 0)
+        cache_write_5m = int(usage.get('claude_cache_creation_5_m_tokens') or 0)
         factory_cache_write = cache_write_1h + cache_write_5m
-
-        if isinstance(input_details, dict):
-            cache_miss_from_details = (
-                input_details.get('cache_creation_input_tokens')
-                or input_details.get('cache_creation_tokens')
-                or 0
-            )
-        else:
-            cache_miss_from_details = 0
-
-        cache_miss = (
-            cache_miss_from_details
-            or usage.get('prompt_cache_miss_tokens')
+        cache_write = int(
+            cache_write_from_details
             or usage.get('cache_creation_input_tokens')
             or usage.get('cache_write_tokens')
-            or usage.get('cache_miss_tokens')
             or factory_cache_write
             or 0
         )
 
-        completion = usage.get('completion_tokens', 0) or usage.get('output_tokens', 0)
-        total = usage.get('total_tokens', 0) or (prompt_tokens + completion)
+        # ── 总输入 prompt_tokens 与未命中 cache_miss_tokens ──
+        # Anthropic 原生协议中 input_tokens 不含 cache_read 与 cache_creation，需加回得到真实总输入；
+        # OpenAI / DeepSeek / CPA 的 prompt_tokens 已包含 cached_tokens。
+        if is_anthropic_style:
+            prompt_tokens = raw_input + cache_hit + cache_write
+            cache_miss = raw_input
+        else:
+            prompt_tokens = raw_prompt or raw_input
+            # 某些中转把 Anthropic 格式字段改名成 prompt_tokens 但仍未把 cache_read/write 计入：
+            # 仅当显式存在 Anthropic 缓存字段且 prompt_tokens 小于缓存之和时补齐
+            has_anth_cache = any(
+                usage.get(k) for k in ('cache_read_input_tokens', 'cache_creation_input_tokens',
+                                       'claude_cache_creation_1_h_tokens', 'claude_cache_creation_5_m_tokens')
+            )
+            if has_anth_cache and prompt_tokens < (cache_hit + cache_write):
+                cache_miss = prompt_tokens
+                prompt_tokens = prompt_tokens + cache_hit + cache_write
+            else:
+                if prompt_tokens > 0 and cache_hit > prompt_tokens:
+                    cache_hit = prompt_tokens
+                explicit_miss = int(usage.get('prompt_cache_miss_tokens') or usage.get('cache_miss_tokens') or 0)
+                if explicit_miss > 0:
+                    cache_miss = explicit_miss
+                else:
+                    cache_miss = max(0, prompt_tokens - cache_hit - cache_write)
+
+        completion = int(usage.get('completion_tokens') or usage.get('output_tokens') or 0)
+        raw_total = int(usage.get('total_tokens') or 0)
+        total = max(raw_total, prompt_tokens + completion)
 
         # ── 提取 reasoning / thinking tokens ──
-        # OpenAI/DeepSeek: completion_tokens_details.reasoning_tokens
-        # Anthropic: 可能在 output_tokens_details.thinking 中
         reasoning_tokens = 0
-        comp_details = usage.get('completion_tokens_details') or {}
-        if isinstance(comp_details, dict):
-            reasoning_tokens = comp_details.get('reasoning_tokens', 0) or 0
+        for det_key in ('completion_tokens_details', 'output_tokens_details'):
+            det = usage.get(det_key)
+            if isinstance(det, dict):
+                reasoning_tokens = int(
+                    det.get('reasoning_tokens')
+                    or det.get('thinking_tokens')
+                    or det.get('thinking')
+                    or 0
+                )
+                if reasoning_tokens:
+                    break
         if not reasoning_tokens:
-            reasoning_tokens = usage.get('reasoning_tokens', 0) or 0
+            reasoning_tokens = int(usage.get('reasoning_tokens') or 0)
 
         return {
             'prompt_tokens': prompt_tokens,
@@ -437,6 +467,7 @@ class AIClientProvidersMixin:
             'reasoning_tokens': reasoning_tokens,
             'total_tokens': total,
             'cache_hit_tokens': cache_hit,
+            'cache_write_tokens': cache_write,
             'cache_miss_tokens': cache_miss,
-            'cache_hit_rate': (cache_hit / prompt_tokens) if prompt_tokens > 0 else 0,
+            'cache_hit_rate': (min(cache_hit, prompt_tokens) / prompt_tokens) if prompt_tokens > 0 else 0.0,
         }

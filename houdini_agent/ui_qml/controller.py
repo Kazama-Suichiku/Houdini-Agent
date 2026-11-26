@@ -1,562 +1,32 @@
 # -*- coding: utf-8 -*-
-"""
-QML bridge for the Houdini Agent UI.
+"""QML Controller (modularized via mixins under houdini_agent/ui_qml/mixins/)."""
 
-ChatModel  — QAbstractListModel exposed to the ListView (rows: user / ai / plan).
-Controller — QObject exposed as `controller`. Owns UI state + drives the REAL
-             agent loop via AgentSession (AIClient.agent_loop_auto on a background
-             thread). All Houdini tool calls are marshalled to the Qt main thread
-             through a BlockingQueuedConnection signal (mirrors the old RunMixin).
-
-If the backend can't be constructed (e.g. running the standalone preview without
-Houdini/API keys), Controller falls back to a simulated streamed reply.
-"""
-
-import base64
-import copy
-import hashlib
-import json
-import os
-import re
-import queue
-import shutil
-import sys
-import threading
-import time
-import uuid
-from pathlib import Path
-
-try:
-    from PySide6.QtCore import (
-        QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot, Property, QTimer, QSettings
-    )
-    import random
-except ImportError:  # Houdini <= 20.5 (Qt5)
-    from PySide2.QtCore import (
-        QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot, Property, QTimer, QSettings
-    )
-    import random
-
-from houdini_agent.utils import model_catalog as catalog
+from .controller_shared import *  # noqa: F401,F403 — preserve all public exports
+from .controller_shared import (
+    _BRIDGE_LOST_MSG, _MESHY_URLS, _MESHY_UTM, _TPL_HOU, _TPL_MESHY,
+    _block_fp, _esc, _meshy, _to_html,
+)
+from .mixins import (
+    ControllerBridgeMixin,
+    ControllerManagementMixin,
+    ControllerMarkdownMixin,
+    ControllerMeshyMixin,
+    ControllerPlanMixin,
+    ControllerSubscriptionMixin,
+    ControllerUpdaterMixin,
+)
 
 
-ROLE_TYPE = Qt.UserRole + 1
-ROLE_PAYLOAD = Qt.UserRole + 2
-
-# Real provider keys + model ids (kept in sync with ui/header.py _model_map)
-# 静态兜底取自 model_catalog；三份目录保持可变 —— refreshModels() 后台拉取
-# 各 provider 的 /v1/models 后就地更新（custom / codex / claude_sub 不参与拉取）
-MODEL_MAP = {k: list(v) for k, v in catalog.STATIC_MODELS.items()}
-PROVIDER_LABELS = {
-    "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
-    "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅", "antigravity": "Google 反重力",
-    "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
-}
-CONTEXT_LIMITS = dict(catalog.STATIC_CONTEXT)
-VISION_MODELS = set(catalog.STATIC_VISION)
-# tools safe to run off the Qt main thread (no hou.* access)
-BG_SAFE = {"web_search", "fetch_webpage", "search_local_doc", "get_houdini_node_doc",
-           "list_skills", "search_memory", "execute_shell"}
-
-# 经 bridge 调 Houdini 侧工具时，若 Houdini 已关闭/断开（且自动扫描重连也失败），
-# 返回这条而不是卡超时或抛原始 socket 错误——并直接告诉模型有哪些自救工具可用。
-_BRIDGE_LOST_MSG = ("Houdini 连接已断开（可能已关闭 Houdini 或 Bridge 未运行），当前无法读取或修改场景。"
-                    "可先调用 check_houdini_connection 排查原因，再按其 advice 用 repair_houdini_connection "
-                    "修复（reconnect / reinstall_package / launch_houdini）。聊天与 Meshy 生成不受影响。")
-
-# read-only tools available during the Plan planning phase
-PLAN_READONLY = {"get_network_structure", "get_node_parameters", "list_children",
-                 "get_node_inputs", "search_node_types", "semantic_search_nodes",
-                 "read_selection", "check_errors", "search_local_doc",
-                 "get_houdini_node_doc", "web_search", "fetch_webpage",
-                 "search_memory", "list_skills", "capture_viewport",
-                 "check_houdini_connection"}
-
-try:
-    from houdini_agent.utils.plan_manager import (
-        PLAN_TOOL_CREATE, PLAN_TOOL_UPDATE_STEP, PLAN_TOOL_ASK_QUESTION)
-except Exception:
-    PLAN_TOOL_CREATE = PLAN_TOOL_UPDATE_STEP = PLAN_TOOL_ASK_QUESTION = None
-
-# tools that require user approval when confirm mode is on
-# （repair_houdini_connection 可能启动 Houdini 进程，确认模式下应征得同意）
-CONFIRM_TOOLS = {"create_node", "create_nodes_batch", "create_wrangle_node", "delete_node",
-                 "set_node_parameter", "batch_set_parameters", "connect_nodes", "copy_node",
-                 "execute_python", "execute_shell", "save_hip", "run_skill",
-                 "repair_houdini_connection", "transfer_nodes_between_instances"}
-
-# Meshy 集成（自包含包，import 即自注册到 ToolRegistry）。
-# 网络工具在 app 侧后台线程执行；生成类工具消耗 credits，纳入确认门。
-try:
-    from houdini_agent import meshy as _meshy
-    MESHY_NETWORK_TOOLS = set(_meshy.NETWORK_TOOLS)
-    MESHY_INTERACTIVE_TOOLS = set(_meshy.INTERACTIVE_TOOLS)
-    MESHY_BATCH_TOOLS = set(_meshy.BATCH_TOOLS)
-    MESHY_MUTATING = set(_meshy.MUTATING_TOOLS)
-    MESHY_LOCAL_TOOLS = set(getattr(_meshy, "LOCAL_TOOLS", set()))
-    CONFIRM_TOOLS = CONFIRM_TOOLS | set(_meshy.CONFIRM_TOOLS)
-except Exception as _meshy_err:
-    _meshy = None
-    MESHY_NETWORK_TOOLS = set()
-    MESHY_INTERACTIVE_TOOLS = set()
-    MESHY_BATCH_TOOLS = set()
-    MESHY_MUTATING = set()
-    MESHY_LOCAL_TOOLS = set()
-    print("[controller] meshy integration unavailable:", _meshy_err)
-
-# 各 Meshy 工具的中文标签（卡片标题、后台任务通知用）
-MESHY_LABELS = {
-    "meshy_text_to_3d": "文生3D", "meshy_image_to_3d": "图生3D",
-    "meshy_text_to_image": "文生图", "meshy_image_to_image": "图生图",
-    "meshy_retexture": "重打材质", "meshy_remesh": "重拓扑",
-    "meshy_concept_to_3d": "概念图转3D",
-    "meshy_rig": "自动绑定", "meshy_animate": "套动作",
-}
-
-# Meshy 网页快捷入口。均为公开、面向用户的页面 URL（不含任何内部地址/机密）。
-# QML 只传 key（home/workspace/apikey/pricing/docs），URL 集中在此一处便于维护。
-_MESHY_UTM = "utm_source=houdini-agent&utm_medium=plugin"
-_MESHY_URLS = {
-    "home":      "https://www.meshy.ai",
-    "workspace": "https://www.meshy.ai/workspace",
-    "apikey":    "https://www.meshy.ai/settings/api",
-    "pricing":   "https://www.meshy.ai/pricing",
-    "docs":      "https://docs.meshy.ai",
-}
-
-# QML UI strings — Chinese -> English (used by Controller.tr when lang == 'en')
-UI_EN = {
-    "描述你想在场景里做的事…  (Enter 发送)": "Describe what to build in the scene…  (Enter to send)",
-    "问一个关于场景的问题…  (只读模式)": "Ask about the scene…  (read-only)",
-    "描述目标，先生成可确认的执行计划…": "Describe the goal — a plan will be proposed for approval…",
-    "驳回": "Reject", "确认执行": "Confirm", "取消": "Cancel", "提交": "Submit",
-    "执行前确认": "Confirm before run", "已确认": "Confirmed", "已取消": "Cancelled",
-    "已回答": "Answered", "需要你的确认": "Your input needed",
-    "计划已确认 · 开始执行": "Plan confirmed · executing", "计划已驳回": "Plan rejected",
-    "导出对话": "Export chat", "缓存位置": "Cache location", "检查更新": "Check update",
-    "Meshy 资产库": "Meshy Library", "刷新": "Refresh", "加载更多": "Load more",
-    "导入": "Import", "在 Meshy 打开": "Open in Meshy", "已过期": "Expired",
-    # Meshy 网页快捷入口
-    "工作台": "Workspace", "充值": "Top up",
-    "打开 Meshy 官网": "Open Meshy.ai", "我的工作台": "My Workspace",
-    "充值 / 定价": "Top up / Pricing", "API Key 设置": "API Key settings",
-    "API 文档": "API docs", "无法打开链接：": "Couldn't open link: ",
-    "+ 生成": "+ Generate", "+ 用 Meshy 生成": "+ Generate with Meshy",
-    "用 Meshy 生成一个 ": "Generate with Meshy: ", "去 Meshy 工作台": "Open Meshy Workspace",
-    "在 Meshy 网页管理全部资产 →": "Manage all assets on Meshy →", "Meshy 定价": "Pricing",
-    "登录 Meshy 同步你的资产": "Sign in to Meshy to sync your assets",
-    "模型": "Model", "Nano Banana（默认 · 快）": "Nano Banana (default · fast)",
-    "Nano Banana Pro（高质量）": "Nano Banana Pro (high quality)",
-    # 生图模型设置（Meshy / Codex 订阅）
-    "图片生成": "Image generation",
-    "默认生图模型": "Default image model",
-    "选择文生图、图生图与概念图默认使用的生图后端。登录 ChatGPT 订阅后可直接使用 Codex 生图模型，无需 Meshy API Key。":
-        "Choose the default backend for text-to-image, image-to-image, and concept art. "
-        "Sign in to your ChatGPT plan to use Codex image models without a Meshy API key.",
-    "同步模型": "Sync models",
-    "同步中…": "Syncing…",
-    "自动同步自本机 ChatGPT 订阅（Codex）": "Auto-synced from your local ChatGPT plan (Codex)",
-    "登录 ChatGPT 订阅后，即可自动同步并使用 Codex 生图模型（如 gpt-image-*）。":
-        "Sign in to your ChatGPT plan to automatically sync and use Codex image models (e.g. gpt-image-*).",
-    "登录 ChatGPT 订阅": "Sign in to ChatGPT plan",
-    "Codex 生图模型已更新": "Codex image models updated",
-    "同步 Codex 生图模型失败：": "Failed to sync Codex image models: ",
-    "请先登录 ChatGPT 订阅后再选择 Codex 生图模型": "Sign in to your ChatGPT plan before choosing a Codex image model",
-    # 多 Houdini 实例管理
-    "刷新实例列表": "Refresh Houdini instances",
-    "启动另一个 Houdini…": "Launch another Houdini…",
-    "未连接 Houdini": "No Houdini connected",
-    "没有已连接的 Houdini 实例": "No connected Houdini instances",
-    "已切换到 ": "Switched to ",
-    # 规则编辑器
-    "新建": "New", "未命名": "Untitled", "打开规则目录": "Open rules folder",
-    "还没有规则": "No rules yet",
-    "规则会注入到每次对话、长期生效。点左上角「新建」创建第一条。":
-        "Rules are injected into every chat and persist. Click New (top-left) to create your first.",
-    "启用": "Enabled", "停用": "Disabled",
-    "文件规则 · 只读": "File rule · read-only", "有未保存修改": "Unsaved changes", "UI 规则": "UI rule",
-    "写下这条规则的内容…": "Write the rule content…",
-    "当前规则有未保存修改，请先提交或取消": "This rule has unsaved changes — submit or cancel first",
-    "已缓存": "Cached", "暂无资产": "No assets yet", "加载中…": "Loading…",
-    "请先配置 Meshy API Key": "Set a Meshy API Key first",
-    "未配置 Meshy API Key": "No Meshy API Key configured",
-    "Meshy 集成不可用": "Meshy integration unavailable",
-    "资产库加载失败": "Failed to load library", "没有更多了": "No more items",
-    "正在导入": "Importing", "已导入": "Imported", "找不到该资产": "Asset not found",
-    "导入失败": "Import failed", "未获得 glb（云端链接可能已过期）": "No glb (cloud link may have expired)",
-    "云端 · 可导入": "Cloud · importable", "云资产 · 直接拉到 Houdini": "Cloud assets · pull into Houdini",
-    "已连接": "Connected", "未连接": "Not connected", "余额": "Balance",
-    "登录 / 配置 Key": "Sign in / set key", "切换账号": "Switch account", "退出": "Sign out",
-    "登录 Meshy 同步你的资产与额度": "Sign in to Meshy to sync your assets & credits",
-    "Meshy 账号校验失败": "Meshy account check failed", "已退出 Meshy 账号": "Signed out of Meshy",
-    "已连接 Meshy 账号。": "Connected to Meshy.", "保存 Meshy Key 失败": "Failed to save Meshy key",
-    "下载中…": "Downloading…", "导入中…": "Importing…",
-    "提示词（重生留空=沿用原词；二次编辑必填改动）": "Prompt (regenerate: blank=keep; edit: required)",
-    "描述想要的改动…": "Describe the change you want…",
-    "二次编辑选中图": "Edit selected (img2img)", "请先选中要编辑的图片": "Select an image to edit first",
-    "请先在上方填写想要的改动": "Type the change above first",
-    # 概念图/图片画廊（旧+新）
-    "资产库": "Library", "概念图": "Concepts", "已选": "selected", "生成中…": "Generating…",
-    "完成": "Done", "确认": "Confirm", "换提示词重新生成": "Regenerate (new prompt)",
-    "生成选中的 3D": "Make 3D from selected", "选中的做成 3D": "Selected → 3D",
-    "请先选择至少一张概念图": "Select at least one image first", "重载": "Reload",
-    # 自定义 Provider · 图片输入开关
-    "图片输入": "Image input", "支持": "Supported", "不支持": "Not supported",
-    # 后台任务
-    "转入后台": "Run in background", "已转入后台，完成后自动通知": "Moved to background; you'll be notified when done",
-    "后台任务完成": "Background task done", "耗时较久？可转后台，完成后自动通知": "Taking a while? Run in background — auto-notified when done",
-    "耗时较久？可转后台": "Taking a while? Run in background", "已转入后台，生成完成后把结果发给 Agent…": "Moved to background; results will be sent to the agent when ready…",
-    "字号 +": "Font +", "字号 −": "Font −", "规则编辑器": "Rules editor",
-    "插件管理": "Plugins", "记忆管理": "Memory manager", "长期记忆": "Long-term memory",
-    "实时 Cook": "Realtime cook", "语言：中文": "Language: 中文",
-    "语言：English": "Language: English", "清空对话": "Clear chat", "新对话": "New chat",
-    "Token 分析": "Token analytics", "Token 用量": "Token usage",
-    " 个操作待确认": " ops pending", "全部撤销": "Undo all", "全部保留": "Keep all",
-    "选择图片": "Choose image", "自定义 Provider…": "Custom provider…",
-    "压缩上下文": "Compress context", "已压缩上下文": "Context compressed",
-    "新建会话": "New session", "字号…": "Font size…", "字号": "Font size",
-    "重置": "Reset", "关闭": "Close", "稍后": "Later", "立即更新": "Update now",
-    "立即重启": "Restart now", "立即重启更新": "Restart to update",
-    "后台自动静默更新": "Silent background updates",
-    "在后台静默下载并校验新版本，重启或重新打开应用即可自动生效，无需等待下载或安装向导。":
-        "Download and verify new versions quietly in the background. Restart or reopen the app to apply instantly with no installer wizard.",
-    "ChatGPT 订阅": "ChatGPT plan", "订阅登录": "Sign in", "浏览器登录": "Sign in with browser",
-    "设备码登录": "Sign in with code", "退出登录": "Sign out", "取消登录": "Cancel sign-in",
-    "刷新模型": "Refresh models", "复制": "Copy",
-    "模型列表已更新": "Model list updated",
-    "模型列表刷新失败，已沿用本地列表": "Failed to refresh models; using the local list",
-    "刷新中…": "Refreshing…", "模型更新于": "Models updated at", "尚未自动刷新": "Not refreshed yet",
-    "推理": "Effort", "低": "Low", "中": "Medium", "高": "High", "很高": "Very high",
-    "最高": "Max", "极限": "Ultra", "默认": "default", "未登录": "signed out",
-    "登录 ChatGPT 订阅…": "Sign in to ChatGPT plan…", "账号：": "Account: ",
-    "请先登录 ChatGPT 订阅": "Sign in to your ChatGPT plan first",
-    "登录后即可使用订阅额度，无需 API key。": "Sign in to use your plan's allowance. No API key needed.",
-    "Claude 订阅": "Claude plan", "登录 Claude 订阅…": "Sign in to Claude plan…",
-    "请先登录 Claude 订阅": "Sign in to your Claude plan first",
-    "退出 Claude 订阅登录？": "Sign out of Claude plan?",
-    "Google 反重力": "Google Antigravity", "登录 Google 反重力…": "Sign in to Google Antigravity…",
-    "请先登录 Google 反重力": "Sign in to Google Antigravity first",
-    "退出 Google 反重力登录？": "Sign out of Google Antigravity?",
-    "Google 账号": "Google account",
-    "已在浏览器打开登录页，登录并授权后会自动完成。": "The sign-in page is open in your browser. Sign in and authorize to finish.",
-    "本机端口被占用，请关闭占用它的程序后重试：": "A local port is in use. Close the program using it and retry: ",
-    "将删除这台电脑上保存的登录凭据：": "This removes the sign-in credentials saved on this computer: ",
-    "Anthropic 不允许第三方工具使用 Claude 订阅，账号可能被限制，风险自负。":
-        "Anthropic does not allow third-party tools to use Claude plans. Your account may be restricted; use at your own risk.",
-    "订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；如果一直这样，退出登录后重新登录。":
-        "The subscription account is temporarily unavailable, usually because the quota is used up or rate-limited. "
-        "Try again in a few minutes; if it persists, sign out and sign in again.",
-    "上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。":
-        "The upstream connection closed before any output, usually a temporary service hiccup. Just send again.",
-    "用 ChatGPT Plus / Pro 订阅里的 Codex 额度驱动 Houdini Agent，不需要 API key。登录由本机运行的开源组件 CLIProxyAPI 完成，凭据只保存在这台电脑上。":
-        "Use the Codex allowance in your ChatGPT Plus / Pro plan to power Houdini Agent, no API key needed. "
-        "Sign-in is handled by CLIProxyAPI, an open-source component running on this computer; credentials stay on it.",
-    "组件": "Component", "账号": "Account", "已安装": "installed", "ChatGPT 账号": "ChatGPT account",
-    "未安装（首次登录时自动下载，约 24 MB）": "Not installed (downloaded on first sign-in, about 24 MB)",
-    "打开页面": "Open page", "浏览器没有打开？": "Browser didn't open?", "复制登录链接": "Copy sign-in link",
-    "再次打开": "Open again", "再登录一个账号": "Add another account",
-    "用量计入你的 ChatGPT 订阅额度。OpenAI 目前允许在第三方工具里使用订阅，但这不是合同条款，政策可能变化。":
-        "Usage counts against your ChatGPT plan. OpenAI currently allows plans in third-party tools, "
-        "but this is not a contractual term and may change.",
-    "正在下载订阅组件…": "Downloading the subscription component…",
-    "已在浏览器打开 OpenAI 登录页，登录并授权后会自动完成。":
-        "The OpenAI sign-in page is open in your browser. Sign in and authorize to finish.",
-    "在浏览器打开的页面里输入下面的验证码，授权后会自动完成。":
-        "Enter the code below on the page opened in your browser. It finishes once you authorize.",
-    "正在准备订阅组件…": "Preparing the subscription component…", "正在发起登录…": "Starting sign-in…",
-    "登录成功，正在启动本机订阅服务…": "Signed in, starting the local subscription service…",
-    "已退出登录": "Signed out", "可用模型：": "Available models: ", "刷新模型失败：": "Failed to refresh models: ",
-    "已登录 ": "Signed in as ", "已登录": "Signed in", "已取消登录": "Sign-in cancelled",
-    "登录超时（15 分钟内未完成授权）": "Sign-in timed out (not authorized within 15 minutes)",
-    "本机 1455 端口被占用（可能有 Codex 正在登录），请关闭后重试，或改用设备码登录":
-        "Local port 1455 is in use (maybe another Codex sign-in). Close it and retry, or sign in with a code.",
-    "登录没有完成": "Sign-in did not complete", "出错了：": "Error: ",
-    "退出 ChatGPT 订阅登录？": "Sign out of ChatGPT plan?",
-    "将删除这台电脑上保存的 ChatGPT 订阅登录凭据：": "This removes the ChatGPT plan credentials saved on this computer: ",
-    "OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。":
-        "Your OpenAI account is not affected. To fully revoke access, remove Codex in ChatGPT's security settings on the web.",
-    "请求次数": "Requests", "输入 token": "Input tokens", "输出 token": "Output tokens",
-    "推理 token": "Reasoning tokens", "缓存命中": "Cache read", "缓存写入": "Cache write",
-    "总计": "Total", "平均/请求": "Avg/request", "上下文": "Context",
-    "Token 结构": "Token mix", "缓存效率": "Cache efficiency", "本轮统计": "Session stats",
-    "开": "On", "关": "Off",
-    "（可多选）": "(multi-select)", "已复制": "Copied",
-    "删除": "Delete", "打开插件目录": "Open plugins folder",
-    # 设置浮窗 + 会话管理（方案A）
-    "设置…": "Settings…", "设置": "Settings", "常规": "General", "扩展": "Extensions",
-    "外观与字号": "Appearance & font", "会话": "Sessions", "模型与 Provider": "Model & Provider",
-    "规则": "Rules", "插件": "Plugins", "记忆": "Memory", "关于": "About",
-    "搜索会话…": "Search sessions…", "没有匹配的会话": "No matching sessions",
-    "删除会话": "Delete session", "此操作无法撤销。": "This can't be undone.",
-    "确定删除会话": "Delete session", "吗？": "?",
-    "以后删除不再询问（可在 设置 › 会话 中恢复）":
-        "Don't ask again (re-enable in Settings › Sessions)",
-    "删除会话前需确认": "Confirm before deleting a session",
-    "关闭后删除会话不再弹确认框。在删除弹窗里勾选「不再询问」会自动关掉这里——随时可重新打开。":
-        "When off, deleting a session won't prompt. Ticking \"don't ask again\" turns this off — re-enable anytime.",
-    "每步操作需批准（确认模式）": "Approve each step (confirm mode)",
-    "执行会修改场景或计费的工具前逐个弹确认卡。":
-        "Prompt before each tool that changes the scene or spends credits.",
-    "界面字号": "Interface font size",
-    "调整整个面板的字号缩放。": "Scale the whole panel's font size.",
-    "当前 Provider": "Current provider", "管理…": "Manage…", "查看余额": "Balance",
-    "Meshy 账号": "Meshy account", "版本": "Version", "流式输出自动滚动": "Auto-scroll while streaming",
-    "把现有面板嵌进这里。": "The existing panel will be embedded here.",
-    "打开": "Open", "会话管理": "Sessions",
-    "行为": "Behavior", "显示思考过程": "Show thinking",
-    "在回答里显示模型的思考过程（<think> 内容）。": "Show the model's reasoning (<think>) in replies.",
-    "执行修改场景的工具后实时重算（cook）。关闭可在批量操作时提速。":
-        "Cook the scene live after scene-changing tools. Turn off to speed up batch ops.",
-    "让助手跨会话记住你的偏好与项目信息。可在「记忆」分区查看与删除。":
-        "Let the assistant remember your preferences and project info across chats. View & delete in the Memory section.",
-    # 内嵌的规则/插件/记忆面板里用到的文案
-    "编辑": "Edit", "浏览": "Browse", "选择用户脚本目录": "Choose user script folder",
-    "用户脚本目录未设置，仅使用内置脚本": "No user script folder set — built-in scripts only",
-    "插件设置": "Plugin settings", "这个插件没有可配置项": "This plugin has no configurable options",
-    # 多供应商管理（模型设置）
-    "管理自定义模型供应商，配置后可在聊天时选择使用。":
-        "Manage custom model providers; once configured they can be picked in chat.",
-    "内置供应商": "Built-in providers", "自定义供应商": "Custom providers",
-    "添加供应商": "Add provider", "添加模型供应商": "Add model provider",
-    "配置一个自定义 API 端点和它的模型。": "Configure a custom API endpoint and its models.",
-    "名称": "Name", "API 格式": "API format", "模型列表": "Models",
-    "添加模型": "Add model", "上下文窗口": "Context window", "图片": "Vision",
-    "使用": "Use", "当前": "Active", "保存": "Save", "模型名": "Model name",
-    "还没有自定义供应商": "No custom providers yet",
-    "请填写名称": "Please enter a name", "请填写有效的 Base URL": "Enter a valid Base URL",
-    "请至少添加一个模型": "Add at least one model", "无效数据": "Invalid data", "已保存": "Saved",
-    # 外观系统
-    "主题": "Theme", "强调色": "Accent", "字体方案": "Typeface", "界面密度": "Density",
-    "深色三档，外加日光（浅色）。选日光会整体翻成浅色，强调色自动加深保证可读。":
-        "Three dark tones plus Daylight (light). Daylight flips everything light and darkens the accent so it stays readable.",
-    "选中态、指示点、用户气泡与按钮描边的颜色。":
-        "Color for selection, dots, your message bubble and button outlines.",
-    "标题 / 正文 / 等宽三件套的整体气质。": "The display / body / mono pairing for the whole UI.",
-    "间距与行高的松紧，不改字号。": "How tight the spacing and line height feel — font size unchanged.",
-    "极夜": "Noir", "石墨": "Graphite", "午夜蓝": "Midnight", "日光": "Daylight",
-    "暖米": "Warm", "冷钢": "Steel", "青瓷": "Celadon", "暖砂": "Clay", "中性": "Neutral",
-    "编辑体": "Editorial", "现代": "Modern", "等宽": "Mono",
-    "紧凑": "Compact", "标准": "Standard", "宽松": "Roomy",
-    # 起手式 / 模板库
-    "起手式": "Starters", "先出一个模型，再接着做。": "Start with a model, then build on it.",
-    "点下面的起手式填进输入框，参数改完直接发；也可以不用，自己输入。":
-        "Tap a starter to drop it in the input, tweak the blanks, and send — or just type your own.",
-    "Meshy · 3D 生成": "Meshy · 3D generation",
-    "从文字、图片或概念图生成，直接进场景": "From text, an image or a concept — straight into the scene",
-    "Houdini 程序化": "Houdini procedural", "有了模型，用 Houdini 接着做": "Got a model? Build on it in Houdini",
-    "有了模型，还能：": "With a model, you can also: ", "都在": "all in", "模板库里": "the library",
-    "浏览全部模板": "Browse all templates", "模板库": "Templates", "返回对话": "Back to chat",
-    "新建模板": "New template", "插入": "Insert", "我的模板": "My templates",
-    "内容": "Content", "分类": "Category",
-    "想留个能改的空，就写 {{名称:默认值}}，插入时点一下就能改。":
-        "Leave an editable blank with {{name:default}} — you can change it after inserting.",
-    "比如：生成一个 {{物体:宝箱}}，{{风格:写实}}风格，导进场景。":
-        "e.g. Generate a {{object:chest}}, {{style:realistic}} style, into the scene.",
-    "例如：我的破碎参数": "e.g. My fracture settings", "例如：建模": "e.g. Modeling",
-    "请填写模板内容": "Please add some content", "未命名模板": "Untitled template",
-    "内容格式有误": "Malformed payload", "还没有模板，点右上「新建模板」。": "No templates yet — use New template.",
-}
-
-
-class ChatModel(QAbstractListModel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._items = []
-
-    def rowCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self._items)
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < len(self._items)):
-            return None
-        it = self._items[index.row()]
-        if role == ROLE_TYPE:
-            return it.get("type", "ai")
-        if role == ROLE_PAYLOAD:
-            return it.get("payload", {})
-        return None
-
-    def roleNames(self):
-        return {ROLE_TYPE: b"rtype", ROLE_PAYLOAD: b"payload"}
-
-    def append(self, item):
-        row = len(self._items)
-        self.beginInsertRows(QModelIndex(), row, row)
-        self._items.append(item)
-        self.endInsertRows()
-        return row
-
-    def update_payload(self, row, payload):
-        if 0 <= row < len(self._items):
-            self._items[row]["payload"] = payload
-            idx = self.index(row, 0)
-            self.dataChanged.emit(idx, idx, [ROLE_PAYLOAD])
-
-    def load(self, items):
-        self.beginResetModel(); self._items = list(items); self.endResetModel()
-
-    def clear(self):
-        self.beginResetModel(); self._items = []; self.endResetModel()
-
-    def items_copy(self):
-        return copy.deepcopy(self._items)
-
-
-ROLE_BLOCK = Qt.UserRole + 1
-
-
-def _block_fp(v):
-    """Structural fingerprint of a block: containers are copied, leaves are shared.
-    Blocks are mutated in place (e.g. exec["tools"][i]["state"] = "ok"), so object
-    identity alone can't tell what changed; comparing fingerprints with == can
-    (leaf compare short-circuits on identity, so unchanged strings cost nothing)."""
-    if isinstance(v, dict):
-        return {k: _block_fp(x) for k, x in v.items()}
-    if isinstance(v, list):
-        return [_block_fp(x) for x in v]
-    return v
-
-
-class BlockModel(QAbstractListModel):
-    """Per-AI-message model of block dicts. Lives for the lifetime of the message
-    so QML's Repeater never recreates all delegates — only changed/added/removed
-    rows update (sync() applies the minimal diff against a working list)."""
-
-    def __init__(self, blocks=None, parent=None):
-        super().__init__(parent)
-        self._b = list(blocks) if blocks else []
-        self._fps = [_block_fp(b) for b in self._b]
-
-    def rowCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self._b)
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < len(self._b)):
-            return None
-        if role == ROLE_BLOCK:
-            return self._b[index.row()]
-        return None
-
-    def roleNames(self):
-        return {ROLE_BLOCK: b"block"}
-
-    def to_list(self):
-        return copy.deepcopy(self._b)
-
-    def sync(self, new):
-        """Reconcile to `new` (working list) with minimal model ops.
-        Common prefix (same dict identity) → dataChanged only for rows whose content
-        actually changed (fingerprint diff) — re-pushing unchanged rows makes QML
-        re-set and re-layout every block of the message on each streaming tick;
-        differing suffix → remove old tail + insert new tail."""
-        old = self._b
-        p = 0
-        while p < len(old) and p < len(new) and old[p] is new[p]:
-            p += 1
-        if len(old) > p:
-            self.beginRemoveRows(QModelIndex(), p, len(old) - 1)
-            del self._b[p:]
-            del self._fps[p:]
-            self.endRemoveRows()
-        if len(new) > p:
-            self.beginInsertRows(QModelIndex(), p, len(new) - 1)
-            tail = list(new[p:])
-            self._b.extend(tail)
-            self._fps.extend(_block_fp(b) for b in tail)
-            self.endInsertRows()
-        start = None
-        for i in range(p):
-            fp = _block_fp(self._b[i])
-            if fp != self._fps[i]:
-                self._fps[i] = fp
-                if start is None:
-                    start = i
-            elif start is not None:
-                self.dataChanged.emit(self.index(start, 0), self.index(i - 1, 0), [ROLE_BLOCK])
-                start = None
-        if start is not None:
-            self.dataChanged.emit(self.index(start, 0), self.index(p - 1, 0), [ROLE_BLOCK])
-
-
-def wrap_ai_rows(rows):
-    """Wrap any AI row's plain block list into a BlockModel (for mock/preview)."""
-    for it in rows:
-        if it.get("type") == "ai":
-            pay = it.get("payload", {}) or {}
-            if "bm" not in pay:
-                it["payload"] = {"bm": BlockModel(pay.get("blocks", []))}
-    return rows
-
-
-def _esc(s):
-    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _to_html(text):
-    """minimal: escape + newlines + **bold** + `code` (markdown rendering is a TODO)."""
-    import re as _re
-    h = _esc(text)
-    h = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", h)
-    h = _re.sub(r"`([^`]+)`", r"<span style='font-family:monospace;color:#d4a373'>\1</span>", h)
-    return h.replace("\n", "<br>")
-
-
-# ============================================================
-# 起手式 / 模板库 内置模板（中英两份；{{名称:默认值}} 为可改填空格）
-#   scratch=True  : 空会话可直接用（从零生成）
-#   scratch=False : 需场景里已有模型（后处理），只进模板库不上空会话
-# 能力边界：只放 Agent 能可靠执行的（无模拟缓存 / 无渲染——见 memory）。
-# ============================================================
-_TPL_MESHY = [
-    {"sc": True, "ty_zh": "文生 3D", "ty_en": "Text → 3D", "t_zh": "文字出模型", "t_en": "From a prompt",
-     "b_zh": "生成一个 {{物体:中世纪宝箱}}，{{风格:写实}}风格，做好导进场景。",
-     "b_en": "Generate a {{object:medieval chest}}, {{style:realistic}} style, then bring it into the scene."},
-    {"sc": True, "ty_zh": "图生 3D", "ty_en": "Image → 3D", "t_zh": "照参考图建模", "t_en": "From a reference",
-     "note_zh": "记得先贴一张参考图", "note_en": "Attach a reference image first",
-     "b_zh": "照这张参考图做个模型，导进场景。",
-     "b_en": "Build a model from this reference image and bring it into the scene."},
-    {"sc": True, "ty_zh": "概念 → 3D", "ty_en": "Concept → 3D", "t_zh": "先看概念图再选", "t_en": "Concept first, then pick",
-     "b_zh": "先出几张 {{物体:石窟雕像}} 的概念图，我挑一张再转 3D。",
-     "b_en": "Sketch a few concept images of a {{object:grotto statue}}, I'll pick one to turn into 3D."},
-    {"sc": True, "ty_zh": "批量 · 变体", "ty_en": "Batch · variants", "t_zh": "一次出几版挑", "t_en": "A few to choose from",
-     "b_zh": "{{物体:宝箱}} 出 4 个款式，我挑一个导进来。",
-     "b_en": "Make 4 variants of a {{object:chest}} so I can pick one to import."},
-    {"sc": True, "ty_zh": "余额", "ty_en": "Balance", "t_zh": "还够做几个", "t_en": "How much is left",
-     "b_zh": "查下 Meshy 余额，还够生成几个模型？",
-     "b_en": "Check my Meshy balance — how many models can I still generate?"},
-    {"sc": False, "ty_zh": "贴图", "ty_en": "Texture", "t_zh": "重做贴图", "t_en": "Re-texture",
-     "note_zh": "需要场景里已有模型", "note_en": "Needs a model already in the scene",
-     "b_zh": "给选中的模型重做贴图，{{风格:做旧金属}}。",
-     "b_en": "Re-texture the selected model, {{style:weathered metal}}."},
-    {"sc": False, "ty_zh": "重拓扑", "ty_en": "Remesh", "t_zh": "减面 / 转四边", "t_en": "Reduce / to quads",
-     "note_zh": "需要场景里已有模型", "note_en": "Needs a model already in the scene",
-     "b_zh": "把选中模型重拓扑到 {{面数:1万}} 面上下，走四边面。",
-     "b_en": "Remesh the selected model to around {{faces:10k}} faces, quad-dominant."},
-    {"sc": False, "ty_zh": "绑定 · 动画", "ty_en": "Rig · animate", "t_zh": "人形绑骨", "t_en": "Rig a humanoid",
-     "note_zh": "仅限有贴图的双足人形", "note_en": "Textured bipedal humanoids only",
-     "b_zh": "给这个人形绑骨，套一个 {{动作:行走}} 循环。",
-     "b_en": "Rig this humanoid and apply a {{action:walk}} loop."},
-]
-_TPL_HOU = [
-    {"cat_zh": "建模", "cat_en": "Modeling", "t_zh": "程序化楼梯", "t_en": "Procedural stairs",
-     "b_zh": "做一段程序化楼梯，{{台阶:12}} 阶，总高 {{高度:3米}}。",
-     "b_en": "Build a procedural staircase, {{steps:12}} steps, {{height:3m}} tall."},
-    {"cat_zh": "布局", "cat_en": "Layout", "t_zh": "地面散布", "t_en": "Scatter on ground",
-     "b_zh": "地面上撒 {{数量:200}} 个 {{对象:石头}}，旋转和大小都打乱。",
-     "b_en": "Scatter {{count:200}} {{object:rocks}} on the ground, randomize rotation and scale."},
-    {"cat_zh": "布局", "cat_en": "Layout", "t_zh": "复制到点", "t_en": "Copy to points",
-     "b_zh": "把选中的物体复制到 {{行列:10x10}} 网格的点上，带点随机。",
-     "b_en": "Copy the selected object onto a {{grid:10x10}} grid of points, with some randomness."},
-    {"cat_zh": "优化", "cat_en": "Optimize", "t_zh": "减面", "t_en": "Polyreduce",
-     "b_zh": "把选中的几何减面，减到 {{目标:一半}} 左右。",
-     "b_en": "Polyreduce the selected geometry to about {{target:half}}."},
-    {"cat_zh": "灯光", "cat_en": "Lighting", "t_zh": "三点光", "t_en": "Three-point light",
-     "b_zh": "搭一个三点光，主光、补光、轮廓光，都对着原点。",
-     "b_en": "Set up a three-point light rig — key, fill, rim — all aimed at the origin."},
-]
-
-
-class Controller(QObject):
+class Controller(
+    ControllerBridgeMixin,
+    ControllerManagementMixin,
+    ControllerMarkdownMixin,
+    ControllerMeshyMixin,
+    ControllerPlanMixin,
+    ControllerSubscriptionMixin,
+    ControllerUpdaterMixin,
+    QObject,
+):
     providerChanged = Signal()
     modelChanged = Signal()
     effortChanged = Signal()       # 推理强度可选项 / 当前值变化（换供应商、换模型、手动选择）
@@ -588,6 +58,8 @@ class Controller(QObject):
     _sigUpdateDialog = Signal(str, str)   # worker -> main: 检查更新发现新版本（带「立即更新」按钮的对话框）
     _sigSub = Signal(str, str)            # worker -> main: ChatGPT 订阅状态事件 (kind, json)
     _sigModels = Signal(str)              # worker -> main: 模型目录刷新结果 (json -> _on_models_refreshed)
+    _sigOptimizeDone = Signal(str)        # worker -> main: 手动上下文压缩结果 (json -> _on_optimize_done)
+    _sigCompaction = Signal(str)          # worker -> main: 自动上下文压缩提示 (json -> _ui_compaction)
     tokensChanged = Signal()
     pendingOpsChanged = Signal()
     batchResolved = Signal(str)           # "kept"/"reverted" -> resolve all pending node-op rows
@@ -827,6 +299,9 @@ class Controller(QObject):
         self._sigUpdateDialog.connect(self._show_update_dialog)
         self._sigSub.connect(self._on_sub_event)
         self._sigModels.connect(self._on_models_refreshed)
+        self._sigOptimizeDone.connect(self._on_optimize_done)
+        self._sigCompaction.connect(self._ui_compaction)
+        self._optimizing = False
         self._sigCodexImageRefresh.connect(self._on_codex_image_refreshed)
         self._sigInstances.connect(self._on_instances_scanned)
         self.subscriptionChanged.connect(self.imageModelChanged)
@@ -1258,131 +733,6 @@ class Controller(QObject):
     def _get_models_updated_at(self): return self._models_updated_at
     modelsUpdatedAt = Property(str, _get_models_updated_at, notify=modelsChanged)
 
-    def _cached_models_updated_at(self):
-        """从磁盘缓存推断目录更新时间：取各 provider 最近一次 fetched_at 格式化为 "HH:MM"。"""
-        try:
-            cache = catalog.load_cache()
-            latest = None
-            for p in catalog.PROVIDER_SOURCES:
-                fetched = cache.get("providers", {}).get(p, {}).get("fetched_at")
-                if isinstance(fetched, (int, float)) and not isinstance(fetched, bool):
-                    ts = float(fetched)
-                    latest = ts if latest is None else max(latest, ts)
-            if latest is not None:
-                return time.strftime("%H:%M", time.localtime(latest))
-        except Exception:
-            pass
-        return ""
-
-    @Slot()
-    def refreshModels(self):
-        """后台拉取各 provider 的 /v1/models 并更新目录；无参、非阻塞、可重入安全。"""
-        self._start_models_refresh(quiet=False)
-
-    def _start_models_refresh(self, quiet):
-        """启动后台刷新。quiet=True 时（启动自动刷新）不弹 toast。"""
-        if self._models_refreshing:
-            return
-        self._models_refresh_quiet = bool(quiet)
-        self._models_refreshing = True
-        self.modelsRefreshingChanged.emit()
-
-        def work():
-            result = {}
-            sub_synced = False
-            try:
-                result = catalog.refresh_all(timeout=10)
-            except Exception:
-                result = {}
-            # 已登录 ChatGPT / Claude / Google 反重力订阅时同步拉取最新模型（自动升级 CPA 并同步全部订阅模型）
-            try:
-                from houdini_agent.subscription import manager
-                logged_kinds = [k for k in ("codex", "claude", "antigravity") if manager.logged_in(k)]
-                if logged_kinds:
-                    need_sub = (
-                        (not quiet)
-                        or manager.healthy()
-                        or any(manager.models_stale(k) for k in logged_kinds)
-                        or ("codex" in logged_kinds and manager.image_models_stale())
-                    )
-                    if need_sub:
-                        manager.ensure_running(timeout=20)
-                        for k in logged_kinds:
-                            try:
-                                manager.refresh_models(k)
-                                sub_synced = True
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-            if sub_synced:
-                result["_sub_synced"] = True
-            try:
-                self._sigModels.emit(json.dumps(result, ensure_ascii=False))
-            except Exception:
-                pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_models_refreshed(self, payload_json):
-        """主线程：应用后台刷新结果，就地更新 MODEL_MAP / CONTEXT_LIMITS / VISION_MODELS。"""
-        try:
-            result = json.loads(payload_json) if payload_json else {}
-        except Exception:
-            result = {}
-        if not isinstance(result, dict):
-            result = {}
-        sub_synced = bool(result.pop("_sub_synced", False) or result.pop("_codex_synced", False))
-        ok_any = sub_synced
-        try:
-            for p, ids in result.items():
-                if not ids:
-                    continue
-                ok_any = True
-                MODEL_MAP[p] = list(ids)
-                for m in ids:
-                    CONTEXT_LIMITS.setdefault(m, catalog.context_limit(m, p))
-                    if catalog.supports_vision(m, p):
-                        VISION_MODELS.add(m)
-                    else:
-                        VISION_MODELS.discard(m)
-            # 保留当前选择：当前模型被下架时把它 append 到列表末尾，不静默切换用户选择
-            if (self._provider in catalog.PROVIDER_SOURCES
-                    and self._model_name
-                    and self._model_name not in MODEL_MAP.get(self._provider, [])):
-                MODEL_MAP.setdefault(self._provider, []).append(self._model_name)
-            if ok_any:
-                self._models_updated_at = time.strftime("%H:%M")
-        except Exception:
-            pass
-        finally:
-            self._models_refreshing = False
-            self.modelsRefreshingChanged.emit()
-            self.modelsChanged.emit()
-            if sub_synced:
-                self.imageModelChanged.emit()
-                self.providerChanged.emit()
-        if self._models_refresh_quiet:
-            return
-        if ok_any:
-            self.showToast(self.tr("模型列表已更新"))
-        else:
-            self.showToast(self.tr("模型列表刷新失败，已沿用本地列表"))
-
-    def _auto_refresh_models_if_stale(self):
-        try:
-            need = any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES)
-            if not need:
-                from houdini_agent.subscription import manager
-                for k in ("codex", "claude", "antigravity"):
-                    if manager.logged_in(k) and (manager.models_stale(k)
-                                                 or (k == "codex" and manager.image_models_stale())):
-                        need = True
-                        break
-            if need:
-                self._start_models_refresh(quiet=True)
-        except Exception:
-            pass
 
     def _get_scene_path(self): return self._scene_path
     scenePath = Property(str, _get_scene_path, notify=sceneChanged)
@@ -1391,14 +741,7 @@ class Controller(QObject):
     sceneSelection = Property(str, _get_scene_sel, notify=sceneChanged)
 
     # ---- 多 Houdini 实例管理（仅独立 Bridge 模式启用） ----
-    def _is_bridge_mode(self):
-        return getattr(self._session, "bridge", None) is not None
 
-    def _active_houdini_instance(self):
-        for inst in self._houdini_instances:
-            if inst.get("active"):
-                return inst
-        return self._houdini_instances[0] if self._houdini_instances else None
 
     def _get_active_instance_label(self):
         if not self._is_bridge_mode():
@@ -1417,99 +760,6 @@ class Controller(QObject):
         return bool(self._houdini_instances)
     houdiniConnected = Property(bool, _get_houdini_connected_prop, notify=houdiniInstancesChanged)
 
-    def update_houdini_instances(self, instances):
-        """UI 线程：更新多实例列表（由协调器心跳或扫描线程回传）。"""
-        clean = [dict(x) for x in (instances or []) if isinstance(x, dict)]
-        if clean != self._houdini_instances:
-            self._houdini_instances = clean
-            self.houdiniInstancesChanged.emit()
-        active = self._active_houdini_instance()
-        if active:
-            new_path = active.get("path") or self._scene_path
-            new_sel = active.get("selection") or self._scene_sel
-            if new_path != self._scene_path or new_sel != self._scene_sel:
-                self._scene_path = new_path
-                self._scene_sel = new_sel
-                self.sceneChanged.emit()
-
-    @Slot(str)
-    def _on_instances_scanned(self, js):
-        self._scanning_instances = False
-        try:
-            items = json.loads(js) if js else []
-        except Exception:
-            items = []
-        if isinstance(items, list):
-            self.update_houdini_instances(items)
-
-    @Slot()
-    def scanHoudiniInstances(self):
-        """后台异步扫描本机全部在线 Houdini 实例。"""
-        if not self._is_bridge_mode() or self._scanning_instances:
-            return
-        self._scanning_instances = True
-
-        def work():
-            try:
-                from houdini_agent.bridge import doctor
-                items = doctor.discover_all_bridges(include_context=True)
-            except Exception:
-                items = []
-            try:
-                self._sigInstances.emit(json.dumps(items, ensure_ascii=False, default=str))
-            except Exception:
-                pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot(result="QVariantList")
-    def houdiniInstanceItems(self):
-        """ContextBar 实例切换下拉菜单项。"""
-        items = []
-        for inst in self._houdini_instances:
-            lbl = inst.get("label") or ("Houdini :%s" % inst.get("port", ""))
-            # 同名 .hip（如两个 untitled.hip）时附加端口号以便一眼区分
-            same_label = sum(1 for x in self._houdini_instances if x.get("label") == lbl) > 1
-            if same_label:
-                lbl = "%s  (:%s)" % (lbl, inst.get("port", ""))
-            items.append({
-                "label": lbl,
-                "val": str(inst.get("port", "")),
-                "checked": bool(inst.get("active")),
-            })
-        if not items:
-            items.append({"label": self.tr("没有已连接的 Houdini 实例"), "val": "__refresh__", "checked": False})
-        items.append({"sep": True})
-        items.append({"label": self.tr("刷新实例列表"), "val": "__refresh__", "checked": False})
-        items.append({"label": self.tr("启动另一个 Houdini…"), "val": "__launch__", "checked": False})
-        return items
-
-    @Slot(str)
-    def selectHoudiniInstance(self, val):
-        v = str(val or "").strip()
-        if v == "__refresh__":
-            self.scanHoudiniInstances()
-            self.refreshContext()
-            return
-        if v == "__launch__":
-            self.requestLaunchAnotherHoudini.emit()
-            return
-        if not v.isdigit():
-            return
-        port = int(v)
-        try:
-            from houdini_agent.bridge import doctor
-            doctor.adopt_port(port)
-        except Exception:
-            return
-        chosen_lbl = ":%d" % port
-        for inst in self._houdini_instances:
-            inst["active"] = (int(inst.get("port") or 0) == port)
-            if inst["active"]:
-                chosen_lbl = inst.get("label") or chosen_lbl
-        self.houdiniInstancesChanged.emit()
-        self.toast.emit(self.tr("已切换到 ") + chosen_lbl)
-        self.refreshContext()
 
     # ---- menu data for QML ----
     @Slot(result="QVariantList")
@@ -1761,113 +1011,7 @@ class Controller(QObject):
             self.appearanceChanged.emit()
 
     # ---- 起手式 / 模板库 ----
-    def _tpl_config_path(self):
-        try:
-            from shared.common_utils import get_config_dir
-            return os.path.join(str(get_config_dir()), "templates.json")
-        except Exception:
-            return os.path.join(os.path.dirname(__file__), "templates.json")
 
-    def _load_my_templates(self):
-        try:
-            p = self._tpl_config_path()
-            if os.path.exists(p):
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    self._my_templates = [x for x in data
-                                          if isinstance(x, dict) and x.get("body")]
-        except Exception:
-            self._my_templates = []
-
-    def _save_my_templates(self):
-        try:
-            p = self._tpl_config_path()
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(self._my_templates, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _tpl_loc(self, row):
-        """把一条内置模板按当前语言取出（ty/cat/t/body/note）。"""
-        en = self._lang == "en"
-        sfx = "_en" if en else "_zh"
-        def pick(k):
-            return row.get(k + sfx) or row.get(k + "_zh", "")
-        return {"ty": pick("ty"), "cat": pick("cat"), "t": pick("t"),
-                "body": pick("b"), "note": pick("note"), "scratch": bool(row.get("sc"))}
-
-    @Slot(result=str)
-    def starterMeshy(self):
-        """空会话主推：可从零开始的 Meshy 起手式。"""
-        return json.dumps([self._tpl_loc(r) for r in _TPL_MESHY if r.get("sc")],
-                          ensure_ascii=False)
-
-    @Slot(result=str)
-    def starterHou(self):
-        """空会话配角：可靠的 Houdini 程序化起手式。"""
-        return json.dumps([self._tpl_loc(r) for r in _TPL_HOU], ensure_ascii=False)
-
-    @Slot(result=str)
-    def templateLibrary(self):
-        """模板库全量数据：Meshy(全)/Houdini(全)/我的模板。"""
-        meshy = [self._tpl_loc(r) for r in _TPL_MESHY]
-        hou = [self._tpl_loc(r) for r in _TPL_HOU]
-        mine = [{"id": x.get("id", ""), "t": x.get("name", ""), "body": x.get("body", "")}
-                for x in self._my_templates]
-        return json.dumps({"meshy": meshy, "hou": hou, "mine": mine}, ensure_ascii=False)
-
-    def _tpl_plain(self, body):
-        """把 {{名称:默认值}} 渲染成纯文本（取默认值；没默认值就取名称）。"""
-        return re.sub(r"\{\{([^:}]+):?([^}]*)\}\}",
-                      lambda m: (m.group(2) or m.group(1)), str(body or ""))
-
-    @Slot()
-    def openTemplateLibrary(self):
-        self.openTemplates.emit()
-
-    @Slot(str)
-    def insertTemplate(self, body):
-        """把模板填进输入框（占位符取默认值），复用 prefillComposer。"""
-        try:
-            self.prefillComposer.emit(self._tpl_plain(body))
-        except Exception:
-            pass
-
-    @Slot(str, result=str)
-    def saveTemplate(self, payload_json):
-        """新增/更新「我的模板」。payload: {name, body, id?}。返回 {ok, id} 或 {ok:false, error}。"""
-        try:
-            p = json.loads(payload_json or "{}")
-        except Exception:
-            return json.dumps({"ok": False, "error": self.tr("内容格式有误")})
-        name = str(p.get("name", "")).strip()
-        body = str(p.get("body", "")).strip()
-        if not body:
-            return json.dumps({"ok": False, "error": self.tr("请填写模板内容")})
-        if not name:
-            name = self.tr("未命名模板")
-        tid = str(p.get("id", "")).strip() or uuid.uuid4().hex[:8]
-        row = {"id": tid, "name": name, "body": body}
-        for i, x in enumerate(self._my_templates):
-            if x.get("id") == tid:
-                self._my_templates[i] = row
-                break
-        else:
-            self._my_templates.append(row)
-        self._save_my_templates()
-        self.templatesChanged.emit()
-        return json.dumps({"ok": True, "id": tid})
-
-    @Slot(str)
-    def deleteTemplate(self, tid):
-        tid = str(tid or "")
-        n = len(self._my_templates)
-        self._my_templates = [x for x in self._my_templates if x.get("id") != tid]
-        if len(self._my_templates) != n:
-            self._save_my_templates()
-            self.templatesChanged.emit()
 
     # ---- multi-session ----
     def _add_session(self, title=None):
@@ -2053,7 +1197,8 @@ class Controller(QObject):
     @staticmethod
     def _new_token_stats():
         return {"input": 0, "output": 0, "reasoning": 0,
-                "cache_read": 0, "cache_write": 0, "total": 0, "requests": 0}
+                "cache_read": 0, "cache_write": 0, "cache_miss": 0,
+                "total": 0, "requests": 0}
 
     def _bind_usage(self, s, reset=False):
         """让 _token_stats / _ctx_anchor 指向会话 s 自己的用量记录（原地累加，随会话保存）。"""
@@ -2234,21 +1379,131 @@ class Controller(QObject):
         elif action == "custom_cfg":
             self._open_custom_provider()
         elif action == "optimize":
-            if self._session and len(self._session.history) > 24:
-                self._session.history = self._session.history[-24:]
-                self._ctx_anchor = None     # 真实用量对应的是压缩前的 history
-                self._sessions[self._active].setdefault("usage", {}).pop("ctx", None)
-                self._refresh_tokens()
-                self.toast.emit(self.tr("已压缩上下文"))
-            else:
-                self.toast.emit("上下文无需压缩")
+            self._start_optimize_context()
+
+    def _start_optimize_context(self):
+        if self._running:
+            self.toast.emit("正在生成回复，请稍后再压缩上下文")
+            return
+        if self._optimizing:
+            self.toast.emit("正在压缩上下文，请稍候...")
+            return
+        if not self._session or not self._session.history:
+            self.toast.emit("上下文无需压缩")
+            return
+
+        sess_id = self._sessions[self._active]["id"] if self._sessions else ""
+        hist_snapshot = copy.deepcopy(self._session.history)
+        model = self._model_name
+        prov_arg = self._provider
+        if self._is_custom_key(self._provider):
+            self._apply_custom_provider(self._custom_provider(self._provider))
+            prov_arg = "custom"
+        supports_vision = self._current_model_supports_vision()
+        ctx_limit = self._active_model_context()
+        state_ctx = self._active_task_state_summary()
+
+        self._optimizing = True
+        self.toast.emit("正在智能压缩上下文...")
+
+        def work():
+            try:
+                new_hist, stats = self._session.client.compress_history(
+                    hist_snapshot,
+                    context_limit=ctx_limit,
+                    model=model,
+                    provider=prov_arg,
+                    supports_vision=supports_vision,
+                    use_llm=True,
+                    state_context=state_ctx,
+                )
+                payload = {"ok": True, "session_id": sess_id, "history": new_hist, "stats": stats}
+            except Exception as e:
+                payload = {"ok": False, "session_id": sess_id, "error": str(e)}
+            self._sigOptimizeDone.emit(json.dumps(payload, ensure_ascii=False, default=str))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _active_task_state_summary(self):
+        """提取当前活跃的 Plan / Todo 进度摘要，供压缩检查点保活。"""
+        lines = []
+        plan = getattr(self, "_plan_payload", None)
+        if isinstance(plan, dict) and plan.get("steps"):
+            title = str(plan.get("title") or "Current Plan").strip()
+            phase = str(getattr(self, "_plan_phase", "") or "")
+            lines.append(f"Plan: {title}" + (f" (phase: {phase})" if phase else ""))
+            for idx, st in enumerate(plan.get("steps") or [], 1):
+                if not isinstance(st, dict):
+                    continue
+                status = st.get("status") or st.get("state") or "pending"
+                step_title = str(st.get("title") or st.get("text") or st.get("description") or "").strip()
+                if step_title:
+                    lines.append(f"  {idx}. [{status}] {step_title}")
+        todo_blk = getattr(self, "_todo_block", None)
+        if isinstance(todo_blk, dict) and todo_blk.get("items"):
+            lines.append("Todos:")
+            for it in todo_blk.get("items") or []:
+                if not isinstance(it, dict):
+                    continue
+                status = it.get("status") or "pending"
+                text = str(it.get("text") or "").strip()
+                if text:
+                    lines.append(f"  - [{status}] {text}")
+        return "\n".join(lines)
+
+    @Slot(str)
+    def _ui_compaction(self, raw):
+        try:
+            d = json.loads(raw)
+        except Exception:
+            return
+        before_k = self._fmt_k(d.get("before_tokens", 0))
+        after_k = self._fmt_k(d.get("after_tokens", 0))
+        used_llm = bool(d.get("used_llm", False))
+        label = "%s → %s tokens%s" % (before_k, after_k, " · LLM" if used_llm else "")
+        self._blocks.append({
+            "kind": "compaction",
+            "before": before_k,
+            "after": after_k,
+            "used_llm": used_llm,
+            "label": label,
+        })
+        self._flush()
+        self.toast.emit("已自动压缩上下文：%s" % label)
+
+    def _on_optimize_done(self, raw):
+        self._optimizing = False
+        try:
+            data = json.loads(raw)
+        except Exception:
+            self.toast.emit("上下文压缩失败")
+            return
+        if not data.get("ok"):
+            self.toast.emit("压缩失败：%s" % (data.get("error") or "未知错误"))
+            return
+        # 若压缩期间用户切走了会话或发起了新请求，则丢弃过时结果
+        cur_id = self._sessions[self._active]["id"] if self._sessions else ""
+        if self._running or not self._session or data.get("session_id") != cur_id:
+            return
+        stats = data.get("stats") or {}
+        # 将手动压缩的 LLM 摘要 token 计入会话统计
+        u = stats.get("usage")
+        if isinstance(u, dict) and u:
+            self._accumulate_usage({"usage": u, "call_records": []})
+        if not stats.get("compressed"):
+            self.toast.emit(stats.get("reason") or "上下文无需压缩")
+            return
+        self._session.history = data.get("history") or []
+        self._ctx_anchor = None     # 真实用量对应的是压缩前的 history
+        self._sessions[self._active].setdefault("usage", {}).pop("ctx", None)
+        self._refresh_tokens()
+        self._save_all()
+        before_k = self._fmt_k(stats.get("before_tokens", 0))
+        after_k = self._fmt_k(stats.get("after_tokens", 0))
+        mode_tag = "（LLM 摘要）" if stats.get("used_llm") else ""
+        self.toast.emit("已压缩上下文%s：%s → %s tokens" % (mode_tag, before_k, after_k))
 
     # ---- overflow helpers ----
-    def _show_update_dialog(self, title, text):
-        try:
-            self.openUpdateDialog.emit(self.tr(title), str(text)[:3000])
-        except Exception as e:
-            print("[controller] update dialog:", title, text, e)
 
     def _info(self, title, text):
         try:
@@ -2274,299 +1529,6 @@ class Controller(QObject):
     def cancelDialogConfirm(self, token):
         self._confirm_actions.pop(token, None)
 
-    @Slot(result="QVariantList")
-    def rulesItems(self):
-        try:
-            from houdini_agent.utils.rules_manager import get_all_rules
-            out = []
-            for r in get_all_rules(force_reload=True):
-                src = r.get("source", "ui")
-                out.append({
-                    "id": r.get("id", ""),
-                    "title": r.get("title", "") or self.tr("未命名"),
-                    "content": r.get("content", ""),
-                    "enabled": bool(r.get("enabled", True)),
-                    "source": src,
-                    "readonly": src == "file",
-                    "path": r.get("file_path", ""),
-                })
-            return out
-        except Exception as e:
-            return [{"id": "", "title": "Load failed", "content": str(e), "enabled": False,
-                     "source": "error", "readonly": True, "path": ""}]
-
-    @Slot(result="QVariantMap")
-    def addRule(self):
-        try:
-            from houdini_agent.utils.rules_manager import add_rule
-            r = add_rule(self.tr("未命名"), "")
-            return {"id": r.get("id", ""), "ok": True}
-        except Exception as e:
-            self._info("规则编辑器", "新增失败：%s" % e)
-            return {"id": "", "ok": False}
-
-    @Slot(str, str, str, bool, result=bool)
-    def saveRule(self, rule_id, title, content, enabled):
-        try:
-            from houdini_agent.utils.rules_manager import update_rule
-            if not rule_id.startswith("file:"):
-                update_rule(rule_id, title=title, content=content, enabled=bool(enabled))
-                self.toast.emit("规则已保存")
-                self.managementChanged.emit()
-                return True
-        except Exception as e:
-            self._info("规则编辑器", "保存失败：%s" % e)
-        return False
-
-    @Slot(str)
-    def deleteRule(self, rule_id):
-        if not rule_id:
-            return
-        self._request_confirm("删除规则", "确定要删除这条规则吗？", lambda rid=rule_id: self._delete_rule_now(rid))
-
-    def _delete_rule_now(self, rule_id):
-        try:
-            from houdini_agent.utils.rules_manager import delete_rule
-            if not rule_id.startswith("file:"):
-                delete_rule(rule_id)
-                self.toast.emit("规则已删除")
-                self.managementChanged.emit()
-        except Exception as e:
-            self._info("规则编辑器", "删除失败：%s" % e)
-
-    @Slot()
-    def openRulesFolder(self):
-        try:
-            from houdini_agent.utils.rules_manager import get_rules_dir, ensure_rules_dir
-            ensure_rules_dir()
-            self._open_path(str(get_rules_dir()))
-        except Exception as e:
-            self._info("规则编辑器", "打开目录失败：%s" % e)
-
-    @staticmethod
-    def _open_path(path):
-        import os
-        import subprocess
-        import sys as _sys
-        if _sys.platform == "win32":
-            os.startfile(path)
-        elif _sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-
-    @Slot(result="QVariantList")
-    def pluginItems(self):
-        try:
-            from houdini_agent.utils.hooks import list_plugins
-            return [{
-                "name": p.get("name", ""),
-                "version": p.get("version", ""),
-                "author": p.get("author", ""),
-                "description": p.get("description", ""),
-                "enabled": bool(p.get("_enabled", False)),
-                "settings": bool(p.get("settings")),
-            } for p in list_plugins()]
-        except Exception as e:
-            return [{"name": "Load failed", "version": "", "author": "",
-                     "description": str(e), "enabled": False, "settings": False}]
-
-    @Slot(str, result="QVariantList")
-    def pluginSettings(self, name):
-        try:
-            from houdini_agent.utils.hooks import list_plugins, get_plugin_setting
-            for p in list_plugins():
-                if p.get("name") != name:
-                    continue
-                out = []
-                for item in (p.get("settings") or []):
-                    key = item.get("key", "")
-                    if not key:
-                        continue
-                    default = item.get("default")
-                    out.append({
-                        "key": key,
-                        "label": item.get("label", key),
-                        "type": item.get("type", "string"),
-                        "value": get_plugin_setting(name, key, default),
-                        "default": default,
-                        "options": item.get("options") or [],
-                    })
-                return out
-        except Exception as e:
-            self._info("插件设置", "加载失败：%s" % e)
-        return []
-
-    @Slot(str, str)
-    def savePluginSettings(self, name, settings_json):
-        try:
-            from houdini_agent.utils.hooks import set_plugin_setting
-            settings = json.loads(settings_json or "[]")
-            for item in settings:
-                key = item.get("key")
-                if not key:
-                    continue
-                value = item.get("value")
-                if item.get("type") == "bool":
-                    value = bool(value)
-                set_plugin_setting(name, key, value)
-            self.toast.emit("插件设置已保存")
-        except Exception as e:
-            self._info("插件设置", "保存失败：%s" % e)
-
-    @Slot(str, bool)
-    def setPluginEnabled(self, name, enabled):
-        try:
-            from houdini_agent.utils.hooks import enable_plugin, disable_plugin
-            (enable_plugin if enabled else disable_plugin)(name)
-            self.toast.emit(("已启用 " if enabled else "已禁用 ") + name)
-        except Exception as e:
-            self._info("插件管理", "切换失败：%s" % e)
-
-    @Slot(str)
-    def reloadPlugin(self, name):
-        try:
-            from houdini_agent.utils.hooks import reload_plugin
-            reload_plugin(name)
-            self.toast.emit("已重载 " + name)
-        except Exception as e:
-            self._info("插件管理", "重载失败：%s" % e)
-
-    @Slot()
-    def reloadAllPlugins(self):
-        try:
-            from houdini_agent.utils.hooks import reload_all_plugins
-            reload_all_plugins()
-            self.toast.emit("已重载全部插件")
-        except Exception as e:
-            self._info("插件管理", "重载失败：%s" % e)
-
-    @Slot()
-    def openPluginsFolder(self):
-        try:
-            from houdini_agent.utils.hooks import get_plugins_dir
-            p = get_plugins_dir()
-            p.mkdir(parents=True, exist_ok=True)
-            self._open_path(str(p))
-        except Exception as e:
-            self._info("插件管理", "打开目录失败：%s" % e)
-
-    @Slot(result="QVariantList")
-    def toolItems(self):
-        try:
-            from houdini_agent.utils.tool_registry import get_tool_registry
-            return get_tool_registry().list_all()
-        except Exception as e:
-            return [{"name": "Load failed", "description": str(e), "source": "error",
-                     "enabled": False, "modes": [], "tags": []}]
-
-    @Slot(str, bool)
-    def setToolEnabled(self, name, enabled):
-        try:
-            from houdini_agent.utils.tool_registry import get_tool_registry
-            reg = get_tool_registry()
-            reg.set_enabled(name, bool(enabled))
-            reg.save_disabled_to_config()
-        except Exception as e:
-            self._info("插件管理", "工具切换失败：%s" % e)
-
-    @Slot(result="QVariantList")
-    def skillItems(self):
-        try:
-            from houdini_agent.skills import list_skills
-            return list_skills()
-        except Exception as e:
-            return [{"name": "Load failed", "description": str(e), "parameters": {}}]
-
-    @Slot(result=str)
-    def userSkillDir(self):
-        try:
-            from houdini_agent.skills import _get_user_skill_dir
-            p = _get_user_skill_dir()
-            return str(p) if p else ""
-        except Exception:
-            return ""
-
-    @Slot(str)
-    def setUserSkillDir(self, path):
-        try:
-            if path.startswith("file:///"):
-                path = path[8:] if os.name == "nt" else path[7:]
-            elif path.startswith("file://"):
-                path = path[7:]
-            import configparser
-            config_dir = Path(__file__).resolve().parents[2] / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            ini_path = config_dir / "houdini_ai.ini"
-            cfg = configparser.ConfigParser()
-            if ini_path.exists():
-                cfg.read(str(ini_path), encoding="utf-8")
-            if not cfg.has_section("skills"):
-                cfg.add_section("skills")
-            cfg.set("skills", "user_skill_dir", path)
-            with open(ini_path, "w", encoding="utf-8") as f:
-                cfg.write(f)
-            try:
-                from houdini_agent.skills import reload_skills
-                reload_skills()
-            except Exception:
-                pass
-            self.toast.emit("用户脚本目录已设置")
-        except Exception as e:
-            self._info("插件管理", "设置脚本目录失败：%s" % e)
-
-    @Slot(result="QVariantMap")
-    def memoryStats(self):
-        try:
-            from houdini_agent.utils.memory_store import get_memory_store
-            s = get_memory_store()
-            return {"episodic": s.count_episodic(), "semantic": s.count_semantic(),
-                    "procedural": s.count_procedural()}
-        except Exception as e:
-            return {"episodic": 0, "semantic": 0, "procedural": 0, "error": str(e)}
-
-    @Slot(str, result="QVariantList")
-    def memoryItems(self, kind):
-        try:
-            from houdini_agent.utils.memory_store import get_memory_store
-            s = get_memory_store()
-            out = []
-            if kind == "semantic":
-                for r in s.get_all_semantic()[:80]:
-                    out.append({"id": r.id, "title": r.category or "Semantic",
-                                "body": r.rule, "meta": "confidence %.2f · level %s" % (r.confidence, r.abstraction_level)})
-            elif kind == "procedural":
-                for r in s.get_all_procedural()[:80]:
-                    out.append({"id": r.id, "title": r.strategy_name,
-                                "body": r.description, "meta": "priority %.2f · success %.0f%% · %d conditions" % (r.priority, r.success_rate * 100, len(r.conditions or []))})
-            else:
-                for r in s.get_recent_episodic(80):
-                    out.append({"id": r.id, "title": r.task_description,
-                                "body": r.result_summary, "meta": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.timestamp))})
-            return out
-        except Exception as e:
-            return [{"id": "", "title": "Load failed", "body": str(e), "meta": ""}]
-
-    @Slot(str, str)
-    def deleteMemory(self, kind, record_id):
-        if not record_id:
-            return
-        self._request_confirm("删除记忆", "确定要删除这条长期记忆吗？", lambda k=kind, rid=record_id: self._delete_memory_now(k, rid))
-
-    def _delete_memory_now(self, kind, record_id):
-        try:
-            from houdini_agent.utils.memory_store import get_memory_store
-            s = get_memory_store()
-            if kind == "semantic":
-                s.delete_semantic(record_id)
-            elif kind == "procedural":
-                s.delete_procedural(record_id)
-            else:
-                s.delete_episodic(record_id)
-            self.toast.emit("记忆已删除")
-            self.managementChanged.emit()
-        except Exception as e:
-            self._info("记忆管理", "删除失败：%s" % e)
 
     def _set_language(self, lang):
         self._lang = lang
@@ -2639,273 +1601,13 @@ class Controller(QObject):
         except Exception as e:
             self._info("导出对话", "导出失败：%s" % e)
 
-    def _set_update(self, info, state="available"):
-        self._update_info = info
-        self._update_state = state if info else ""
-        self.updateAvailableChanged.emit()
-
-    @Slot()
-    def dismissUpdate(self):
-        if self._update_state in ("downloading", "installing"):
-            return                      # 下载 / 安装中不允许关横幅（没有取消语义）
-        self._stop_update_timers()      # "waiting" 时关横幅 = 取消待安装
-        self._update_info = None
-        self._update_state = ""
-        self._update_progress = 0
-        self.updateAvailableChanged.emit()
-
-    @Slot()
-    def silentUpdateCheck(self):
-        """静默检查更新；打包版开启自动静默更新时，在后台直接下载预解压校验，重启即秒级生效。"""
-        # 启动 4 小时周期巡检（仅建一次），长开窗口也能后台拿新版本
-        if getattr(self, "_periodic_update_timer", None) is None:
-            t = QTimer(self)
-            t.setInterval(4 * 3600 * 1000)
-            t.timeout.connect(self.silentUpdateCheck)
-            t.start()
-            self._periodic_update_timer = t
-        if self._silent_checking or self._update_state in ("downloading", "waiting", "installing"):
-            return
-        self._silent_checking = True
-        auto_stage = bool(self._auto_silent_update and getattr(sys, "frozen", False))
-
-        def work():
-            try:
-                from houdini_agent.utils.updater import check_update, get_staged_update, stage_update
-                existing = get_staged_update()
-                if existing:
-                    self._sigUpdateState.emit("staged", 100, json.dumps(existing, ensure_ascii=False))
-                r = check_update()
-                if isinstance(r, dict) and r.get("has_update"):
-                    rver = str(r.get("remote_version") or "")
-                    if auto_stage:
-                        if existing and existing.get("version") == rver:
-                            return
-                        st = stage_update()
-                        if st.get("success") and st.get("staged"):
-                            self._sigUpdateState.emit("staged", 100, json.dumps(st["staged"], ensure_ascii=False))
-                            return
-                    if not existing:
-                        self._sigUpdateFound.emit("发现新版本 %s" % rver)
-            except Exception:
-                pass
-            finally:
-                self._silent_checking = False
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot()
-    def startUpdate(self):
-        """一键更新 / 立即重启应用已就绪更新。
-        若后台已完成静默下载（state=='staged'），零等待直接切换并重启；否则下载后立即应用。"""
-        if self._update_state in ("downloading", "waiting", "installing"):
-            return
-        if not getattr(sys, "frozen", False):
-            try:
-                import webbrowser
-                webbrowser.open("https://houdini-agent.com")
-            except Exception:
-                pass
-            self.toast.emit("源码运行无法就地更新，请 git pull 或从官网安装")
-            return
-        # 后台静默预下载已就绪 → 直接跳过下载，零等待重启切换！
-        if self._update_state == "staged" and isinstance(self._staged_update, dict):
-            self._try_install()
-            return
-        try:
-            from houdini_agent.utils.updater import get_staged_update
-            st = get_staged_update()
-            if st:
-                self._staged_update = st
-                self._try_install()
-                return
-        except Exception:
-            pass
-        self._update_state = "downloading"
-        self._update_progress = 0
-        self.updateAvailableChanged.emit()
-
-        def work():
-            try:
-                from houdini_agent.utils.updater import check_update, stage_update
-                check_update()          # 刷新清单缓存，拿到最新 app_zip / installer 直链
-                last = [-1]
-
-                def prog(pct):
-                    if pct != last[0]:
-                        last[0] = pct
-                        self._sigUpdateState.emit("downloading", int(pct), "")
-
-                r = stage_update(progress_callback=prog)
-                if r.get("success") and r.get("staged"):
-                    self._sigUpdateState.emit("ready", 100, json.dumps(r["staged"], ensure_ascii=False))
-                elif r.get("up_to_date"):
-                    self._sigUpdateState.emit("uptodate", 100, "")
-                else:
-                    self._sigUpdateState.emit("failed", 0, r.get("error") or "下载失败")
-            except Exception as e:
-                self._sigUpdateState.emit("failed", 0, str(e))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_update_state(self, state, percent, message):
-        """运行在 UI 线程：应用更新状态机。staged → 提示重启即可；ready → 立即切换重启。"""
-        self._update_state = state
-        self._update_progress = percent
-        if state == "downloading":
-            self._update_info = "正在准备新版本… %d%%" % percent
-        elif state == "staged":
-            try:
-                st = json.loads(message) if message else {}
-            except Exception:
-                st = {}
-            if isinstance(st, dict) and st.get("version"):
-                self._staged_update = st
-                self._update_info = "新版本 %s 已就绪 · 重启即可生效" % st["version"]
-            else:
-                self._update_info = "新版本已就绪 · 重启即可生效"
-        elif state == "uptodate":
-            self._update_state = ""
-            self._update_info = None
-            self.toast.emit("当前已是最新版本")
-        elif state == "failed":
-            self._update_info = "更新下载失败：%s — 点「立即更新」重试" % (message or "")[:80]
-            self._update_state = "available"
-        elif state == "ready":
-            try:
-                st = json.loads(message) if message else None
-            except Exception:
-                st = None
-            if isinstance(st, dict) and st.get("version"):
-                self._staged_update = st
-            self._try_install()
-            return
-        self.updateAvailableChanged.emit()
 
     # ---- 安装阶段（主线程） ----
     # 1) Agent 正在回答或还有后台 Meshy 任务时不安装（安装要退出应用，会打断它们），
     #    进入 waiting，空闲后自动继续；
     # 2) 免安装器原子替换（mode='swap'）或用户目录静默安装直接保存退出，1 秒内无窗口换新重启；
     # 3) 若装在 Program Files 需要 UAC，等授权通过再退出，拒绝授权时保持运行并可重试。
-    def _update_busy(self):
-        if self._running:
-            return True
-        try:
-            with self._meshy_bg_lock:
-                return any(not (v or {}).get("done") for v in self._meshy_bg.values())
-        except Exception:
-            return False
 
-    def _stop_update_timers(self):
-        for name in ("_update_wait_timer", "_update_watch_timer"):
-            t = getattr(self, name, None)
-            if t is not None:
-                t.stop()
-
-    def _update_timer(self, name, interval, slot):
-        t = getattr(self, name, None)
-        if t is None:
-            t = QTimer(self)
-            t.setInterval(interval)
-            t.timeout.connect(slot)
-            setattr(self, name, t)
-        return t
-
-    def _try_install(self):
-        if self._update_busy():
-            self._update_state = "waiting"
-            self._update_progress = 100
-            self._update_info = "新版本已就绪，等当前任务结束后自动重启更新（关闭横幅可取消）"
-            self.updateAvailableChanged.emit()
-            self._update_timer("_update_wait_timer", 1500, self._try_install).start()
-            return
-        self._stop_update_timers()
-        self._begin_install()
-
-    def _begin_install(self):
-        try:
-            from houdini_agent.utils.updater import apply_staged_update, get_staged_update
-            st = self._staged_update or get_staged_update()
-            res = apply_staged_update(st, relaunch=True)
-        except Exception as e:
-            self._update_state = "staged" if self._staged_update else "available"
-            self._update_info = "应用更新失败：%s — 点「立即重启」重试" % e
-            self.updateAvailableChanged.emit()
-            return
-        if not res.get("started"):
-            self._update_state = "available"
-            self._update_info = "应用更新失败：%s — 点「立即更新」重试" % (res.get("error") or "未知错误")
-            self.updateAvailableChanged.emit()
-            return
-        self._update_applying = True
-        if not res.get("needs_watch"):
-            # 免安装程序原子替换 / 无 UAC 静默安装：直接保存并退出，1 秒后自动以新版重启
-            self._update_state = "installing"
-            self._update_info = "正在应用更新并重启…"
-            self.updateAvailableChanged.emit()
-            self._quit_for_update()
-            return
-        self._update_proc = res.get("proc")
-        self._update_state = "installing"
-        self._update_info = "正在应用更新…如弹出管理员授权，请点「是」"
-        self.updateAvailableChanged.emit()
-        self._update_timer("_update_watch_timer", 300, self._install_watch).start()
-
-    def apply_staged_on_exit(self):
-        """用户正常关闭应用时触发（ExternalWindow.closeEvent）：
-        若后台已静默下载好且无需 UAC，则在退出后静默完成替换且不重开窗口，下次打开即已是新版。"""
-        if self._update_applying or not getattr(sys, "frozen", False):
-            return False
-        try:
-            from houdini_agent.utils.updater import (
-                apply_staged_update, can_apply_silently_on_exit, get_staged_update,
-            )
-            st = self._staged_update or get_staged_update()
-            if not st or not can_apply_silently_on_exit(st):
-                return False
-            self._update_applying = True
-            res = apply_staged_update(st, relaunch=False)
-            return bool(res.get("started"))
-        except Exception:
-            return False
-
-    def _install_watch(self):
-        from houdini_agent.utils.updater import install_watch_step, installer_window_visible
-        proc = getattr(self, "_update_proc", None)
-        code = proc.poll() if proc is not None else 0
-        action, reason = install_watch_step(installer_window_visible(), code)
-        if action == "wait":
-            return
-        self._stop_update_timers()
-        self._update_proc = None
-        if action == "quit":
-            self._update_info = "正在安装，应用即将关闭并自动重启…"
-            self.updateAvailableChanged.emit()
-            self._quit_for_update()
-        else:
-            self._update_applying = False
-            self._update_state = "staged" if self._staged_update else "available"
-            self._update_info = "%s。点「立即重启」重试" % reason
-            self.updateAvailableChanged.emit()
-
-    def _quit_for_update(self):
-        """保存会话后退出，让安装器替换文件（装完由安装器重启应用）。"""
-        try:
-            self._snapshot_active()
-            self._save_all()
-        except Exception:
-            pass
-
-        def _quit():
-            try:
-                from PySide6.QtWidgets import QApplication
-            except ImportError:
-                from PySide2.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app is not None:
-                app.closeAllWindows()
-                QTimer.singleShot(200, app.quit)
-        QTimer.singleShot(300, _quit)
 
     @Slot(str, result=bool)
     def copyToClipboard(self, text):
@@ -2939,187 +1641,7 @@ class Controller(QObject):
 
     # ---- 订阅登录（本机 CPA：ChatGPT 走 Codex OAuth，Claude 走 Claude Code OAuth） ----
     # 后台线程只发 (str, str) 信号回主线程（PySide6 跨线程 Signal(dict) 会崩，见 memory）。
-    def _sub_logged_in(self, provider=None):
-        kind = self._sub_kind(provider)
-        if not kind:
-            return False
-        try:
-            from houdini_agent.subscription import manager
-            return manager.logged_in(kind)
-        except Exception:
-            return False
 
-    def _sub_target(self):
-        """订阅对话框 / 退出登录作用的供应商：最近一次打开对话框时指定的，否则当前供应商。"""
-        p = getattr(self, "_sub_dialog_provider", "") or ""
-        if not self._sub_kind(p):
-            p = self._provider if self._sub_kind() else "codex"
-        return p
-
-    @Slot()
-    def subscriptionDialogOpened(self):
-        """对话框每次打开：不在登录流程中时清掉上一次的提示（两种订阅共用一份状态）。"""
-        if not self._sub.get("busy"):
-            self._sub.update(message="", loginUrl="", deviceUrl="", deviceCode="")
-
-    @Slot(result="QVariantMap")
-    def subscriptionStatus(self):
-        target = self._sub_target()
-        kind = self._sub_kind(target)
-        base = dict(self._sub, kind=kind, title=self.tr(PROVIDER_LABELS.get(target, target)))
-        try:
-            from houdini_agent.subscription import manager, CPA_VERSION
-            accounts = manager.accounts(kind)
-            installed = manager.installed()
-        except Exception as e:
-            return dict(base, installed=False, version="", accounts=[], error=str(e))
-        return dict(base, installed=installed, version=CPA_VERSION,
-                    accounts=[{"email": a["email"], "plan": a["plan"], "file": a["file"]} for a in accounts])
-
-    def _sub_set(self, **kw):
-        self._sub.update(kw)
-        self.subscriptionChanged.emit()
-
-    def _on_sub_event(self, kind, js):
-        """主线程：应用后台订阅流程的事件。"""
-        try:
-            d = json.loads(js) if js else {}
-        except Exception:
-            d = {}
-        if kind == "progress":
-            self._sub_set(phase="install", progress=int(d.get("p", 0)),
-                          message="%s %d%%" % (self.tr("正在下载订阅组件…"), int(d.get("p", 0))))
-        elif kind == "phase":
-            # message 是翻译表里的固定句子，suffix 是不需要翻译的附加内容（模型名、错误原文）
-            self._sub_set(phase=d.get("phase", ""), message=self.tr(d.get("message", "")) + d.get("suffix", ""))
-        elif kind == "url":
-            self._sub_set(phase="login", loginUrl=d.get("url", ""),
-                          message=self.tr("已在浏览器打开登录页，登录并授权后会自动完成。"))
-        elif kind == "device":
-            self._sub_set(phase="login", deviceUrl=d.get("url", ""), deviceCode=d.get("code", ""),
-                          message=self.tr("在浏览器打开的页面里输入下面的验证码，授权后会自动完成。"))
-        elif kind == "done":
-            ok = bool(d.get("ok"))
-            msg = self._sub_result_text(d)
-            self._sub_set(busy=False, phase="", loginUrl="", deviceUrl="", deviceCode="", message=msg)
-            if ok:
-                self.toast.emit(msg or self.tr("已登录"))
-                target = self._sub_target()
-                names = self._provider_model_names(target)
-                if self._provider == target and names and self._model_name not in names:
-                    self._model_name = names[0]
-                    self.modelChanged.emit()
-                self.providerChanged.emit()     # 让顶栏 / 供应商面板重新读取登录状态
-
-    def _sub_result_text(self, d):
-        """按当前界面语言组织登录结果（manager 返回结果类型 code，不在底层写死文案）。"""
-        code = d.get("code") or ("ok" if d.get("ok") else "error")
-        en = self._lang == "en"
-        if code == "ok":
-            plan = d.get("plan") or ""
-            return self.tr("已登录 ") + (d.get("who") or "") + ((" (%s)" if en else "（%s）") % plan if plan else "")
-        if code == "cancelled":
-            return self.tr("已取消登录")
-        if code == "timeout":
-            return self.tr("登录超时（15 分钟内未完成授权）")
-        if code == "port":
-            return self.tr("本机端口被占用，请关闭占用它的程序后重试：") + str(d.get("port") or "")
-        if code == "failed":
-            return self.tr("登录没有完成") + ((" (%s)" if en else "（%s）") % d.get("detail") if d.get("detail") else "")
-        return self.tr("出错了：") + str(d.get("message") or "")
-
-    @Slot(bool)
-    def subscriptionLogin(self, device):
-        if self._sub.get("busy"):
-            return
-        self._sub_set(busy=True, phase="install", progress=0, message=self.tr("正在准备订阅组件…"),
-                      loginUrl="", deviceUrl="", deviceCode="")
-
-        sub_kind = self._sub_kind(self._sub_target())
-
-        def emit(kind, data):
-            self._sigSub.emit(kind, json.dumps(data, ensure_ascii=False))
-
-        def work():
-            try:
-                import webbrowser
-                from houdini_agent.subscription import manager
-                manager.install(progress=lambda p: emit("progress", {"p": p}))
-                emit("phase", {"phase": "login", "message": "正在发起登录…"})
-
-                def on_event(kind, data):
-                    if kind == "url":
-                        webbrowser.open(data)
-                        emit("url", {"url": data})
-                    elif kind == "device":
-                        webbrowser.open(data.get("url", ""))
-                        emit("device", data)
-
-                res = manager.login(device=bool(device) and sub_kind == "codex", on_event=on_event,
-                                    kind=sub_kind)
-                if res.get("ok"):
-                    emit("phase", {"phase": "start", "message": "登录成功，正在启动本机订阅服务…"})
-                    manager.ensure_running()
-                    try:
-                        manager.refresh_models(sub_kind)
-                    except Exception:
-                        pass
-                emit("done", res)
-            except Exception as e:
-                emit("done", {"ok": False, "code": "error", "message": str(e)})
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot()
-    def subscriptionCancelLogin(self):
-        try:
-            from houdini_agent.subscription import manager
-            manager.cancel_login()
-        except Exception:
-            pass
-
-    def _confirm_sub_logout(self):
-        self._sub_dialog_provider = self._provider
-        kind = self._sub_kind()
-        try:
-            from houdini_agent.subscription import manager
-            accs = manager.accounts(kind)
-        except Exception:
-            accs = []
-        brand = {"claude": "Claude", "antigravity": "Google 反重力"}.get(kind, "ChatGPT")
-        who = ", ".join(a.get("email") or brand for a in accs)
-        body = self.tr("将删除这台电脑上保存的登录凭据：") + who
-        if kind == "codex":
-            body += "\n\n" + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。")
-        title = "退出 Google 反重力登录？" if kind == "antigravity" else ("退出 %s 订阅登录？" % brand)
-        self._request_confirm(title, body, lambda: self.subscriptionLogout(""))
-
-    @Slot(str)
-    def subscriptionLogout(self, file_name):
-        try:
-            from houdini_agent.subscription import manager
-            n = manager.logout(file_name or None, kind=self._sub_kind(self._sub_target()))
-        except Exception as e:
-            self.toast.emit("退出登录失败：%s" % e)
-            return
-        self._sub_set(message=self.tr("已退出登录") if n else "")
-        self.providerChanged.emit()     # 供应商菜单的「未登录」标记跟着变
-
-    @Slot()
-    def subscriptionRefreshModels(self):
-        sub_kind = self._sub_kind(self._sub_target())
-
-        def work():
-            try:
-                from houdini_agent.subscription import manager
-                manager.ensure_running()
-                models = manager.refresh_models(sub_kind)
-                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "可用模型：",
-                                                       "suffix": ", ".join(models)}, ensure_ascii=False))
-            except Exception as e:
-                self._sigSub.emit("phase", json.dumps({"phase": "", "message": "刷新模型失败：",
-                                                       "suffix": str(e)}, ensure_ascii=False))
-        threading.Thread(target=work, daemon=True).start()
 
     @Slot(str)
     def openExternalUrl(self, url):
@@ -3130,36 +1652,6 @@ class Controller(QObject):
         except Exception:
             pass
 
-    def _check_update(self):
-        self.toast.emit("正在检查更新…")
-        def work():
-            try:
-                from houdini_agent.utils.updater import check_update
-                r = check_update()
-                if isinstance(r, dict):
-                    if r.get("error"):
-                        msg = "检查更新失败：%s" % r.get("error")
-                    elif r.get("has_update"):
-                        notes = r.get("release_notes") or r.get("release_name") or ""
-                        msg = "发现新版本：%s\n当前版本：%s" % (
-                            r.get("remote_version", "?"), r.get("local_version", "?"))
-                        if notes:
-                            msg += "\n\n" + notes
-                        if r.get("stale"):
-                            msg += "\n\n（暂时连不上更新服务器，以上为最近一次成功检查的结果）"
-                        # 先置横幅状态（available），再弹带按钮的对话框；两个信号按发出顺序到主线程
-                        self._sigUpdateFound.emit("发现新版本 %s" % r.get("remote_version", ""))
-                        self._sigUpdateDialog.emit("检查更新", msg)
-                        return
-                    else:
-                        msg = "已是最新版本。\n\n当前版本：%s\n最新 Release：%s" % (
-                            r.get("local_version", "?"), r.get("remote_version", "?"))
-                else:
-                    msg = str(r)
-            except Exception as e:
-                msg = "检查失败：%s" % e
-            self._sigInfo.emit("检查更新", msg)
-        threading.Thread(target=work, daemon=True).start()
 
     def _open_token_panel(self):
         # rendered by a native QML popup (see Main.qml), not a QtWidgets dialog
@@ -3171,18 +1663,23 @@ class Controller(QObject):
         ctx_used = self._estimate_ctx()
         ctx_limit = self._context_limit()
         self._ctx_text = "%s / %s" % (self._fmt_k(ctx_used), self._fmt_k(ctx_limit))
-        total = s["total"] or (s["input"] + s["output"] + s["reasoning"])
+        # reasoning 是 output 的子集，回退计算 total 时绝不能重复累加 reasoning
+        total = s["total"] or (s["input"] + s["output"])
         requests = max(0, s["requests"])
-        cache_total = s["cache_read"] + s["cache_write"]
+        cache_read = int(s.get("cache_read", 0) or 0)
+        cache_write = int(s.get("cache_write", 0) or 0)
+        cache_miss = int(s.get("cache_miss", 0) or 0)
+        cache_denom = int(s.get("input", 0) or 0) or (cache_read + cache_write + cache_miss)
+        hit_rate = (min(float(cache_read), float(cache_denom)) / float(cache_denom)) if cache_denom > 0 else 0.0
         return {
             "requests": s["requests"], "input": s["input"], "output": s["output"],
-            "reasoning": s["reasoning"], "cache_read": s["cache_read"],
-            "cache_write": s["cache_write"], "total": total,
+            "reasoning": s["reasoning"], "cache_read": cache_read,
+            "cache_write": cache_write, "cache_miss": cache_miss, "total": total,
             "avg_per_request": int(total / requests) if requests else 0,
             "ctx_used": ctx_used, "ctx_limit": ctx_limit, "ctx_text": self._ctx_text,
             "ctx_pct": float(ctx_used) / float(ctx_limit or 1),
-            "cache_total": cache_total,
-            "cache_hit_rate": float(s["cache_read"]) / float(cache_total or 1),
+            "cache_total": cache_denom,
+            "cache_hit_rate": hit_rate,
             "model": self._model_name,
         }
 
@@ -3459,30 +1956,6 @@ class Controller(QObject):
         self.modelChanged.emit()
         self._save_prefs()
 
-    def _houdini_connected(self):
-        """会话存在且 Bridge 仍可达。独立 exe 下关闭 Houdini 后 _session 可能仍在、
-        但 bridge 已断，故用一次 ping 作为"是否真连着"的可靠信号；进程内会话无 bridge，视为已连。"""
-        s = self._session
-        if not s:
-            return False
-        b = getattr(s, "bridge", None)
-        if b is None:
-            return True
-        try:
-            return b.ping() is not None
-        except Exception:
-            return False
-
-    def _prompt_open_houdini(self, what):
-        """断开时引导用户打开 Houdini：说明情况 + 请求弹启动器（外部 exe 由协调器接住）。"""
-        try:
-            self.toast.emit(self.tr("Houdini 未连接，%s 需要先连接 Houdini，正在打开启动器…") % what)
-        except Exception:
-            pass
-        try:
-            self.requestOpenHoudini.emit()
-        except Exception:
-            pass
 
     def _open_custom_provider(self):
         # 配置自定义 LLM Provider 只需要一个承载 client 配置的后端会话即可，
@@ -3579,184 +2052,8 @@ class Controller(QObject):
             except Exception:
                 pass
 
-    @Slot(str)
-    def openMeshy(self, kind):
-        """在浏览器打开某个 Meshy 公开网页（链接附带 utm 来源标记）。kind ∈ home/workspace/apikey/pricing/docs。"""
-        base = _MESHY_URLS.get(str(kind or ""))
-        if not base:
-            return
-        sep = "&" if "?" in base else "?"
-        self._open_browser(base + sep + _MESHY_UTM)
-
-    @Slot(str, result=str)
-    def imageModelDisplayName(self, spec=""):
-        """生图模型短显示名（画廊按钮 / 提示用）。"""
-        s = str(spec or "").strip() or self._effective_default_image_model()
-        if s.startswith("codex:"):
-            return "Codex · " + s[6:]
-        if s.startswith("meshy:"):
-            return s[6:]
-        return s
-
-    @Slot(result="QVariantList")
-    def meshyImageModelOptions(self):
-        """设置页：Meshy 生图模型选项。"""
-        return [{"key": val, "label": self.tr(lbl)} for val, lbl in self._MESHY_IMAGE_CHOICES]
-
-    @Slot(result="QVariantList")
-    def codexImageModelOptions(self):
-        """设置页：ChatGPT 订阅（Codex）生图模型选项（自动随 CPA /v1/models 同步）。"""
-        models = self._codex_image_models()
-        cur = self._effective_default_image_model()
-        if cur.startswith("codex:"):
-            cm = cur[6:]
-            if cm and cm not in models:
-                models.append(cm)
-        return [{"key": "codex:" + m, "label": m} for m in models]
-
-    @Slot(str)
-    def setDefaultImageModel(self, val):
-        """设置默认生图模型（持久化到 QSettings）。支持 Meshy 模型及 codex:<model>。"""
-        v = str(val or "").strip()
-        if v.startswith("meshy:"):
-            v = v[6:].strip()
-        meshy_keys = {k for k, _ in self._MESHY_IMAGE_CHOICES}
-        if v.startswith("codex:"):
-            if len(v) <= 6:
-                return
-            if not self._codex_logged_in():
-                self.toast.emit(self.tr("请先登录 ChatGPT 订阅后再选择 Codex 生图模型"))
-                return
-        elif v not in meshy_keys:
-            return
-        if v != self._default_image_model:
-            self._default_image_model = v
-            self._set_pref("default_image_model", v)
-            self.imageModelChanged.emit()
-
-    @Slot()
-    def openCodexSubscription(self):
-        """从设置页直接打开 ChatGPT 订阅（Codex）登录弹窗。"""
-        self._sub_dialog_provider = "codex"
-        self.openSubscriptionDialog.emit()
-
-    @Slot()
-    def refreshCodexImageModels(self):
-        """手动同步本机 CPA /v1/models 里的 Codex 生图模型列表（后台线程）。"""
-        if self._codex_image_refreshing:
-            return
-        if not self._codex_logged_in():
-            self.toast.emit(self.tr("请先登录 ChatGPT 订阅"))
-            return
-        self._codex_image_refreshing = True
-        self.codexImageRefreshingChanged.emit()
-
-        def work():
-            try:
-                from houdini_agent.subscription import manager
-                manager.ensure_running(timeout=15)
-                models = manager.refresh_image_models("codex")
-                payload = {"ok": True, "models": models}
-            except Exception as e:
-                payload = {"ok": False, "error": str(e)}
-            try:
-                self._sigCodexImageRefresh.emit(json.dumps(payload, ensure_ascii=False))
-            except Exception:
-                pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str)
-    def _on_codex_image_refreshed(self, js):
-        try:
-            d = json.loads(js) if js else {}
-        except Exception:
-            d = {}
-        self._codex_image_refreshing = False
-        self.codexImageRefreshingChanged.emit()
-        self.imageModelChanged.emit()
-        self.subscriptionChanged.emit()
-        self.providerChanged.emit()
-        if d.get("ok"):
-            models = d.get("models") or []
-            suffix = (" (%s)" % ", ".join(models[:4])) if models else ""
-            self.toast.emit(self.tr("Codex 生图模型已更新") + suffix)
-        else:
-            self.toast.emit(self.tr("同步 Codex 生图模型失败：") + str(d.get("error") or ""))
-
-    @Slot(str, result="QVariantList")
-    def imageModelItems(self, current=""):
-        """生图模型下拉项（画廊里"弹窗选模型"用）。已登录 Codex 时同时列出 Codex 与 Meshy 模型。"""
-        cur = str(current or "").strip() or self._effective_default_image_model()
-        meshy_models = [(val, self.tr(lbl)) for val, lbl in self._MESHY_IMAGE_CHOICES]
-        show_codex = self._codex_logged_in() or cur.startswith("codex:")
-        if not show_codex:
-            return [{"label": lbl, "val": val, "checked": (val == cur)}
-                    for val, lbl in meshy_models]
-        cmodels = self._codex_image_models()
-        if cur.startswith("codex:"):
-            cm = cur[6:]
-            if cm and cm not in cmodels:
-                cmodels.append(cm)
-        items = [{"label": "Codex · " + m, "val": "codex:" + m, "checked": ("codex:" + m == cur)}
-                 for m in cmodels]
-        if items:
-            items.append({"sep": True})
-        items.extend({"label": "Meshy · " + lbl, "val": val, "checked": (val == cur)}
-                     for val, lbl in meshy_models)
-        return items
-
-    @Slot(str)
-    def composePrefill(self, text):
-        """把一段起始提示词塞进输入框并聚焦（资产库"+用 Meshy 生成"快捷用）。"""
-        try:
-            self.prefillComposer.emit(str(text or ""))
-        except Exception:
-            pass
-
-    @Slot(result="QVariantList")
-    def meshyMenuItems(self):
-        """顶栏 Meshy 按钮的下拉项（val 传给 openMeshy）。"""
-        t = self.tr
-        return [
-            {"label": t("打开 Meshy 官网"), "val": "home"},
-            {"label": t("我的工作台"), "val": "workspace"},
-            {"label": t("充值 / 定价"), "val": "pricing"},
-            {"sep": True},
-            {"label": t("API Key 设置"), "val": "apikey"},
-            {"label": t("API 文档"), "val": "docs"},
-        ]
 
     # ---- node focus ----
-    @Slot(str)
-    def focusNode(self, path):
-        p = str(path or "").strip()
-        # web links are not node paths — open them in the browser
-        if p.startswith(("http://", "https://", "www.")):
-            url = p if "://" in p else ("https://" + p)
-            self._open_browser(url)
-            return
-        try:
-            import hou
-        except Exception:
-            self.toast.emit("当前不在 Houdini 环境，无法定位节点")
-            return
-        try:
-            n = hou.node(path)
-            if not n:
-                self.toast.emit("找不到节点：" + str(path))
-                return
-            n.setCurrent(True, clear_all_selected=True)
-            ed = hou.ui.curDesktop().paneTabOfType(hou.paneTabType.NetworkEditor)
-            if ed and n.parent():
-                ed.cd(n.parent().path())
-                try:
-                    ed.homeToSelection()
-                except Exception:
-                    pass
-        except Exception as e:
-            print("[controller] focusNode failed:", e)
-            self.toast.emit("定位节点失败：%s" % e)
 
     # ---- persistence ----
     def _save_all(self):
@@ -3836,32 +2133,6 @@ class Controller(QObject):
         except Exception as e:
             print("[controller] restore failed:", e)
 
-    @Slot()
-    def refreshContext(self):
-        try:
-            import hou
-            net = None
-            try:
-                net = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor).pwd()
-            except Exception:
-                pass
-            sel = hou.selectedNodes()
-            self._scene_path = net.path() if net else "/obj"
-            self._scene_sel = ("%d node%s selected" % (len(sel), "" if len(sel) == 1 else "s")) if sel else "no selection"
-        except Exception:
-            ctx = None
-            try:
-                bridge = getattr(getattr(self._session, "bridge", None), "scene_context", None)
-                ctx = bridge() if bridge else None
-            except Exception:
-                ctx = None
-            if isinstance(ctx, dict):
-                self._scene_path = ctx.get("path") or "/obj"
-                self._scene_sel = ctx.get("selection") or "no selection"
-            else:
-                self._scene_sel = "Houdini 未连接"
-            self.scanHoudiniInstances()
-        self.sceneChanged.emit()
 
     @Slot()
     def stop(self):
@@ -3942,10 +2213,12 @@ class Controller(QObject):
             except Exception as e:
                 print("[controller] set reasoning failed:", e)
         ctx_limit = self._active_model_context()
+        initial_ctx = int(self._anchored_ctx() or 0)
+        state_ctx = self._active_task_state_summary()
         threading.Thread(
             target=self._worker,
             args=(user_text, self._model_name, prov_arg, self._mode, tools, max_iter,
-                  images, supports_vision, ctx_limit),
+                  images, supports_vision, ctx_limit, initial_ctx, state_ctx),
             daemon=True,
         ).start()
 
@@ -3987,6 +2260,7 @@ class Controller(QObject):
         self._resolve_cache = {}
         self._in_think = False
         self._cbuf = ""
+        self._turn_bridge_target = None
 
     def _set_running(self, on):
         if on != self._running:
@@ -3997,69 +2271,6 @@ class Controller(QObject):
         self._last_activity = time.monotonic()
         self._watchdog_warned = False
 
-    def _heal_bridge(self):
-        """ping 失败后的静默自愈：扫描候选端口找活着的 Bridge 并固化端口。
-        运行在工具执行线程（localhost 扫描 <1 秒），成功后刷新上下文条。"""
-        try:
-            from houdini_agent.bridge import doctor
-            port, _info = doctor.ensure_connected(heartbeat=self._touch_activity)
-        except Exception:
-            return False
-        if port:
-            self._sigCtxRefresh.emit()
-            return True
-        return False
-
-    def _run_connection_tool(self, tool_name, kwargs):
-        """连接诊断/修复及多 Houdini 实例协作工具：app 侧执行。"""
-        if getattr(self._session, "bridge", None) is None:
-            return {"success": True,
-                    "result": "当前直接运行在 Houdini 进程内，不经过 Bridge，无需连接诊断或多实例切换。"}
-        try:
-            from houdini_agent.bridge import doctor
-            if tool_name == "check_houdini_connection":
-                res = doctor.diagnose()
-            elif tool_name == "repair_houdini_connection":
-                res = doctor.repair(kwargs.get("action") or "",
-                                    version=kwargs.get("version"),
-                                    wait_seconds=kwargs.get("wait_seconds"),
-                                    heartbeat=self._touch_activity)
-            elif tool_name == "list_houdini_instances":
-                res = doctor.list_instances_result(heartbeat=self._touch_activity)
-            elif tool_name == "switch_houdini_instance":
-                res = doctor.switch_instance(kwargs.get("instance") or "",
-                                             heartbeat=self._touch_activity)
-            elif tool_name == "run_in_houdini_instance":
-                res = doctor.run_in_instance(
-                    kwargs.get("instance") or "",
-                    kwargs.get("tool_name") or "",
-                    arguments=kwargs.get("arguments") or {},
-                    heartbeat=self._touch_activity,
-                    read_only=(self._mode in ("Ask", "Plan")))
-            elif tool_name == "transfer_nodes_between_instances":
-                if self._mode in ("Ask", "Plan"):
-                    return {"success": False,
-                            "error": "当前处于只读模式（Ask/Plan），禁止跨实例写入节点。请切换到 Agent 模式。"}
-                res = doctor.transfer_nodes(
-                    kwargs.get("source_instance") or "",
-                    kwargs.get("target_instance") or "",
-                    kwargs.get("node_paths") or [],
-                    target_parent=kwargs.get("target_parent") or "/obj",
-                    create_parent=bool(kwargs.get("create_parent", True)),
-                    heartbeat=self._touch_activity)
-            else:
-                return {"success": False, "error": "未知连接/多实例工具: %s" % tool_name}
-        except Exception as e:
-            return {"success": False, "error": "连接/多实例工具执行失败: %s" % e}
-        if isinstance(res, dict):
-            if isinstance(res.get("instances"), list):
-                try:
-                    self._sigInstances.emit(json.dumps(res["instances"], ensure_ascii=False, default=str))
-                except Exception:
-                    pass
-            if res.get("reconnected") or res.get("switched"):
-                self._sigCtxRefresh.emit()
-        return res
 
     def _watchdog_tick(self):
         if not self._running:
@@ -4079,7 +2290,8 @@ class Controller(QObject):
 
     # ---- worker thread ----
     def _worker(self, text, model, provider, mode, tools, max_iter, images=None,
-                supports_vision=False, context_limit=None):
+                supports_vision=False, context_limit=None,
+                initial_actual_tokens=0, state_context=""):
         def cb_content(t):
             self._last_activity = time.monotonic()
             vis, thk = self._split(t)
@@ -4129,14 +2341,29 @@ class Controller(QObject):
                     mt = r.get("_image_media_type", "image/jpeg")
                     self._sigImage.emit("data:%s;base64,%s" % (mt, img))
 
+        def cb_compaction(meta):
+            self._last_activity = time.monotonic()
+            try:
+                self._sigCompaction.emit(json.dumps({
+                    "before_tokens": int((meta or {}).get("before_tokens") or 0),
+                    "after_tokens": int((meta or {}).get("after_tokens") or 0),
+                    "used_llm": bool((meta or {}).get("used_llm", False)),
+                }, ensure_ascii=False))
+            except Exception:
+                pass
+
         try:
             self._log_external("Worker start provider=%s model=%s mode=%s" % (provider, model, mode))
+            # 本轮开始时在后台线程锁定当前 Houdini 实例/场景指纹，防止中途关窗重连误写到另一份 .hip
+            if getattr(self._session, "bridge", None) is not None:
+                self._turn_bridge_target = self._probe_current_bridge_target()
             result = self._session.run(
                 text, model, provider, mode,
                 {"on_content": cb_content, "on_thinking": cb_think,
                  "on_tool_call": cb_tool_call, "on_tool_result": cb_tool_result,
                  "on_tool_args_delta": cb_args_delta,
-                 "on_iteration_start": lambda i: self._sigStatus.emit("generating")},
+                 "on_iteration_start": lambda i: self._sigStatus.emit("generating"),
+                 "on_compaction": cb_compaction},
                 context_limit=(context_limit if context_limit else CONTEXT_LIMITS.get(model, 128000)),
                 enable_thinking=True,
                 # 订阅渠道（ChatGPT / Claude）走原生推理，不再要求模型在正文里写 <think>
@@ -4144,6 +2371,8 @@ class Controller(QObject):
                 supports_vision=supports_vision,
                 tools=tools, max_iter=max_iter,
                 images=images, rag=True, memory=self._memory_enabled,
+                initial_actual_tokens=initial_actual_tokens,
+                state_context=state_context,
             )
             if isinstance(result, dict) and not result.get("ok", True):
                 err = str(result.get("error") or result.get("final_content") or "AI request failed")
@@ -4169,7 +2398,8 @@ class Controller(QObject):
         s["output"] += u.get("completion_tokens", 0)
         s["reasoning"] += u.get("reasoning_tokens", 0)
         s["cache_read"] += u.get("cache_hit_tokens", 0)
-        s["cache_write"] += u.get("cache_miss_tokens", 0)
+        s["cache_write"] += u.get("cache_write_tokens", 0)
+        s["cache_miss"] = s.get("cache_miss", 0) + u.get("cache_miss_tokens", 0)
         s["total"] += u.get("total_tokens", 0)
         recs = result.get("call_records")
         if isinstance(recs, list):
@@ -4201,68 +2431,69 @@ class Controller(QObject):
         self._sessions[self._active].setdefault("usage", {})["ctx"] = anchor
 
     # ---- tool executor (called by AIClient on the worker thread) ----
-    def _tool_executor(self, tool_name, **kwargs):
-        self._last_activity = time.monotonic()
-        if self._session and self._session.client.is_stop_requested():
-            return {"success": False, "error": "stopped"}
-        # plan / ask tools are UI-driven, never hit Houdini
-        if tool_name == "create_plan":
-            return self._handle_create_plan(kwargs)
-        if tool_name == "update_plan_step":
-            return self._handle_update_plan_step(kwargs)
-        if tool_name == "ask_question":
-            return self._handle_ask_question(kwargs)
-        if tool_name in ("add_todo", "update_todo"):
-            return self._handle_todo(tool_name, kwargs)
-        # 后台任务进度查询（本地、免费，不进 API）
-        if tool_name == "meshy_task_status":
-            return self._meshy_task_status(kwargs)
-        # 动作库检索（本地、免费、瞬时；不联网、不弹进度卡、不进 Houdini）
+    _CONNECTION_TOOLS = frozenset({
+        "check_houdini_connection", "repair_houdini_connection",
+        "list_houdini_instances", "switch_houdini_instance",
+        "run_in_houdini_instance", "transfer_nodes_between_instances",
+    })
+
+    def _dispatch_ui_local_tool(self, tool_name, kwargs):
+        """统一分派 UI 本地工具（不经过 Houdini/Bridge/网络）。未命中返回 None。"""
+        handlers = {
+            "create_plan": lambda kw: self._handle_create_plan(kw),
+            "update_plan_step": lambda kw: self._handle_update_plan_step(kw),
+            "ask_question": lambda kw: self._handle_ask_question(kw),
+            "add_todo": lambda kw: self._handle_todo("add_todo", kw),
+            "update_todo": lambda kw: self._handle_todo("update_todo", kw),
+            "meshy_task_status": lambda kw: self._meshy_task_status(kw),
+        }
+        fn = handlers.get(tool_name)
+        if fn is not None:
+            return fn(kwargs)
         if tool_name in MESHY_LOCAL_TOOLS and _meshy is not None:
             try:
                 return _meshy.search_animations(kwargs)
             except Exception as e:
                 return {"success": False, "error": "动作库检索失败: %s" % e}
+        return None
+
+    def _tool_executor(self, tool_name, **kwargs):
+        self._last_activity = time.monotonic()
+        if self._session and self._session.client.is_stop_requested():
+            return {"success": False, "error": "stopped"}
+
+        local_res = self._dispatch_ui_local_tool(tool_name, kwargs)
+        if local_res is not None:
+            return local_res
+
         # Meshy 非交互网络工具：同轮去重命中时直接返回旧结果，且【放在确认门之前】——
         # 否则会让用户为一个其实只返回缓存、不会真正生成/扣费的重复调用再确认一次。
-        if (tool_name in MESHY_NETWORK_TOOLS and _meshy is not None
-                and tool_name not in MESHY_INTERACTIVE_TOOLS):
+        is_meshy_net = tool_name in MESHY_NETWORK_TOOLS and _meshy is not None
+        is_meshy_interactive = tool_name in MESHY_INTERACTIVE_TOOLS
+        meshy_sig = None
+        if is_meshy_net and not is_meshy_interactive:
             try:
-                _sig = tool_name + "|" + json.dumps(kwargs, sort_keys=True, default=str)
+                meshy_sig = tool_name + "|" + json.dumps(kwargs, sort_keys=True, default=str)
             except Exception:
-                _sig = tool_name
+                meshy_sig = tool_name
             _cache = getattr(self, "_meshy_turn_cache", None)
-            if _cache is not None and _sig in _cache:
+            if _cache is not None and meshy_sig in _cache:
                 print("[meshy] 同轮去重（确认前）：跳过重复调用 %s" % tool_name)
-                return _cache[_sig]
+                return _cache[meshy_sig]
+
         # per-tool approval (confirm mode)
         if self._confirm_mode and tool_name in CONFIRM_TOOLS:
             if not self._await_confirm(tool_name, kwargs):
                 return {"success": False, "error": "用户取消了该操作"}
+
         # 连接诊断/修复与多 Houdini 实例协作：必须在 app 侧执行，绝不走单一默认 bridge
-        if tool_name in ("check_houdini_connection", "repair_houdini_connection",
-                         "list_houdini_instances", "switch_houdini_instance",
-                         "run_in_houdini_instance", "transfer_nodes_between_instances"):
+        if tool_name in self._CONNECTION_TOOLS:
             return self._run_connection_tool(tool_name, kwargs)
+
         # Meshy 网络工具：app 侧后台线程执行，绝不进 Houdini/bridge
-        if tool_name in MESHY_NETWORK_TOOLS and _meshy is not None:
-            # 同一轮内重复的生成调用去重：防止模型/中转站把同一调用发两次
-            # 导致重复弹画廊、重复生成、重复扣费。
-            # 注意：交互工具（带画廊的文生图/图生图/概念图）【不去重】——
-            #   ① 每次都是独立的人在环操作，命中缓存会返回上一批旧结果、不再弹新画廊；
-            #   ② 图生图的参考图来自 _last_attached_images（不在 kwargs 里），
-            #      相同 kwargs 但换了附图会被误判为重复 → 用错图。
-            #   交互工具靠画廊本身（需用户点选才计费）防误触，无需此处去重。
-            is_interactive = tool_name in MESHY_INTERACTIVE_TOOLS
-            try:
-                sig = tool_name + "|" + json.dumps(kwargs, sort_keys=True, default=str)
-            except Exception:
-                sig = tool_name
+        if is_meshy_net:
             cache = getattr(self, "_meshy_turn_cache", None)
-            if cache is not None and not is_interactive and sig in cache:
-                print("[meshy] 同轮去重：跳过重复调用 %s" % tool_name)
-                return cache[sig]
-            if is_interactive:
+            if is_meshy_interactive:
                 mode = "concept" if tool_name == "meshy_concept_to_3d" else "image"
                 res = self._run_meshy_concept(kwargs, mode=mode, tool_name=tool_name)
             else:
@@ -4272,8 +2503,8 @@ class Controller(QObject):
                 else:
                     res = self._run_meshy_network(tool_name, kwargs)
             # 只缓存成功结果：取消/失败不缓存，便于用户重试；交互工具不缓存。
-            if cache is not None and not is_interactive and isinstance(res, dict) and res.get("success"):
-                cache[sig] = res
+            if cache is not None and meshy_sig and isinstance(res, dict) and res.get("success"):
+                cache[meshy_sig] = res
             # 生成成功后若资产库开着，自动刷新（新模型已落到 Meshy 云端）
             if (isinstance(res, dict) and res.get("success")
                     and self._library_open and tool_name != "meshy_balance"
@@ -4284,13 +2515,19 @@ class Controller(QObject):
                     pass
             return res
         if getattr(self._session, "bridge", None) is not None:
-            # 断连自愈：Bridge 可能换了端口（Houdini 重启/端口被占顺延/发现文件过期），
-            # 全端口扫一遍再判死刑。ensure_connected 找到后固化端口，本次调用直接继续。
-            if self._session.bridge.ping() is None and not self._heal_bridge():
-                return {"success": False, "error": _BRIDGE_LOST_MSG}
+            # 断连自愈 + 多实例/场景写锁：自动重连保留，但如果目标 PID 或 .hip 文件已变，
+            # 拦截写操作以防把 A.hip 的修改误发到 B.hip。
+            ok, guard_err = self._check_bridge_write_target(tool_name)
+            if not ok:
+                return guard_err
             try:
                 res = self._session.mcp.execute_tool(tool_name, kwargs)
                 self._last_activity = time.monotonic()
+                # save_hip 会在同一 Houdini 进程内改变 .hip 路径，成功后刷新目标锁
+                if tool_name == "save_hip" and isinstance(res, dict) and res.get("success"):
+                    updated = self._probe_current_bridge_target()
+                    if updated:
+                        self._turn_bridge_target = updated
                 return res
             except Exception as e:
                 if self._session.bridge.ping() is None and not self._heal_bridge():
@@ -4321,665 +2558,6 @@ class Controller(QObject):
                     self._session.stop()
                 return {"success": False, "error": "tool execution timed out (75s); 已请求停止以避免卡死"}
 
-    def _run_meshy_network(self, tool_name, kwargs):
-        """Run a Meshy network tool, streaming progress to a MeshyCard. Runs the
-        actual polling on a sub-thread so the user can hit 转入后台: the tool then
-        returns to the agent immediately and the result is delivered as a new
-        message when it finishes. Never touches Houdini / the bridge."""
-        import uuid
-        op = uuid.uuid4().hex
-        label = MESHY_LABELS.get(tool_name, tool_name)
-        bg_evt = threading.Event()
-        self._meshy_bg_requests[op] = bg_evt
-        self._meshy_bg[op] = {"op": op, "tool": tool_name, "label": label,
-                              "stage": "提交", "progress": 0, "status": "PENDING",
-                              "done": False, "ok": None, "summary": ""}
-
-        def emit(stage, progress, status, done=False, ok=True, thumb="", summary="",
-                 background=False):
-            t = self._meshy_bg.get(op)
-            if t is not None:
-                t.update(stage=stage, progress=int(progress), status=status,
-                         done=done, ok=ok, summary=summary or t.get("summary", ""))
-            try:
-                self._sigMeshyProgress.emit(json.dumps(
-                    {"op": op, "tool": tool_name, "stage": stage,
-                     "progress": int(progress), "status": status, "done": done,
-                     "ok": ok, "thumb": thumb, "summary": summary,
-                     "background": background, "backgroundable": not done}, default=str))
-            except Exception:
-                pass
-
-        def on_progress(stage, progress, status):
-            emit(stage, progress, status)
-            try:
-                self._sigStatus.emit("tool:%s · %s %d%%" % (tool_name, stage, progress))
-            except Exception:
-                pass
-
-        def should_stop():
-            if bg_evt.is_set():
-                return False   # 已转后台：不随 agent 的停止 / 新一轮而中断
-            try:
-                return bool(self._session and self._session.client.is_stop_requested())
-            except Exception:
-                return False
-
-        emit("提交", 0, "PENDING")
-        holder = {}
-        done_evt = threading.Event()
-
-        def work():
-            try:
-                res = _meshy.run_network(tool_name, kwargs,
-                                         on_progress=on_progress, should_stop=should_stop)
-            except Exception as e:
-                res = {"success": False, "error": "Meshy 执行异常: %s" % e}
-            holder["res"] = res
-            if bg_evt.is_set():
-                # 已转后台：不再更新卡片（避免与新一轮的 block 错位），结果只发给 agent
-                self._deliver_bg_result(op, tool_name, res)
-            else:
-                ok = bool(res.get("success"))
-                data = res.get("data") or {}
-                summary = res.get("result") if ok else res.get("error", "")
-                emit("完成" if ok else "失败", 100 if ok else 0,
-                     "SUCCEEDED" if ok else "FAILED", done=True, ok=ok,
-                     thumb=data.get("thumbnail") or "", summary=summary or "")
-            done_evt.set()
-
-        threading.Thread(target=work, daemon=True).start()
-
-        # 在 agent 线程上等待：要么任务完成（内联返回），要么用户点了"转入后台"
-        while True:
-            if done_evt.wait(timeout=0.15):
-                self._meshy_bg_requests.pop(op, None)
-                if not bg_evt.is_set():
-                    self._meshy_bg.pop(op, None)   # 内联完成的不留在后台列表里
-                self._last_activity = time.monotonic()
-                return holder.get("res", {"success": False, "error": "未知错误"})
-            if bg_evt.is_set():
-                self._meshy_bg_requests.pop(op, None)
-                # 卡片立刻冻结为"已转入后台"终态：不再更新、按钮消失、无法重复点击
-                prog = int((self._meshy_bg.get(op) or {}).get("progress", 0))
-                emit("已转入后台", prog, "后台", done=True, ok=True, background=True,
-                     summary="已转入后台运行，完成后结果会自动发给 Agent（此卡片不再更新）。")
-                self._last_activity = time.monotonic()
-                return {"success": True, "error": "",
-                        "result": ("已将【%s】转入后台运行（任务号 %s）。你现在可以继续做"
-                                   "别的事；该任务完成后，结果会自动作为新消息发给你——"
-                                   "无需轮询 meshy_task_status，请直接结束本轮或处理其他事项，"
-                                   "只在用户主动追问进度时才查询。"
-                                   % (label, op[:8])),
-                        "data": {"background": True, "op": op}}
-
-    @Slot(str)
-    def backgroundMeshyTask(self, op):
-        """QML -> 把某个正在跑的 Meshy 任务转入后台（不再阻塞 agent）。"""
-        evt = self._meshy_bg_requests.get(op)
-        if evt is not None:
-            evt.set()
-            self.toast.emit(self.tr("已转入后台，完成后自动通知"))
-
-    def _enqueue_bg_feedback(self, text, label=""):
-        """把一条后台完成结果排队，并通知主线程投递给 agent。"""
-        with self._meshy_bg_lock:
-            self._meshy_bg_feedback.append(text)
-        try:
-            self.toast.emit(self.tr("后台任务完成") + (("：" + label) if label else ""))
-        except Exception:
-            pass
-        try:
-            self._sigDeliverBg.emit()   # 切到主线程投递
-        except Exception:
-            pass
-
-    def _deliver_bg_result(self, op, tool_name, res):
-        """后台单任务完成：组织反馈文本并排队（agent 空闲时作为新一轮投递）。"""
-        label = MESHY_LABELS.get(tool_name, tool_name)
-        ok = bool(res.get("success"))
-        summary = (res.get("result") if ok else res.get("error", "")) or ""
-        text = ("【后台任务完成】%s（任务号 %s）%s\n%s"
-                % (label, op[:8], "成功" if ok else "失败", summary))
-        if ok:
-            text += "\n请根据上面的结果继续后续步骤（例如调用 import_3d_asset 导入到 Houdini）。"
-        t = self._meshy_bg.get(op)
-        if t is not None:
-            t["done"] = True
-            t["ok"] = ok
-        self._enqueue_bg_feedback(text, label)
-
-    def _await_or_background(self, op, runnable, on_bg_complete):
-        """在子线程跑 runnable()，在 agent 线程上等待：要么完成（返回
-        ('done', result, error)），要么用户点了"转入后台"（立即返回 ('bg', None, None)，
-        子线程继续，完成时回调 on_bg_complete(result, error)）。"""
-        holder = {}
-        done_evt = threading.Event()
-        evt = self._meshy_bg_requests.get(op) or threading.Event()
-
-        def work():
-            try:
-                holder["res"] = runnable()
-            except Exception as e:
-                holder["err"] = e
-            done_evt.set()
-            if evt.is_set():
-                try:
-                    on_bg_complete(holder.get("res"), holder.get("err"))
-                except Exception as ex:
-                    print("[meshy] gallery bg deliver failed:", ex)
-
-        threading.Thread(target=work, daemon=True).start()
-        while True:
-            if done_evt.wait(timeout=0.15):
-                return ("done", holder.get("res"), holder.get("err"))
-            if evt.is_set():
-                return ("bg", None, None)
-
-    @Slot()
-    def _flush_bg_feedback(self):
-        """主线程：若 agent 空闲，则把已完成的后台任务结果作为新一轮发给它继续。"""
-        if self._running:
-            return   # 当前还在跑——等这轮结束后由 _ui_done 再调用一次
-        with self._meshy_bg_lock:
-            if not self._meshy_bg_feedback:
-                return
-            batch = list(self._meshy_bg_feedback)
-            self._meshy_bg_feedback = []
-            # 清掉已完成且已投递的后台任务
-            for k in [k for k, v in self._meshy_bg.items() if v.get("done")]:
-                self._meshy_bg.pop(k, None)
-        text = "\n\n".join(batch)
-        if not self._session:
-            # 无后端（预览）时只提示
-            self.toast.emit(self.tr("后台任务完成"))
-            return
-        # 静默喂给 agent：不往聊天窗口里塞这条原始后台反馈（避免困扰用户）。
-        # agent 收到后据此继续，它后续的动作/回复会正常显示。
-        self._log_chat("BG", text)
-        self._start_run(text, tools=None, max_iter=None, images=None)
-
-    @Slot(result="QVariantMap")
-    def _meshy_task_status(self, kwargs):
-        op = (kwargs or {}).get("op") or (kwargs or {}).get("task_id")
-        items = list(self._meshy_bg.values())
-        if op:
-            op = str(op)
-
-            def _match(t_op):
-                # 完整 token 精确匹配；只有 hex 任务号（agent 拿 op[:8] 查）才按前缀匹配，
-                # 且要求前缀长度>=8，避免短数字 token "batch1" 误命中 "batch10"。
-                return t_op == op or (len(op) >= 8 and t_op.startswith(op))
-
-            items = [t for t in items if _match(t.get("op", ""))]
-            if not items:
-                return {"success": True, "error": "",
-                        "result": "没找到任务 %s（可能已完成并已把结果发给你了）。" % op}
-        if not items:
-            return {"success": True, "error": "",
-                    "result": "当前没有正在后台运行的 Meshy 任务。", "data": {"tasks": []}}
-        lines = ["当前后台 Meshy 任务："]
-        for t in items:
-            lines.append("- %s · 任务号 %s · %s · %d%% · %s%s"
-                         % (t.get("label"), (t.get("op") or "")[:8], t.get("stage"),
-                            int(t.get("progress", 0)), t.get("status"),
-                            "（已完成，结果即将发给你）" if t.get("done") else ""))
-        return {"success": True, "error": "", "result": "\n".join(lines),
-                "data": {"tasks": items}}
-
-    def _run_meshy_concept(self, kwargs, mode="concept", tool_name=""):
-        """Concept/image gallery flow (human-in-the-loop, worker thread): generate
-        N images in parallel -> gallery (multi-select + editable prompt + regenerate
-        + 二次图生图编辑) -> finish with images (mode 'image') or image-to-3d for the
-        chosen ones (mode 'concept'). Loops in-place (no LLM round-trip). If reference
-        images are supplied (meshy_image_to_image, or the user picks 'edit'),
-        generation goes through Meshy image-to-image."""
-        maxp = getattr(_meshy, "MAX_PARALLEL", 4)
-        prompt = (kwargs.get("prompt") or "").strip()
-        prompts_in = kwargs.get("prompts")
-        prompt_drop = 0
-        if isinstance(prompts_in, (list, tuple)) and any(str(p).strip() for p in prompts_in):
-            # 多个不同提示词，各并行出一张
-            clean = [str(p).strip() for p in prompts_in if str(p).strip()]
-            if len(clean) > maxp:
-                prompt_drop = len(clean) - maxp   # 超出单次上限的提示词，明确告知而非静默丢
-            prompt_list = clean[:maxp]
-        elif prompt:
-            # 单一提示词的 count 个变体
-            cnt = max(1, min(int(kwargs.get("count", 2) or 2), maxp))
-            prompt_list = [prompt] * cnt
-        else:
-            return {"success": False, "error": "缺少 prompt 或 prompts"}
-        card_prompt = prompt or prompt_list[0]
-        raw_model = str(kwargs.get("ai_model") or "").strip()
-        ai_model = raw_model if raw_model else self._effective_default_image_model()
-        aspect_ratio = kwargs.get("aspect_ratio", "1:1")
-        enable_pbr = bool(kwargs.get("enable_pbr", True))
-        topology = kwargs.get("topology", "triangle")
-        poly = int(kwargs.get("target_polycount", 30000) or 30000)
-
-        # 初始参考图（meshy_image_to_image 用 image/images）：有则首轮即走图生图
-        refs_in = kwargs.get("images")
-        if not (isinstance(refs_in, (list, tuple)) and refs_in):
-            single = kwargs.get("image")
-            refs_in = [single] if single else []
-        base_refs = [r for r in refs_in if r] or None
-        # 图生图参考图优先级：
-        #  1) 模型显式给的、确实存在的本地文件——这正是画廊"二次编辑选中概念图"指令里
-        #     回传的真实概念图路径，必须优先，绝不能被会话里更早的旧附图覆盖（否则
-        #     用户一旦本会话传过任意图，之后所有概念图二次编辑都会去改那张旧图）。
-        #  2) 否则用用户本会话附带的图（模型常编造不存在的 URL/路径，附图更可信）。
-        #  3) 否则用模型给的 URL/data URI 原样。
-        if tool_name == "meshy_image_to_image":
-            model_local = [r for r in (base_refs or []) if os.path.isfile(str(r))]
-            attached = list(getattr(self, "_last_attached_images", []) or [])
-            if model_local:
-                base_refs = model_local[:5]
-            elif attached:
-                base_refs = attached[:5]
-            if base_refs is None:
-                return {"success": False,
-                        "error": "meshy_image_to_image 需要参考图：请在对话中附带一张图片，"
-                                 "或用 image 参数给出图片的本地路径/URL。"}
-
-        self._int_seq += 1
-        token = "concept%d" % self._int_seq
-        q = queue.Queue()
-        self._interactive[token] = q
-
-        # 注册为可后台化任务（用 token 当 op）：长生成阶段可「转入后台」
-        label = MESHY_LABELS.get(tool_name, "图片生成")
-        bg_evt = threading.Event()
-        self._meshy_bg_requests[token] = bg_evt
-        self._meshy_bg[token] = {"op": token, "tool": tool_name or "meshy_image_to_image",
-                                 "label": label, "stage": "生成图片", "progress": 0,
-                                 "status": "IN_PROGRESS", "done": False, "ok": None, "summary": ""}
-        _STAGE = {"gen": "生成图片", "making3d": "生成3D", "pick": "等待选择",
-                  "done": "完成", "cancelled": "已取消", "background": "已转入后台"}
-
-        def show(**fields):
-            t = self._meshy_bg.get(token)
-            if t is not None:
-                if "progress" in fields:
-                    try:
-                        t["progress"] = int(fields["progress"])
-                    except Exception:
-                        pass
-                ph = fields.get("phase")
-                if ph:
-                    t["stage"] = _STAGE.get(ph, ph)
-            payload = {"token": token, "mode": mode, "op": token, "model": ai_model}
-            payload.update(fields)
-            try:
-                self._sigConcept.emit(json.dumps(payload, default=str))
-            except Exception:
-                pass
-
-        def should_stop():
-            if bg_evt.is_set():
-                return False   # 已转后台：不随 agent 的停止 / 新一轮而中断
-            try:
-                return bool(self._session and self._session.client.is_stop_requested())
-            except Exception:
-                return False
-
-        def imgs(concepts):
-            return [{"index": c["index"], "image": c["image"], "prompt": c.get("prompt", "")}
-                    for c in concepts]
-
-        # 待生成请求 {prompts, refs}：首轮取初始提示词（图生图工具带初始参考图）；
-        # 之后由 regenerate / edit 重新设置。refs 非空 → 走图生图。
-        pending = {"prompts": prompt_list, "refs": base_refs}
-        concepts = []
-
-        try:
-            while True:
-                if should_stop():
-                    show(phase="cancelled", note="已停止")
-                    return {"success": False, "error": "stopped"}
-
-                if pending is not None:
-                    gen_prompts = pending["prompts"]
-                    gen_refs = pending.get("refs")
-                    gen_per_refs = pending.get("per_refs")
-                    gen_count = max(1, len(gen_prompts))
-                    pending = None
-                    editing = bool(gen_refs or gen_per_refs)
-                    note0 = (("图生图编辑中 · %d 张…" % gen_count) if editing
-                             else ("并行生成 %d 张图片…" % gen_count))
-                    if prompt_drop:
-                        note0 += "（单次最多 %d 张，已略去多余的 %d 个提示词）" % (maxp, prompt_drop)
-                        prompt_drop = 0   # 只提示一次
-                    # render N empty slots up-front so parallel generation is visible
-                    show(phase="gen", prompt=card_prompt, count=gen_count, progress=0,
-                         images=[], selected=[], note=note0)
-                    done_imgs = []
-
-                    def on_img(c, _n=gen_count):
-                        done_imgs.append({"index": c["index"], "image": c["image"],
-                                          "prompt": c.get("prompt", "")})
-                        show(phase="gen", prompt=card_prompt, count=_n,
-                             images=list(done_imgs), progress=len(done_imgs) * 100 // _n,
-                             note="%d/%d 完成" % (len(done_imgs), _n))
-
-                    def deliver_gen_bg(res, err):
-                        # 后台生成完成：在独立消息行弹出完整可交互画廊，让用户照常挑选
-                        if err or not res:
-                            self._enqueue_bg_feedback(
-                                "【后台任务】%s 失败：%s" % (label, err or "未知"), label)
-                            return
-                        concepts_full = [{"index": c["index"], "image": c["image"],
-                                          "prompt": c.get("prompt", "")} for c in res]
-                        with self._meshy_bg_lock:
-                            self._bg_galleries[token] = {
-                                "concepts": concepts_full, "mode": mode, "model": ai_model,
-                                "card_prompt": card_prompt, "tool": tool_name, "label": label}
-                            self._meshy_bg.pop(token, None)   # 不再算"运行中"
-                        self._sigShowBgGallery.emit(token)
-
-                    status, concepts, gerr = self._await_or_background(
-                        token,
-                        lambda: _meshy.generate_concepts(
-                            gen_prompts, ai_model, aspect_ratio=aspect_ratio,
-                            reference_images=gen_refs, per_prompt_refs=gen_per_refs,
-                            on_progress=lambda s, p, st: None,
-                            on_image=on_img, should_stop=should_stop),
-                        deliver_gen_bg)
-                    if status == "bg":
-                        # 转后台：这张卡片定格（显示已生成的部分），完成后会另弹一张可交互画廊
-                        show(phase="background", prompt=card_prompt,
-                             images=list(done_imgs),
-                             note="已转入后台运行中…完成后会在下方弹出可挑选的画廊")
-                        return {"success": True, "error": "",
-                                "result": ("已将【%s】的概念图生成转入后台（任务号 %s）。完成后会"
-                                           "【自动弹出可交互画廊让用户挑选】——你无需处理这批图，"
-                                           "继续响应用户的其他需求即可。" % (label, token[:8])),
-                                "data": {"background": True, "op": token}}
-                    if gerr:
-                        show(phase="cancelled", note="生成失败: %s" % gerr)
-                        return {"success": False, "error": "图片生成失败: %s" % gerr}
-
-                show(phase="pick", prompt=card_prompt, count=len(concepts),
-                     images=imgs(concepts), selected=[], progress=100, note="")
-                # 分段等待用户选择：每 0.3s 检查一次停止/转后台请求，最长 1800s。
-                # 否则一次性 q.get(1800) 阻塞期间用户点 Stop 完全没反应（要等满 30 分钟）。
-                decision = None
-                _waited = 0.0
-                while decision is None:
-                    if should_stop():
-                        show(phase="cancelled", note="已停止")
-                        return {"success": False, "error": "stopped"}
-                    if bg_evt.is_set():
-                        decision = {"action": "cancel"}
-                        break
-                    try:
-                        decision = q.get(timeout=0.3)
-                    except queue.Empty:
-                        _waited += 0.3
-                        if _waited >= 1800:
-                            decision = {"action": "cancel"}
-                action = (decision or {}).get("action")
-
-                if action == "set_model":
-                    # 用户在画廊里换了生图模型：用相同提示词就地换模型重出（不绕回 Agent、不改提示词）
-                    nm = (decision.get("model") or "").strip()
-                    if nm:
-                        ai_model = nm
-                    cur_prompts = [c.get("prompt") for c in concepts if c.get("prompt")] or prompt_list
-                    pending = {"prompts": cur_prompts, "refs": base_refs}
-                    show(phase="gen", prompt=card_prompt, count=len(cur_prompts),
-                         images=[], selected=[], progress=0,
-                         note="切换模型 %s · 重新生成…" % self.imageModelDisplayName(ai_model))
-                    continue
-
-                if action == "regenerate":
-                    # 不直接拿用户文字调 API：把反馈交回 Agent，让它理解意图、改写提示词后重做
-                    fb = (decision.get("prompt") or "").strip()
-                    gen_tool = "meshy_image_to_image" if base_refs else "meshy_text_to_image"
-                    show(phase="done", images=imgs(concepts), progress=100,
-                         note="已把你的意见交给 Agent，优化提示词后重做…")
-                    lines = ["【用户反馈 · 要求重做这批图】"]
-                    lines.append("用户意见：%s" % fb if fb
-                                 else "用户没满意但未给具体意见——请你判断如何改进。")
-                    lines.append("当前提示词：%s" % card_prompt)
-                    lines.append("请【理解用户意图、自行改写/优化提示词】（不要原样照搬用户字面），"
-                                 "然后重新调用 %s 生成新的一批。" % gen_tool)
-                    return {"success": True, "result": "\n".join(lines), "error": "",
-                            "data": {"action": "regenerate", "feedback": fb,
-                                     "prev_prompt": card_prompt}}
-
-                if action == "edit":
-                    # 不直接调 API：把"选中的图 + 用户改动意见"交回 Agent，由它写出更好的
-                    # 图生图提示词，再调用 meshy_image_to_image(image=该图路径) 重做。
-                    fb = (decision.get("prompt") or "").strip()
-                    sel = [int(i) for i in (decision.get("selected") or [])]
-                    sel_imgs = [c["image"] for c in concepts if c["index"] in sel]
-                    if not sel_imgs:
-                        show(phase="pick", prompt=card_prompt, count=len(concepts),
-                             images=imgs(concepts), note="请先选中要编辑的图片，再点二次编辑")
-                        continue
-                    if not fb:
-                        show(phase="pick", prompt=card_prompt, count=len(concepts),
-                             images=imgs(concepts), note="请在提示词框写明想要的改动，再点二次编辑")
-                        continue
-                    show(phase="done", images=imgs(concepts), selected=sel, progress=100,
-                         note="已把你的反馈交给 Agent，做二次编辑…")
-                    lines = ["【用户反馈 · 二次编辑选中图】",
-                             "用户希望的改动：%s" % fb,
-                             "选中的参考图（本地路径）："]
-                    lines += ["- %s" % p for p in sel_imgs]
-                    lines.append("请理解意图、写出更好的英文编辑提示词，然后调用 "
-                                 "meshy_image_to_image(image=\"<上面某个路径>\", prompt=\"<优化后的编辑提示>\") 重做"
-                                 "（要同时参考多张就用 images=[...]）。")
-                    return {"success": True, "result": "\n".join(lines), "error": "",
-                            "data": {"action": "edit", "feedback": fb, "images": sel_imgs}}
-
-                if action == "done":
-                    # 2D-only: finish with the (selected, or all) images, no 3D
-                    selset = set(int(i) for i in (decision.get("selected") or []))
-                    kept = [c for c in concepts if c["index"] in selset] or concepts
-                    show(phase="done", images=imgs(concepts),
-                         selected=sorted(selset), progress=100,
-                         note="已保留 %d 张图片" % len(kept))
-                    lines = ["已生成 %d 张图片：" % len(kept)]
-                    for c in kept:
-                        lines.append("- %s" % c["image"])
-                    lines.append("若要把某张做成 3D，调用 meshy_image_to_3d(image=\"<本地路径>\")；"
-                                 "若要在某张基础上继续改图，调用 meshy_image_to_image(image=\"<本地路径>\", prompt=\"…\")。")
-                    return {"success": True, "result": "\n".join(lines), "error": "",
-                            "data": {"images": kept}}
-
-                if action != "submit":
-                    show(phase="cancelled", note="已取消")
-                    return {"success": False, "error": "用户取消了图片选择"}
-
-                sel = [int(i) for i in (decision.get("selected") or [])]
-                chosen = [c for c in concepts if c["index"] in sel]
-                if not chosen:
-                    # 未选中任何图就点"做成 3D"：不默认拿第一张去计费（每个都烧 credits），
-                    # 回到选择态提示用户先选，避免无感知扣费。
-                    show(phase="pick", prompt=card_prompt, count=len(concepts),
-                         images=imgs(concepts),
-                         note="请先选中要做成 3D 的图片（每个都会消耗 credits），再点生成")
-                    continue
-                sel_count = len(chosen)
-                dropped_n = 0
-                if sel_count > maxp:
-                    # 单次最多并行 maxp 个 image-to-3d；超出的不静默丢弃，明确告知。
-                    dropped_n = sel_count - maxp
-                    chosen = chosen[:maxp]
-                note3d = "生成 %d 个 3D 模型中…" % len(chosen)
-                if dropped_n:
-                    note3d += "（单次最多 %d 个，另 %d 张本次未处理）" % (maxp, dropped_n)
-                show(phase="making3d", prompt=card_prompt, images=imgs(concepts),
-                     selected=sel, progress=0, note=note3d)
-
-                _PROC_NOTE = (
-                    "【流程说明 · 概念图→3D 已完成】用户在画廊里选中了图片，并选择把它们"
-                    "【直接升级成 3D 模型】——这是预期内的流程。下面是最终产物：【3D 模型】"
-                    "（不是概念图）。请直接用 import_3d_asset 导入，"
-                    "【不要再重新生成概念图，也不要重做 2D 图】。\n")
-
-                m3errs = []
-
-                def _models_summary(results):
-                    out = ["3D 生成完成，共 %d 个模型：" % len(results)]
-                    for r in results:
-                        g = r.get("glb"); td = r.get("texture_dir")
-                        out.append("- glb: %s%s" % (g, (" · texture_dir: %s" % td) if td else ""))
-                    if dropped_n:
-                        out.append("注意：你选了 %d 张，但单次最多并行 %d 个 image-to-3d，"
-                                   "其余 %d 张本次未生成；如需补做请对它们再次发起 meshy_image_to_3d。"
-                                   % (sel_count, maxp, dropped_n))
-                    if m3errs:
-                        out.append("注意：有 %d 张图的 3D 生成失败（可能已消耗 credits）：%s"
-                                   % (len(m3errs), "; ".join(str(e)[:80] for e in m3errs)))
-                    out.append("请对每个 glb 调用 import_3d_asset 导入 Houdini。")
-                    return "\n".join(out)
-
-                def deliver_3d_bg(results, err):
-                    # 后台 3D 完成：不再更新卡片（已冻结），只把模型路径 + 流程说明发给 agent
-                    if err or not results:
-                        self._enqueue_bg_feedback("【后台任务】%s 3D 生成失败：%s"
-                                                  % (label, err or "未知"), label)
-                        return
-                    self._enqueue_bg_feedback("【后台任务完成】" + _PROC_NOTE + _models_summary(results), label)
-
-                status, results, m3err = self._await_or_background(
-                    token,
-                    lambda: _meshy.concepts_to_3d(
-                        chosen, enable_pbr=enable_pbr, topology=topology,
-                        target_polycount=poly,
-                        on_progress=lambda s, p, st: show(phase="making3d", progress=p,
-                                                          note="%s %s" % (s, st),
-                                                          images=imgs(concepts), selected=sel),
-                        should_stop=should_stop, errors_out=m3errs),
-                    deliver_3d_bg)
-                if status == "bg":
-                    # 冻结卡片为"已转入后台"终态
-                    show(phase="background", prompt=card_prompt, images=imgs(concepts),
-                         selected=sel, note="已转入后台运行中…3D 完成后结果会自动发给 Agent")
-                    return {"success": True, "error": "",
-                            "result": ("已将【%s 的 3D 生成】转入后台（任务号 %s）。完成后我会把"
-                                       "模型路径自动发给你以便导入。" % (label, token[:8])),
-                            "data": {"background": True, "op": token}}
-                if m3err:
-                    show(phase="cancelled", note="3D 生成失败: %s" % m3err)
-                    return {"success": False, "error": "3D 生成失败: %s" % m3err}
-
-                res_thumbs = [{"index": r.get("concept_index", i),
-                               "image": r.get("thumbnail") or ""}
-                              for i, r in enumerate(results)]
-                show(phase="done", images=imgs(concepts), selected=sel,
-                     results=res_thumbs, progress=100,
-                     note="生成的 3D 模型 · %d" % len(results))
-                return {"success": True, "result": _PROC_NOTE + _models_summary(results),
-                        "error": "", "data": {"models": results}}
-        finally:
-            self._interactive.pop(token, None)
-            self._meshy_bg_requests.pop(token, None)
-            # 内联完成（未转后台）的画廊任务不留在后台列表里
-            if not bg_evt.is_set():
-                self._meshy_bg.pop(token, None)
-            self._last_activity = time.monotonic()
-
-    def _run_meshy_batch(self, tool_name, kwargs, count):
-        """Parallel multi-generation for a batch-capable Meshy tool (count>1):
-        generate N variants concurrently, fill gallery slots as each finishes,
-        then show the result thumbnails. Returns all GLBs for the agent to import.
-        Non-interactive (no pick step) — reuses the gallery card via _sigConcept.
-        可「转入后台」：长时间的 count>1 批量生成不再独占 agent 线程。"""
-        count = max(1, min(int(count or 1), getattr(_meshy, "MAX_PARALLEL", 4)))
-        self._int_seq += 1
-        token = "batch%d" % self._int_seq
-        labels = {"meshy_text_to_3d": "文生3D", "meshy_image_to_3d": "图生3D",
-                  "meshy_retexture": "重打材质", "meshy_remesh": "重拓扑"}
-        title = "%s ×%d" % (labels.get(tool_name, tool_name), count)
-        label = labels.get(tool_name, tool_name)
-
-        bg_evt = threading.Event()
-        self._meshy_bg_requests[token] = bg_evt
-        self._meshy_bg[token] = {"op": token, "tool": tool_name, "label": label,
-                                 "stage": "生成", "progress": 0, "status": "IN_PROGRESS",
-                                 "done": False, "ok": None, "summary": ""}
-
-        def show(**fields):
-            payload = {"token": token, "mode": "batch", "title": title,
-                       "backgroundable": True}
-            payload.update(fields)
-            try:
-                self._sigConcept.emit(json.dumps(payload, default=str))
-            except Exception:
-                pass
-
-        def should_stop():
-            if bg_evt.is_set():
-                return False     # 已转后台：不随 agent 停止/新一轮而中断
-            try:
-                return bool(self._session and self._session.client.is_stop_requested())
-            except Exception:
-                return False
-
-        show(phase="gen", count=count, images=[], progress=0,
-             note="并行生成 %d 个…（可转入后台）" % count)
-        done = []
-
-        def on_item(i, data):
-            done.append({"index": i, "image": data.get("thumbnail") or ""})
-            show(phase="gen", count=count, images=list(done),
-                 progress=len(done) * 100 // count,
-                 note="%d/%d 完成" % (len(done), count))
-
-        def _summary(results, errors):
-            lines = ["并行生成完成，共 %d 个%s："
-                     % (len(results), ("（请求 %d 个）" % count) if len(results) < count else "")]
-            for r in results:
-                g = r.get("glb")
-                t = r.get("texture_dir")
-                lines.append("- glb: %s%s" % (g, (" · texture_dir: %s" % t) if t else ""))
-            if errors:
-                lines.append("注意：有 %d 个生成失败（可能已消耗 credits）：%s"
-                             % (len(errors), "; ".join(str(e)[:80] for e in errors)))
-            lines.append("请对每个 glb 调用 import_3d_asset 导入 Houdini。")
-            return "\n".join(lines)
-
-        errs = []
-
-        def deliver_bg(results, err):
-            if err or not results:
-                self._enqueue_bg_feedback("【后台任务】%s 失败：%s" % (label, err or "未知"), label)
-                return
-            self._enqueue_bg_feedback("【后台任务完成】" + _summary(results, errs), label)
-
-        try:
-            status, results, perr = self._await_or_background(
-                token,
-                lambda: _meshy.run_network_parallel(
-                    tool_name, kwargs, count, on_item=on_item,
-                    should_stop=should_stop, errors_out=errs),
-                deliver_bg)
-            if status == "bg":
-                show(phase="background", count=count, images=list(done),
-                     note="已转入后台运行中…完成后结果会自动发给 Agent")
-                return {"success": True, "error": "",
-                        "result": ("已将【%s ×%d】转入后台运行（任务号 %s）。完成后结果会"
-                                   "自动作为新消息发给你——无需轮询。" % (label, count, token[:8])),
-                        "data": {"background": True, "op": token}}
-            if perr:
-                show(phase="cancelled", note="失败: %s" % perr)
-                return _meshy._err("并行生成失败: %s" % perr) if hasattr(_meshy, "_err") \
-                    else {"success": False, "error": "并行生成失败: %s" % perr, "result": "", "data": {}}
-            thumbs = [{"index": i, "image": r.get("thumbnail") or ""}
-                      for i, r in enumerate(results)]
-            show(phase="done", images=thumbs, results=thumbs, progress=100,
-                 note="生成结果 · %d" % len(results))
-            return {"success": True, "result": _summary(results, errs), "error": "",
-                    "data": {"models": results}}
-        finally:
-            self._meshy_bg_requests.pop(token, None)
-            if not bg_evt.is_set():
-                self._meshy_bg.pop(token, None)
-            self._last_activity = time.monotonic()
 
     # tools that mutate the scene (need an undo group + node-change snapshot)
     _MUTATING = {"create_node", "create_nodes_batch", "create_wrangle_node", "delete_node",
@@ -5050,174 +2628,9 @@ class Controller(QObject):
 
     _SLOW_COOK_SEC = 12.0
 
-    def _realtime_cook(self, result):
-        """Cook display nodes with an interruptible progress dialog (Esc to cancel),
-        measure time, and report it. On interrupt/slow cook, switch to Manual and
-        suspend realtime cook for the rest of the run (avoids re-cook deadlock)."""
-        if self._cook_suspended:
-            return
-        import time as _t
-        try:
-            import hou
-        except Exception:
-            return
-        obj = hou.node("/obj")
-        if obj is None:
-            return
-        targets = []
-        for child in obj.children():
-            try:
-                if child.type().name() not in ("geo", "subnet"):
-                    continue
-                dn = child.displayNode()
-                if dn is not None:
-                    targets.append(dn)
-            except Exception:
-                pass
-        if not targets:
-            return
-
-        interrupted = False
-        budget = False
-        cooked = False
-        t0 = _t.time()
-        try:
-            with hou.InterruptableOperation("Cooking", long_operation_name="Houdini Agent: cooking",
-                                            open_interrupt_dialog=True) as op:
-                total = len(targets)
-                for i, dn in enumerate(targets):
-                    try:
-                        a = _t.time()
-                        dn.cook(force=False)
-                        if _t.time() - a >= 0.05:
-                            cooked = True
-                    except hou.OperationInterrupted:
-                        interrupted = True
-                        break
-                    except Exception:
-                        pass
-                    if (_t.time() - t0) >= self._SLOW_COOK_SEC:
-                        budget = True
-                        break
-                    try:
-                        op.updateProgress((i + 1) / float(total))
-                    except Exception:
-                        pass
-        except hou.OperationInterrupted:
-            interrupted = True
-        except Exception as e:
-            print("[Cook] interruptable op failed:", e)
-            return
-
-        elapsed = _t.time() - t0
-        slow = elapsed >= self._SLOW_COOK_SEC or budget
-
-        if interrupted or slow:
-            try:
-                if hou.updateModeSetting() != hou.updateMode.Manual:
-                    hou.setUpdateMode(hou.updateMode.Manual)
-            except Exception:
-                pass
-            self._cook_suspended = True
-
-        note = ""
-        if interrupted:
-            note = "cook 已中断 (%.1fs) · 已切手动更新" % elapsed
-        elif slow:
-            note = "cook %.1fs · 较慢，已切手动更新（⋯ 可切回实时）" % elapsed
-        elif cooked:
-            note = "cook %.2fs" % elapsed
-        if note:
-            result["result"] = (str(result.get("result", "")) + " · " + note).strip(" ·")
-
-    @staticmethod
-    def _target_network(kwargs):
-        try:
-            import hou
-        except Exception:
-            return None
-        p = kwargs.get("parent_path") or kwargs.get("parent")
-        if p:
-            return hou.node(p)
-        np = kwargs.get("node_path") or kwargs.get("path")
-        if np:
-            n = hou.node(np)
-            if n and n.parent():
-                return n.parent()
-        try:
-            ed = hou.ui.curDesktop().paneTabOfType(hou.paneTabType.NetworkEditor)
-            if ed:
-                return ed.pwd()
-        except Exception:
-            pass
-        return hou.node("/obj/geo1") or hou.node("/obj")
-
-    @staticmethod
-    def _snapshot_children(network):
-        if network is None:
-            return {}
-        try:
-            return {n.path(): {"name": n.name(), "type": n.type().name(), "path": n.path()}
-                    for n in network.children()}
-        except Exception:
-            return {}
-
-    @staticmethod
-    def _diff_children(before, after):
-        bp, ap = set(before), set(after)
-        created = [after[p] for p in sorted(ap - bp)]
-        deleted = [before[p] for p in sorted(bp - ap)]
-        if not created and not deleted:
-            return None
-        return {"created": created, "deleted": deleted}
 
     # ---- node-operation rows + Keep/Undo ----
-    def _emit_node_ops(self, name, r):
-        ops = []
-        nc = r.get("_node_changes")
-        if isinstance(nc, dict):
-            cre = [x.get("path") for x in nc.get("created", []) if x.get("path")]
-            dele = [x.get("path") for x in nc.get("deleted", []) if x.get("path")]
-            if cre:
-                ops.append({"op": "create", "paths": cre})
-            if dele:
-                ops.append({"op": "delete", "paths": dele})
-        if name == "set_node_parameter":
-            snap = r.get("_undo_snapshot")
-            if isinstance(snap, dict) and snap.get("node_path"):
-                ops.append({"op": "modify", "paths": [snap["node_path"]], "snapshot": snap})
-        for op in ops:
-            self._op_seq += 1
-            oid = str(self._op_seq)
-            self._op_ctx[oid] = op
-            self._sigNodeOp.emit(oid)
 
-    @Slot(str)
-    def _ui_node_op(self, oid):
-        ctx = self._op_ctx.get(oid)
-        if not ctx:
-            return
-        op = ctx.get("op")
-        paths = ctx.get("paths", []) or []
-        if op == "create":
-            block = {"kind": "nodeop", "opId": oid, "badge": "+%d" % len(paths),
-                     "text": "nodes created", "paths": " · ".join(paths)}
-        elif op == "delete":
-            block = {"kind": "nodeop", "opId": oid, "badge": "-%d" % len(paths),
-                     "text": "nodes deleted", "paths": " · ".join(paths)}
-        elif op == "modify":
-            snap = ctx.get("snapshot") or {}
-            block = {"kind": "nodeop", "opId": oid, "badge": "~",
-                     "text": snap.get("param_name", ""),
-                     "old": self._short_val(snap.get("old_value"), 60),
-                     "new": self._short_val(snap.get("new_value"), 60),
-                     "paths": " · ".join(paths)}
-        else:
-            return
-        self._blocks.append(block)
-        self._pending_ops += 1
-        self.pendingOpsChanged.emit()
-        self._flush()
 
     @Slot(str)
     def _ui_image(self, data_uri):
@@ -5232,525 +2645,18 @@ class Controller(QObject):
             self.statusChanged.emit()
 
     # ---- todo card ----
-    def _handle_todo(self, tool_name, kwargs):
-        self._sigTodo.emit(json.dumps({
-            "id": kwargs.get("todo_id", ""), "text": kwargs.get("text", ""),
-            "status": kwargs.get("status", "pending")}, default=str))
-        return {"success": True, "result": "todo %s updated" % kwargs.get("todo_id", "")}
 
-    @Slot(str)
-    def _ui_todo(self, js):
-        try:
-            d = json.loads(js)
-        except Exception:
-            return
-        if self._todo_block is None:
-            self._todo_block = {"kind": "todo", "items": []}
-            self._blocks.append(self._todo_block)
-        tid = d.get("id")
-        for it in self._todo_block["items"]:
-            if it["id"] == tid:
-                if d.get("status"):
-                    it["status"] = d["status"]
-                if d.get("text"):
-                    it["text"] = d["text"]
-                break
-        else:
-            self._todo_block["items"].append(
-                {"id": tid, "text": d.get("text", ""), "status": d.get("status", "pending")})
-        self._flush()
 
     # ---- Meshy generation card ----
-    @Slot(str)
-    def _ui_meshy_progress(self, js):
-        try:
-            d = json.loads(js)
-        except Exception:
-            return
-        # Meshy 生成期间只发进度信号、不走 content/tool 回调；这里刷新活动时间，
-        # 否则长达数分钟的正常生成会被看门狗误判为"超过 45 秒无进展"。
-        self._touch_activity()
-        op = d.get("op")
-        block = self._meshy_ops.get(op)
-        if block is None:
-            block = {"kind": "meshy", "op": op, "tool": d.get("tool", ""),
-                     "stage": "", "progress": 0, "status": "", "done": False,
-                     "ok": True, "thumb": "", "summary": ""}
-            self._meshy_ops[op] = block
-            self._blocks.append(block)
-        block["stage"] = d.get("stage", block["stage"])
-        block["progress"] = d.get("progress", block["progress"])
-        block["status"] = d.get("status", block["status"])
-        if d.get("done"):
-            block["done"] = True
-            block["ok"] = bool(d.get("ok", True))
-            block["thumb"] = d.get("thumb", "")
-            block["summary"] = d.get("summary", "")
-        self._flush()
 
     # ---- Meshy concept-gallery card ----
-    @Slot(str)
-    def _ui_concept(self, js):
-        try:
-            d = json.loads(js)
-        except Exception:
-            return
-        self._touch_activity()   # 画廊生成/等待选择期间同样刷新活动时间，避免看门狗误报
-        token = d.get("token")
-        if not token:
-            return
-        block = self._concept_blocks.get(token)
-        if block is None:
-            block = {"kind": "concept", "token": token, "phase": "gen",
-                     "prompt": "", "images": [], "selected": [], "progress": 0,
-                     "note": "", "count": 2}
-            self._concept_blocks[token] = block
-            self._blocks.append(block)
-        for k, v in d.items():
-            if k == "token":
-                continue
-            block[k] = v
-        self._flush()
 
-    @Slot(str, str)
-    def resolveConcept(self, token, decision_json):
-        """QML -> worker: {action:'submit',selected:[..]} | {action:'regenerate',prompt} | {action:'cancel'}"""
-        try:
-            d = json.loads(decision_json) if decision_json else {}
-        except Exception:
-            d = {}
-        q = self._interactive.get(token)
-        if q is not None:
-            q.put(d)
-            return
-        # 后台跑完弹出的画廊：原阻塞流程已结束，挑选结果转成给 Agent 的指令
-        if token in self._bg_galleries:
-            self._handle_bg_gallery_decision(token, d)
-
-    @Slot(str)
-    def _show_bg_gallery(self, token):
-        """后台概念图跑完：在一条独立消息行里弹出完整可交互画廊（agent 忙时排队）。"""
-        g = self._bg_galleries.get(token)
-        if not g:
-            return
-        if self._running:
-            if token not in self._pending_bg_galleries:
-                self._pending_bg_galleries.append(token)
-            return
-        concepts = g["concepts"]
-        # 独立系统消息行承载这张画廊（不调 _start_run，避免触发 agent 轮次）。
-        # 每张后台画廊各占一行、各有自己的 BlockModel；用 token→bm 映射记下，
-        # 这样后续解析某张画廊时能精确刷新它自己那一行（多张并存时不互相覆盖）。
-        bm = BlockModel()
-        self._bm = bm
-        self._ai_row = self._model.append({"type": "ai", "payload": {"bm": bm}})
-        block = {"kind": "concept", "token": token, "phase": "pick",
-                 "mode": g.get("mode", "concept"), "prompt": g.get("card_prompt", ""),
-                 "model": g.get("model", self._effective_default_image_model()),
-                 "images": list(concepts), "selected": [], "progress": 100,
-                 "count": len(concepts),
-                 "note": "后台已生成 %d 张 · 勾选后可生成 3D / 二次编辑 / 换提示词" % len(concepts)}
-        self._blocks = [block]
-        if not isinstance(getattr(self, "_concept_blocks", None), dict):
-            self._concept_blocks = {}
-        self._concept_blocks[token] = block          # 更新而非整体替换，保留其它 token
-        if not hasattr(self, "_bg_gallery_bm"):
-            self._bg_gallery_bm = {}
-        self._bg_gallery_bm[token] = bm
-        bm.sync(self._blocks)
-        self.toast.emit("后台已生成 %d 张概念图，请在画廊里挑选" % len(concepts))
-
-    def _drain_pending_bg_galleries(self):
-        if self._running or not self._pending_bg_galleries:
-            return
-        pend = self._pending_bg_galleries
-        self._pending_bg_galleries = []
-        for tok in pend:
-            if tok in self._bg_galleries:
-                self._show_bg_gallery(tok)
-
-    def _handle_bg_gallery_decision(self, token, d):
-        """后台画廊（原阻塞已结束）里的挑选：统一转成给 Agent 的指令并发起新一轮。"""
-        g = self._bg_galleries.get(token)
-        if not g:
-            return
-        action = (d or {}).get("action")
-        concepts = g["concepts"]
-        card_prompt = g.get("card_prompt", "")
-
-        def _blk(**fields):
-            blk = (self._concept_blocks or {}).get(token)
-            if blk is None:
-                return
-            blk.update(fields)
-            # 精确刷新这张画廊自己的那一行（不依赖 self._bm 当前指向哪一行），
-            # 多张后台画廊并存时也能正确更新。
-            bm = getattr(self, "_bg_gallery_bm", {}).get(token)
-            if bm is not None:
-                bm.sync([blk])
-            else:
-                self._do_flush()
-
-        def _drop_token():
-            self._bg_galleries.pop(token, None)
-            getattr(self, "_bg_gallery_bm", {}).pop(token, None)
-
-        if action == "submit":
-            sel = [int(i) for i in (d.get("selected") or [])]
-            chosen = [c for c in concepts if c["index"] in sel] or concepts[:1]
-            paths = [c["image"] for c in chosen]
-            _blk(phase="done", selected=sel, note="已交给 Agent 生成 3D…")
-            _drop_token()
-            lines = ["【用户操作 · 把选中的概念图做成 3D】",
-                     "用户在后台完成的画廊里选了这 %d 张图，要【直接升级成 3D 模型】"
-                     "（不是要你重做 2D 图）：" % len(paths)]
-            lines += ["- %s" % p for p in paths]
-            lines.append("请对每张调用 meshy_image_to_3d(image=\"<上面的本地路径>\") 生成，"
-                         "再用 import_3d_asset 导入 Houdini。")
-            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
-            return
-
-        if action == "edit":
-            fb = (d.get("prompt") or "").strip()
-            sel = [int(i) for i in (d.get("selected") or [])]
-            sel_imgs = [c["image"] for c in concepts if c["index"] in sel]
-            if not sel_imgs or not fb:
-                _blk(note="请先选中图片并在提示词框写明想要的改动，再点二次编辑")
-                return
-            _blk(phase="done", selected=sel, note="已把反馈交给 Agent，做二次编辑…")
-            _drop_token()
-            lines = ["【用户反馈 · 二次编辑选中图】", "用户希望的改动：%s" % fb,
-                     "选中的参考图（本地路径）："]
-            lines += ["- %s" % p for p in sel_imgs]
-            lines.append("请理解意图、写出更好的英文编辑提示词，再调用 "
-                         "meshy_image_to_image(image=\"<上面某个路径>\", prompt=\"<优化后的编辑提示>\") 重做。")
-            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
-            return
-
-        if action == "set_model":
-            nm = (d.get("model") or "").strip()
-            gen_tool = ("meshy_image_to_image" if g.get("tool") == "meshy_image_to_image"
-                        else "meshy_text_to_image")
-            _blk(phase="done", model=nm or g.get("model", ""),
-                 note="切换模型 %s · 重新生成…" % self.imageModelDisplayName(nm))
-            _drop_token()
-            lines = ["【用户操作 · 切换生图模型重新生成】",
-                     "目标模型：%s" % nm,
-                     "原提示词：%s" % card_prompt,
-                     "请使用相同提示词调用 %s(prompt=..., ai_model=%r) 重新生成。" % (gen_tool, nm)]
-            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
-            return
-
-        if action == "regenerate":
-            fb = (d.get("prompt") or "").strip()
-            gen_tool = ("meshy_image_to_image" if g.get("tool") == "meshy_image_to_image"
-                        else "meshy_text_to_image")
-            _blk(phase="done", note="已把你的意见交给 Agent，优化提示词后重做…")
-            _drop_token()
-            lines = ["【用户反馈 · 要求重做这批图】"]
-            lines.append("用户意见：%s" % fb if fb
-                         else "用户没满意但未给具体意见——请你判断如何改进。")
-            lines.append("当前提示词：%s" % card_prompt)
-            lines.append("请【理解用户意图、自行改写/优化提示词】（不要原样照搬用户字面），"
-                         "再重新调用 %s 生成新的一批。" % gen_tool)
-            self._start_run("\n".join(lines), tools=None, max_iter=None, images=None)
-            return
-
-        if action == "done":
-            selset = sorted(set(int(i) for i in (d.get("selected") or [])))
-            _blk(phase="done", selected=selset,
-                 note="已保留 %d 张图片" % (len(selset) or len(concepts)))
-            _drop_token()
-            return
-
-        # cancel / 其他
-        _blk(phase="cancelled", note="已取消")
-        _drop_token()
 
     # ---- Meshy 云资产库（侧滑抽屉） ----
-    def _exec_houdini_tool(self, name, kwargs):
-        """从后台线程执行一个 Houdini 侧工具（走 bridge 或主线程阻塞队列）。
-        与 _tool_executor 的 Houdini 分支同路径，但跳过确认门/停止门（用户已显式触发）。"""
-        sess = self._session
-        if sess is None:
-            return {"success": False, "error": "无会话"}
-        if getattr(sess, "bridge", None) is not None:
-            if sess.bridge.ping() is None:
-                return {"success": False, "error": _BRIDGE_LOST_MSG}
-            try:
-                return sess.mcp.execute_tool(name, kwargs)
-            except Exception as e:
-                if sess.bridge.ping() is None:
-                    return {"success": False, "error": _BRIDGE_LOST_MSG}
-                return {"success": False, "error": str(e)}
-        with self._tool_lock:
-            while not self._tool_q.empty():
-                try:
-                    self._tool_q.get_nowait()
-                except queue.Empty:
-                    break
-            self._sigToolExec.emit(name, json.dumps(kwargs, ensure_ascii=False))
-            try:
-                return self._tool_q.get(timeout=120)
-            except queue.Empty:
-                return {"success": False, "error": "导入超时（120s）"}
 
-    @Slot()
-    def toggleLibrary(self):
-        self.setLibraryOpen(not self._library_open)
-
-    @Slot(bool)
-    def setLibraryOpen(self, on):
-        on = bool(on)
-        if on == self._library_open:
-            return
-        self._library_open = on
-        self.libraryOpenChanged.emit()
-        if on:
-            # 每次打开都校验账号（拉余额）并重新拉取资产，保证看到的是最新状态
-            self.syncMeshyAccount()
-            if not self._library_busy:
-                self.refreshLibrary()
-
-    @Slot(result="QVariantList")
-    def libraryItems(self):
-        return list(self._library_items)
-
-    @Slot()
-    def refreshLibrary(self):
-        self._library_page = 1
-        self._load_library(page=1, append=False)
-
-    @Slot()
-    def loadMoreLibrary(self):
-        self._load_library(page=self._library_page + 1, append=True)
-
-    def _load_library(self, page, append):
-        if _meshy is None:
-            self.toast.emit(self.tr("Meshy 集成不可用"))
-            return
-        if self._library_busy:
-            # 已有加载在飞：记一个挂起刷新标记，本次加载结束后补做一次整表刷新
-            # （否则生成成功触发的自动刷新会被静默吞掉，新资产不显示）。
-            if not append:
-                self._library_refresh_pending = True
-            return
-        try:
-            from houdini_agent.meshy import config as _mcfg
-            if not _mcfg.has_api_key():
-                self.toast.emit(self.tr("请先配置 Meshy API Key"))
-                return
-        except Exception:
-            pass
-        self._library_busy = True
-        self._library_loading = True
-        self.libraryLoadingChanged.emit()
-
-        def work():
-            items, err = [], ""
-            try:
-                items = _meshy.list_library(page_num=page, page_size=40)
-            except Exception as e:
-                err = str(e)
-            try:
-                self._sigLibrary.emit(json.dumps(
-                    {"items": items, "append": append, "page": page, "error": err},
-                    default=str))
-            except Exception:
-                pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str)
-    def _ui_library(self, js):
-        try:
-            d = json.loads(js)
-        except Exception:
-            d = {}
-        self._library_busy = False
-        if self._library_loading:
-            self._library_loading = False
-            self.libraryLoadingChanged.emit()
-        err = d.get("error")
-        if err:
-            self.toast.emit(self.tr("资产库加载失败") + ": " + str(err)[:120])
-            return
-        items = d.get("items") or []
-        if d.get("append"):
-            seen = set(x.get("id") for x in self._library_items)
-            added = 0
-            for it in items:
-                if it.get("id") not in seen:
-                    self._library_items.append(it)
-                    added += 1
-            if added:
-                self._library_page = int(d.get("page") or self._library_page)
-            else:
-                self.toast.emit(self.tr("没有更多了"))
-        else:
-            # 整表替换时，把仍在导入中的条目的状态按 id 迁移到新对象，
-            # 避免刷新使正在导入的卡片丢失进度/cached 标记（item 变孤儿）。
-            old_by_id = {x.get("id"): x for x in self._library_items}
-            for it in items:
-                old = old_by_id.get(it.get("id"))
-                if old:
-                    for k in ("importing", "import_stage", "cached", "local_glb"):
-                        if old.get(k):
-                            it[k] = old[k]
-            self._library_items = items
-            self._library_page = int(d.get("page") or 1)
-        self.libraryChanged.emit()
-        # 导入/生成期间被推迟的刷新：本次加载结束后补做一次。
-        if getattr(self, "_library_refresh_pending", False) and not self._library_busy:
-            self._library_refresh_pending = False
-            self.refreshLibrary()
-
-    @Slot(str)
-    def importLibraryItem(self, task_id):
-        if _meshy is None:
-            return
-        if not hasattr(self, "_importing_ids"):
-            self._importing_ids = set()
-        # 用 id 级别去重，而非依赖 item["importing"]——刷新会换掉 item 对象、丢掉该标记，
-        # 否则刷新后可对同一资产重复点击触发双重下载/导入。
-        if task_id in self._importing_ids:
-            return
-        item = next((x for x in self._library_items if x.get("id") == task_id), None)
-        if not item:
-            self.toast.emit(self.tr("找不到该资产"))
-            return
-        self._importing_ids.add(task_id)
-
-        def _cur():
-            # 始终取"当前列表里这个 id"的对象（刷新后是新对象），取不到回退到原 item。
-            return next((x for x in self._library_items if x.get("id") == task_id), item)
-
-        def stage(label):
-            it = _cur()
-            it["importing"] = True
-            it["import_stage"] = label
-            self.libraryChanged.emit()
-
-        def finish(ok, msg=""):
-            it = _cur()
-            it["importing"] = False
-            it["import_stage"] = ""
-            self._importing_ids.discard(task_id)
-            self.libraryChanged.emit()
-            if msg:
-                (self.toast.emit if ok else
-                 (lambda m: self._sigInfo.emit(self.tr("导入失败"), m)))(msg)
-
-        stage(self.tr("下载中…"))
-
-        def work():
-            try:
-                data = _meshy.fetch_library_asset(item)
-            except Exception as e:
-                finish(False, str(e)[:600])
-                return
-            glb = data.get("glb")
-            if not glb:
-                finish(False, self.tr("未获得 glb（云端链接可能已过期）"))
-                return
-            stage(self.tr("导入中…"))
-            args = {"glb_path": glb}
-            if data.get("texture_dir"):
-                args["texture_dir"] = data["texture_dir"]
-            res = self._exec_houdini_tool("import_3d_asset", args)
-            if isinstance(res, dict) and res.get("success"):
-                it = _cur()
-                it["cached"] = True
-                it["local_glb"] = glb
-                finish(True, self.tr("已导入") + ": " + os.path.basename(glb))
-            else:
-                finish(False, str((res or {}).get("error", "未知错误"))[:600])
-
-        threading.Thread(target=work, daemon=True).start()
 
     # ---- Meshy 账号（API Key 即登录凭证；公开 API 无 OAuth 登录） ----
-    @Slot(result="QVariantMap")
-    def meshyAccount(self):
-        """返回账号连接状态供 UI 展示。balance: -1 表示未校验/未知。"""
-        connected = False
-        masked = ""
-        if _meshy is not None:
-            try:
-                connected = _meshy.has_api_key()
-                masked = _meshy.masked_key() if connected else ""
-            except Exception:
-                pass
-        return {"connected": bool(connected), "key": masked,
-                "balance": int(self._meshy_balance)}
 
-    @Slot()
-    def syncMeshyAccount(self):
-        """后台校验 Key 并拉取账号余额（credits）。完成后发 meshyAccountChanged。"""
-        if _meshy is None or self._meshy_account_busy:
-            self.meshyAccountChanged.emit()
-            return
-        if not _meshy.has_api_key():
-            self._meshy_balance = -1
-            self.meshyAccountChanged.emit()
-            return
-        self._meshy_account_busy = True
-
-        def work():
-            res = {"connected": True, "balance": -1, "error": ""}
-            try:
-                r = _meshy.run_network("meshy_balance", {})
-                if isinstance(r, dict) and r.get("success"):
-                    res["balance"] = int((r.get("data") or {}).get("balance", -1))
-                else:
-                    res["error"] = (r or {}).get("error", "校验失败")
-            except Exception as e:
-                res["error"] = str(e)
-            try:
-                self._sigMeshyAccount.emit(json.dumps(res, default=str))
-            except Exception:
-                pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    @Slot(str)
-    def _ui_meshy_account(self, js):
-        try:
-            d = json.loads(js)
-        except Exception:
-            d = {}
-        self._meshy_account_busy = False
-        bal = d.get("balance", -1)
-        try:
-            self._meshy_balance = int(bal)
-        except Exception:
-            self._meshy_balance = -1
-        err = d.get("error")
-        if err:
-            self.toast.emit(self.tr("Meshy 账号校验失败") + ": " + str(err)[:120])
-        self.meshyAccountChanged.emit()
-
-    @Slot()
-    def openMeshyLogin(self):
-        """打开 API Key 对话框（登录 = 填入账号的 API Key）。"""
-        try:
-            self.openApiKeyDialog.emit("meshy")
-        except Exception as e:
-            print("[controller] open meshy login failed:", e)
-
-    @Slot()
-    def meshyLogout(self):
-        """退出登录：清除 Key，重置账号与资产库状态。"""
-        if _meshy is not None:
-            try:
-                _meshy.clear_api_key()
-            except Exception as e:
-                print("[controller] meshy logout failed:", e)
-        self._meshy_balance = -1
-        self._library_items = []
-        self._library_page = 1
-        self.meshyAccountChanged.emit()
-        self.libraryChanged.emit()
-        self.toast.emit(self.tr("已退出 Meshy 账号"))
 
     # ---- python / system shell block ----
     @Slot(str)
@@ -5795,149 +2701,9 @@ class Controller(QObject):
         except Exception:
             return s.replace('\\"', '"').replace("\\n", "\n")
 
-    def _partial_plan_payload(self, acc):
-        import re as _re
-        try:
-            d = json.loads(acc)
-            if isinstance(d, dict):
-                return self._build_plan_payload(d)
-        except Exception:
-            pass
-
-        titles = [self._json_string(m) for m in _re.findall(r'"title"\s*:\s*"((?:[^"\\]|\\.)*)"', acc or "")]
-        ids = [self._json_string(m) for m in _re.findall(r'"id"\s*:\s*"((?:[^"\\]|\\.)*)"', acc or "")]
-        overview_m = _re.search(r'"overview"\s*:\s*"((?:[^"\\]|\\.)*)"', acc or "")
-        overview = self._json_string(overview_m.group(1)) if overview_m else ""
-        plan_title = titles[0] if titles else "Plan"
-        step_titles = titles[1:]
-        steps = []
-        for i, title in enumerate(step_titles):
-            sid = ids[i] if i < len(ids) and str(ids[i]).startswith("step") else "step-%d" % (i + 1)
-            steps.append({
-                "id": sid, "label": title or sid, "title": title or sid,
-                "state": "active" if i == len(step_titles) - 1 else "pending",
-                "status": "running" if i == len(step_titles) - 1 else "pending",
-                "detail": "", "description": "", "sub_steps": [], "tools": [],
-                "depends_on": ["step-%d" % i] if i > 0 else [],
-                "expected_result": "", "risk": "low", "estimated_operations": 1,
-                "fallback": "", "notes": "", "result_summary": "",
-            })
-        arch = self._build_step_architecture(steps, [])
-        return {
-            "title": plan_title, "overview": overview, "complexity": "",
-            "estimated_total_operations": 0, "phases": [], "status": "streaming",
-            "badge": "%d steps · generating" % len(steps),
-            "steps": steps, "architecture": arch, "dag": arch.get("nodes", []),
-        }
-
-    @Slot(str)
-    def _ui_plan_stream(self, acc):
-        payload = self._partial_plan_payload(acc)
-        payload["kind"] = "planstream"
-        if self._planstream_block is None:
-            self._planstream_block = payload
-            self._blocks.append(self._planstream_block)
-        else:
-            self._planstream_block.clear()
-            self._planstream_block.update(payload)
-        self._flush()
-
-    def _clear_planstream(self):
-        if self._planstream_block is not None:
-            try:
-                self._blocks.remove(self._planstream_block)
-            except ValueError:
-                pass
-            self._planstream_block = None
-            self._flush()
 
     # ---- batch undo / keep ----
-    @Slot()
-    def undoAll(self):
-        if not self._op_ctx:
-            return
-        self._request_confirm("全部撤销", "确定要撤销本轮所有待确认的节点操作吗？", self._undo_all_now)
 
-    def _undo_all_now(self):
-        failed = 0
-        for oid in reversed(list(self._op_ctx.keys())):
-            if self._do_undo(self._op_ctx.get(oid)):
-                self._op_ctx.pop(oid, None)
-            else:
-                failed += 1
-        if failed:
-            self.toast.emit("部分操作撤销失败，仍保留待处理")
-            self._pending_ops = len(self._op_ctx)
-            self.pendingOpsChanged.emit()
-            self.refreshContext()
-            return
-        self._pending_ops = 0
-        self.pendingOpsChanged.emit()
-        self.batchResolved.emit("reverted")
-        self.refreshContext()
-
-    @Slot()
-    def keepAll(self):
-        self._op_ctx.clear()
-        self._pending_ops = 0
-        self.pendingOpsChanged.emit()
-        self.batchResolved.emit("kept")
-
-    def _do_undo(self, ctx):
-        if not ctx:
-            return False
-        bridge = getattr(getattr(self._session, "bridge", None), "undo_node_op", None)
-        if bridge is not None:
-            try:
-                res = bridge(ctx)
-                ok = bool(res.get("success")) if isinstance(res, dict) else bool(res)
-                if not ok:
-                    err = res.get("error") if isinstance(res, dict) else "unknown bridge undo failure"
-                    self._log_external("Bridge undo failed: %s ctx=%s" % (err, ctx))
-                    self.toast.emit("撤销失败：%s" % err)
-                return ok
-            except Exception as e:
-                self._log_external("Bridge undo exception: %s ctx=%s" % (e, ctx))
-                self.toast.emit("撤销失败：%s" % e)
-                return False
-        try:
-            import hou
-        except Exception:
-            return False
-        op = ctx.get("op")
-        try:
-            if op == "create":
-                for p in ctx.get("paths", []):
-                    n = hou.node(p)
-                    if n is not None:
-                        n.destroy()
-            elif op == "modify":
-                snap = ctx.get("snapshot") or {}
-                n = hou.node(snap.get("node_path", ""))
-                if n is not None:
-                    pn = snap.get("param_name", "")
-                    old = snap.get("old_value")
-                    if snap.get("is_tuple"):
-                        pt = n.parmTuple(pn)
-                        if pt is not None:
-                            pt.set(old)
-                    else:
-                        pm = n.parm(pn)
-                        if pm is not None:
-                            if isinstance(old, dict) and "expr" in old:
-                                lang = (hou.exprLanguage.Python
-                                        if "python" in str(old.get("lang", "")).lower()
-                                        else hou.exprLanguage.Hscript)
-                                pm.setExpression(old["expr"], lang)
-                            else:
-                                pm.set(old)
-            elif op == "delete":
-                hou.undos.performUndo()
-            return True
-        except Exception as e:
-            print("[undo] failed:", e)
-            self.toast.emit("撤销失败：%s" % e)
-            return False
 
     # ---- bare node-name resolution ----
     def _collect_node_names(self, a, r):
@@ -6081,7 +2847,7 @@ class Controller(QObject):
         limit = self._context_limit()
         s = self._token_stats
         self._ctx_text = "%s / %s" % (self._fmt_k(self._estimate_ctx()), self._fmt_k(limit))
-        self._token_text = "%s tokens" % self._fmt_k(s["total"] or (s["input"] + s["output"] + s["reasoning"]))
+        self._token_text = "%s tokens" % self._fmt_k(s["total"] or (s["input"] + s["output"]))
         self.tokensChanged.emit()
 
     @staticmethod
@@ -6094,491 +2860,15 @@ class Controller(QObject):
             self._pending_ops -= 1
             self.pendingOpsChanged.emit()
 
-    @Slot(str, result=bool)
-    def keepNodeOp(self, oid):
-        if self._op_ctx.pop(oid, None) is not None:
-            self._dec_pending()
-            return True
-        return False
-
-    @Slot(str, result=bool)
-    def undoNodeOp(self, oid):
-        ctx = self._op_ctx.get(oid)
-        if not ctx:
-            self.toast.emit("该操作已不可撤销或已处理")
-            return False
-        if not self._do_undo(ctx):
-            return False
-        self._op_ctx.pop(oid, None)
-        self._dec_pending()
-        self.refreshContext()
-        return True
 
     # ---- Plan mode ----
-    def _handle_create_plan(self, kwargs):
-        import json
-        payload = self._build_plan_payload(kwargs)
-        self._plan_phase = "awaiting"
-        if self._plan_revision_mode:
-            self._plan_revision_mode = False
-            payload["revision"] = self._to_int((self._plan_payload or {}).get("revision"), 1) + 1
-            payload["revised"] = True
-            payload["status"] = "revised"
-            self._sigPlan.emit(json.dumps(payload, default=str))
-            return {"success": True,
-                    "result": "已基于原计划完成局部修订，并更新同一张计划卡片。请用一句话说明修改完成。"}
-        self._sigPlan.emit(json.dumps(payload, default=str))
-        return {"success": True,
-                "result": "计划已创建并展示给用户（含步骤与 DAG）。等待用户点击「确认执行」后再开始执行。"
-                          "现在用一句话简短告知用户计划已就绪。"}
 
-    def _handle_update_plan_step(self, kwargs):
-        import json
-        self._sigPlanStep.emit(json.dumps({
-            "step_id": kwargs.get("step_id", ""),
-            "status": kwargs.get("status", ""),
-            "summary": kwargs.get("result_summary", ""),
-        }, default=str))
-        return {"success": True,
-                "result": "step %s -> %s" % (kwargs.get("step_id"), kwargs.get("status"))}
-
-    @staticmethod
-    def _as_list(v):
-        return v if isinstance(v, list) else []
-
-    @staticmethod
-    def _to_int(v, default=0):
-        try:
-            return int(v)
-        except Exception:
-            return default
-
-    @staticmethod
-    def _build_step_architecture(steps, phases=None):
-        nodes, connections = [], []
-        has_deps = any(s.get("depends_on") for s in steps)
-        for i, s in enumerate(steps):
-            sid = s.get("id") or ("step-%d" % (i + 1))
-            tools = s.get("tools") or []
-            nodes.append({
-                "id": sid,
-                "label": (s.get("title") or s.get("label") or sid),
-                "type": "other",
-                "group": "",
-                "is_new": True,
-                "params": ", ".join(tools[:2]) if isinstance(tools, list) else "",
-            })
-            for dep in (s.get("depends_on") or []):
-                connections.append({"from": dep, "to": sid, "label": ""})
-        if not has_deps and len(steps) > 1:
-            for i in range(len(steps) - 1):
-                connections.append({"from": steps[i]["id"], "to": steps[i + 1]["id"], "label": ""})
-        groups = []
-        for p in (phases or []):
-            name = p.get("name", "")
-            ids = p.get("step_ids", [])
-            if name and ids:
-                groups.append({"name": name, "node_ids": ids, "color": "blue"})
-        return {"nodes": nodes, "connections": connections, "groups": groups}
-
-    def _build_plan_payload(self, k):
-        allowed_types = {"sop", "obj", "mat", "vop", "rop", "dop", "lop", "cop",
-                         "chop", "out", "subnet", "null", "other"}
-        steps = self._as_list(k.get("steps"))
-        phases = self._as_list(k.get("phases"))
-        step_phase = {}
-        out_phases = []
-        for p in phases:
-            if not isinstance(p, dict):
-                continue
-            name = str(p.get("name") or "")
-            ids = [str(x) for x in self._as_list(p.get("step_ids"))]
-            if not name or not ids:
-                continue
-            out_phases.append({"name": name, "step_ids": ids})
-            for sid in ids:
-                step_phase[sid] = name
-
-        out_steps, idmap = [], {}
-        for i, s in enumerate(steps):
-            if not isinstance(s, dict):
-                continue
-            sid = str(s.get("id") or ("step-%d" % (i + 1)))
-            idmap[sid] = len(out_steps)
-            status = s.get("status") or "pending"
-            state = {"running": "active", "done": "done", "error": "error"}.get(status, "pending")
-            detail = s.get("description") or s.get("detail") or ""
-            out_steps.append({
-                "id": sid,
-                "label": s.get("title") or sid,
-                "title": s.get("title") or sid,
-                "state": state,
-                "status": status,
-                "detail": detail,
-                "description": detail,
-                "sub_steps": self._as_list(s.get("sub_steps")),
-                "tools": self._as_list(s.get("tools")),
-                "depends_on": self._as_list(s.get("depends_on")),
-                "expected_result": s.get("expected_result") or "",
-                "risk": s.get("risk") or "low",
-                "estimated_operations": self._to_int(s.get("estimated_operations"), 1),
-                "fallback": s.get("fallback") or "",
-                "notes": s.get("notes") or "",
-                "phase": step_phase.get(sid, ""),
-                "result_summary": s.get("result_summary") or "",
-            })
-
-        arch = k.get("architecture") if isinstance(k.get("architecture"), dict) else {}
-        nodes = []
-        for n in self._as_list(arch.get("nodes")):
-            if not isinstance(n, dict):
-                continue
-            nid = str(n.get("id") or n.get("name") or "")
-            if not nid:
-                continue
-            ntype = str(n.get("type") or "other").lower()
-            nodes.append({
-                "id": nid,
-                "label": str(n.get("label") or nid),
-                "type": ntype if ntype in allowed_types else "other",
-                "group": str(n.get("group") or ""),
-                "is_new": bool(n.get("is_new", True)),
-                "params": str(n.get("params") or ""),
-            })
-        node_ids = {n["id"] for n in nodes}
-        connections = []
-        for c in self._as_list(arch.get("connections")):
-            if not isinstance(c, dict):
-                continue
-            src, dst = str(c.get("from") or ""), str(c.get("to") or "")
-            if src and dst and (not node_ids or (src in node_ids and dst in node_ids)):
-                connections.append({"from": src, "to": dst, "label": str(c.get("label") or "")})
-        groups = []
-        for g in self._as_list(arch.get("groups")):
-            if not isinstance(g, dict):
-                continue
-            name = str(g.get("name") or "")
-            ids = [str(x) for x in self._as_list(g.get("node_ids"))]
-            if name and ids:
-                groups.append({"name": name, "node_ids": ids, "color": str(g.get("color") or "")})
-        architecture = {"nodes": nodes, "connections": connections, "groups": groups}
-        if not nodes:
-            architecture = self._build_step_architecture(out_steps, out_phases)
-
-        complexity = k.get("complexity") or ""
-        badge = "%d steps" % len(out_steps)
-        if complexity:
-            badge += " · " + str(complexity)
-        self._plan_idmap = idmap
-        revision = self._to_int(k.get("revision"), 1)
-        return {
-            "title": k.get("title") or "Plan",
-            "overview": k.get("overview") or "",
-            "complexity": complexity,
-            "estimated_total_operations": self._to_int(k.get("estimated_total_operations"), 0),
-            "phases": out_phases,
-            "status": k.get("status") or "draft",
-            "badge": (badge + (" · rev %d" % revision if revision > 1 else "")),
-            "revision": revision,
-            "revision_notes": self._as_list(k.get("revision_notes")),
-            "steps": out_steps,
-            "architecture": architecture,
-            "dag": architecture.get("nodes", []),
-        }
-
-    @Slot(str)
-    def _ui_plan(self, js):
-        import json
-        try:
-            payload = json.loads(js)
-        except Exception:
-            return
-        self._clear_planstream()
-        self._plan_payload = payload
-        if self._plan_row is not None and payload.get("revised"):
-            self._model.update_payload(self._plan_row, copy.deepcopy(payload))
-            self.toast.emit("计划已更新，可继续修改或确认执行")
-        else:
-            self._plan_row = self._model.append({"type": "plan", "payload": payload})
-
-    @Slot(str)
-    def _ui_plan_step(self, js):
-        import json
-        try:
-            d = json.loads(js)
-        except Exception:
-            return
-        if self._plan_row is None or not self._plan_payload:
-            return
-        idx = self._plan_idmap.get(d.get("step_id"))
-        if idx is None:
-            return
-        state = {"running": "active", "done": "done", "error": "error"}.get(d.get("status"), "pending")
-        try:
-            self._plan_payload["steps"][idx]["state"] = state
-            self._plan_payload["steps"][idx]["status"] = d.get("status") or "pending"
-            if d.get("summary"):
-                self._plan_payload["steps"][idx]["result_summary"] = d["summary"]
-                self._plan_payload["steps"][idx]["detail"] = d["summary"]
-            self._model.update_payload(self._plan_row, copy.deepcopy(self._plan_payload))
-        except Exception:
-            pass
-
-    def _begin_plan_execution(self):
-        if not self._session:
-            return
-        self._plan_phase = "executing"
-        self._model.append({"type": "user", "payload": {"text": "▶ 执行计划"}})
-        plan_json = ""
-        try:
-            plan_json = json.dumps(self._plan_payload or {}, ensure_ascii=False, default=str)
-        except Exception:
-            plan_json = ""
-        instr = ("用户已确认上述计划。现在按计划逐步执行：每一步开始前调用 "
-                 "update_plan_step(step_id, status='running')，完成后调用 "
-                 "update_plan_step(step_id, status='done')（失败用 'error'）。"
-                 "严格按 depends_on 顺序执行，全部完成后给出简短总结。"
-                 "\n\n以下是用户最终确认的修订版计划 JSON，请以它为准，不要执行旧版本：\n"
-                 + plan_json)
-        self._start_run(instr, tools=self._execution_tools(), max_iter=80)
-        # Plan 执行通常会连续创建/连接节点，自动 cook 最容易让 Houdini 主线程假死。
-        # 执行结束后用户仍可手动 cook/刷新视口，避免每一步都强制 cook。
-        self._cook_suspended = True
-        self.toast.emit("开始执行计划 · 已暂停自动 Cook 以避免卡死")
-        self.planExecutionStarted.emit()
-
-    @Slot(str, result=str)
-    def confirmPlan(self, plan_id):
-        if not self._session:
-            return ""
-        if self._running:
-            if self._plan_phase == "awaiting":
-                self._pending_plan_confirm = True
-                self.toast.emit("计划生成收尾中，完成后会自动开始执行")
-                return "pending"
-            self.toast.emit("当前仍在运行，请等待或先 Stop")
-            return ""
-        self._pending_plan_confirm = False
-        self._begin_plan_execution()
-        return "confirmed"
-
-    @Slot(str, result=bool)
-    def rejectPlan(self, plan_id):
-        if self._running and self._plan_phase != "awaiting":
-            self.toast.emit("当前仍在运行，请等待或先 Stop")
-            return False
-        if self._running and self._plan_phase == "awaiting" and self._session:
-            self._session.stop()
-        self._pending_plan_confirm = False
-        self._plan_phase = "idle"
-        if self._session:
-            try:
-                self._session.history.append({"role": "user", "content": "用户驳回了该计划，不要执行。"})
-            except Exception:
-                pass
-        return True
-
-    def _ensure_plan_state(self, payload=None):
-        if self._plan_row is not None and 0 <= self._plan_row < len(getattr(self._model, "_items", [])):
-            if self._model._items[self._plan_row].get("type") == "plan":
-                if payload is not None:
-                    self._plan_payload = payload
-                elif not self._plan_payload:
-                    self._plan_payload = self._model._items[self._plan_row].get("payload") or {}
-                return True
-        for i in range(len(getattr(self._model, "_items", [])) - 1, -1, -1):
-            item = self._model._items[i]
-            if item.get("type") == "plan":
-                self._plan_row = i
-                self._plan_payload = payload if payload is not None else (item.get("payload") or {})
-                self._plan_idmap = {s.get("id"): j for j, s in enumerate((self._plan_payload or {}).get("steps", []))}
-                return True
-        return False
-
-    @Slot(str, result=bool)
-    def applyPlanEdit(self, payload_json):
-        if self._running:
-            self.toast.emit("当前仍在运行，请等待或先 Stop")
-            return False
-        try:
-            data = json.loads(payload_json or "{}")
-            if not isinstance(data, dict):
-                self.toast.emit("计划修改失败：无效数据")
-                return False
-            if not self._ensure_plan_state(data):
-                self.toast.emit("计划修改失败：找不到当前计划卡片")
-                return False
-            data["revision"] = self._to_int((self._plan_payload or {}).get("revision"), 1) + 1
-            data["revised"] = True
-            data["status"] = "revised"
-            payload = self._build_plan_payload(data)
-            payload["revised"] = True
-            payload["status"] = "revised"
-            self._plan_payload = payload
-            self._plan_idmap = {s.get("id"): i for i, s in enumerate(payload.get("steps", []))}
-            self._model.update_payload(self._plan_row, copy.deepcopy(payload))
-            self.toast.emit("手动修改已保存到当前计划")
-            return True
-        except Exception as e:
-            self.toast.emit("计划修改失败：%s" % e)
-            return False
-
-    @Slot(str, str, result=bool)
-    def revisePlan(self, instruction, payload_json):
-        instruction = (instruction or "").strip()
-        if not instruction:
-            self.toast.emit("请先输入修改要求")
-            return False
-        if self._running:
-            self.toast.emit("当前仍在运行，请等待或先 Stop")
-            return False
-        if not self._session:
-            self.toast.emit("当前后端不可用，无法让 AI 修改计划")
-            return False
-        try:
-            base = json.loads(payload_json or "{}")
-            if not isinstance(base, dict):
-                base = self._plan_payload
-        except Exception:
-            base = self._plan_payload
-        if not base or not self._ensure_plan_state(base):
-            self.toast.emit("计划修改失败：找不到当前计划")
-            return False
-        self._plan_revision_mode = True
-        self._plan_phase = "planning"
-        self._model.append({"type": "user", "payload": {"text": "✎ 修改计划：" + instruction}})
-        prompt = (
-            "用户对当前计划提出局部修改要求。请不要重新发散设计，不要生成多份方案。"
-            "你必须基于原计划做最小必要修改，保留不相关步骤、step id、依赖关系和 DAG。"
-            "修改完成后只调用 create_plan 返回修订后的完整计划 JSON。\n\n"
-            "用户修改要求：\n%s\n\n当前计划 JSON：\n%s"
-        ) % (instruction, json.dumps(base, ensure_ascii=False, default=str))
-        self._start_run(prompt, tools=self._planning_tools(), max_iter=8)
-        return True
 
     # ---- confirm mode + ask_question (blocking UI cards) ----
-    def _stop_requested(self):
-        try:
-            return bool(self._session and self._session.client.is_stop_requested())
-        except Exception:
-            return False
 
-    def _await_confirm(self, tool_name, kwargs):
-        self._int_seq += 1
-        cid = "c%d" % self._int_seq
-        q = queue.Queue()
-        self._interactive[cid] = q
-        self._sigConfirm.emit(cid, tool_name, self._confirm_preview(tool_name, kwargs))
-        # 分段等待：每 0.3s 检查一次停止请求，最长 300s。否则用户点 Stop 时这里会一直
-        # 阻塞到 300s 超时（确认卡完全不响应停止），与画廊/批量流的行为不一致。
-        try:
-            waited = 0.0
-            while True:
-                try:
-                    return bool(q.get(timeout=0.3))
-                except queue.Empty:
-                    waited += 0.3
-                    if self._stop_requested() or waited >= 300:
-                        return False
-        finally:
-            self._interactive.pop(cid, None)
-
-    def _handle_ask_question(self, kwargs):
-        self._int_seq += 1
-        qid = "q%d" % self._int_seq
-        q = queue.Queue()
-        self._interactive[qid] = q
-        questions = kwargs.get("questions", []) or []
-        self._sigAskQ.emit(qid, json.dumps(questions, default=str))
-        # 分段等待：同 _await_confirm，点 Stop 时能及时退出而不是干等到 300s。
-        ans = {}
-        waited = 0.0
-        try:
-            while True:
-                try:
-                    ans = q.get(timeout=0.3)
-                    break
-                except queue.Empty:
-                    waited += 0.3
-                    if self._stop_requested() or waited >= 300:
-                        ans = {}
-                        break
-        finally:
-            self._interactive.pop(qid, None)
-        return {"success": True, "result": "用户回答：" + json.dumps(ans, ensure_ascii=False)}
-
-    @Slot(str, bool)
-    def resolveConfirm(self, cid, ok):
-        q = self._interactive.get(cid)
-        if q is not None:
-            q.put(bool(ok))
-        self._sigResolveCard.emit(cid, "confirmed" if ok else "cancelled")
-
-    @Slot(str, str)
-    def resolveQuestion(self, qid, answers_json):
-        q = self._interactive.get(qid)
-        if q is not None:
-            try:
-                ans = json.loads(answers_json) if answers_json else {}
-            except Exception:
-                ans = {}
-            q.put(ans)
-        self._sigResolveCard.emit(qid, "answered")
-
-    @Slot(str, str, str)
-    def _ui_confirm(self, cid, tool_name, arg):
-        self._blocks.append({"kind": "confirm", "cid": cid, "name": tool_name,
-                             "arg": arg, "state": "pending"})
-        self._flush()
-
-    @Slot(str, str)
-    def _ui_askq(self, qid, questions_json):
-        try:
-            questions = json.loads(questions_json)
-        except Exception:
-            questions = []
-        self._blocks.append({"kind": "askq", "qid": qid, "questions": questions, "state": "pending"})
-        self._flush()
-
-    @Slot(str, str)
-    def _ui_resolve_card(self, cid, state):
-        for b in self._blocks:
-            if b.get("cid") == cid or b.get("qid") == cid:
-                b["state"] = state
-                break
-        self._flush()
 
     # ---- <think> splitter ----
-    def _split(self, chunk):
-        self._cbuf += chunk
-        OPEN, CLOSE = "<think>", "</think>"
-        vis, thk = [], []
-        while True:
-            if not self._in_think:
-                i = self._cbuf.find(OPEN)
-                if i < 0:
-                    keep = self._tail_keep(self._cbuf, OPEN)
-                    cut = len(self._cbuf) - keep
-                    vis.append(self._cbuf[:cut]); self._cbuf = self._cbuf[cut:]
-                    break
-                vis.append(self._cbuf[:i]); self._cbuf = self._cbuf[i + len(OPEN):]; self._in_think = True
-            else:
-                j = self._cbuf.find(CLOSE)
-                if j < 0:
-                    keep = self._tail_keep(self._cbuf, CLOSE)
-                    cut = len(self._cbuf) - keep
-                    thk.append(self._cbuf[:cut]); self._cbuf = self._cbuf[cut:]
-                    break
-                thk.append(self._cbuf[:j]); self._cbuf = self._cbuf[j + len(CLOSE):]; self._in_think = False
-        return "".join(vis), "".join(thk)
 
-    @staticmethod
-    def _tail_keep(s, tag):
-        m = min(len(tag) - 1, len(s))
-        for k in range(m, 0, -1):
-            if s.endswith(tag[:k]):
-                return k
-        return 0
 
     def _confirm_preview(self, tool_name, kwargs):
         """确认卡片的副标题：尽量给出"生成数量 + 预计 credits 花费"，
@@ -6693,13 +2983,6 @@ class Controller(QObject):
         self._think_block["html"] = self._think_html(self._think_text)
         self._flush()
 
-    @staticmethod
-    def _think_html(text):
-        """思考内容 → StyledText：转义 + **标题** 加粗（Codex 推理摘要用它分段）。"""
-        import re as _re
-        h = _esc(text.strip("\n"))
-        h = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", h)
-        return h.replace("\n", "<br>")
 
     @Slot(str)
     def _ui_content(self, t):
@@ -6775,17 +3058,6 @@ class Controller(QObject):
         if self._pending_bg_galleries:
             QTimer.singleShot(0, self._drain_pending_bg_galleries)
 
-    def _sub_error_hint(self, err):
-        """订阅渠道的 CPA 报错翻译成一句人话。"""
-        if not self._sub_kind():
-            return ""
-        e = str(err)
-        if "auth_unavailable" in e or "no auth available" in e:
-            return self.tr("订阅账号暂时不可用：通常是额度用完或被限流，等几分钟再试；"
-                           "如果一直这样，退出登录后重新登录。")
-        if "empty_stream" in e:
-            return self.tr("上游连接在开始输出前断开了，一般是对方服务临时波动，重新发送即可。")
-        return ""
 
     # ---- markdown + code rendering of the final answer ----
     def _finalize_answer(self):
@@ -6793,156 +3065,6 @@ class Controller(QObject):
         self._resolve_cache = {}
         self._answer_dirty = True
 
-    @classmethod
-    def _parse_answer(cls, text):
-        """Split markdown into prose/code segments (rendered by ProseBlock / CodeBlock)."""
-        import re as _re
-        segs = []
-        parts = _re.split(r"```", text)
-        for i, part in enumerate(parts):
-            if i % 2 == 0:
-                if part.strip():
-                    segs.append({"kind": "prose", "html": cls._md_html(part.strip("\n"))})
-            else:
-                lines = part.split("\n")
-                first = lines[0].strip()
-                if first and " " not in first and len(first) <= 16:
-                    lang = first
-                    code = "\n".join(lines[1:])
-                else:
-                    lang = ""
-                    code = part
-                code = code.strip("\n")
-                segs.append({"kind": "code", "lang": lang or "code", "code": code,
-                             "html": cls._highlight(code, lang)})
-        return segs or [{"kind": "prose", "html": cls._md_html(text)}]
-
-    @staticmethod
-    def _inline(s):
-        import re as _re
-        h = _esc(s)
-        h = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", h)
-        h = _re.sub(r"(?<!\*)\*(?!\*)(.+?)\*(?!\*)", r"<i>\1</i>", h)
-        h = _re.sub(r"`([^`]+)`", r"<span style='font-family:monospace;color:#d4a373'>\1</span>", h)
-        h = _re.sub(r"\[(.+?)\]\((https?://[^)]+)\)", r"<a href='\2' style='color:#e8e2d4'>\1</a>", h)
-        h = _re.sub(r"(?<![\w/])(/(?:obj|out|mat|stage|ch|shop|tasks)/[\w/]+)",
-                    r"<a href='\1' style='color:#c9b896;text-decoration:none'>\1</a>", h)
-        return h
-
-    @classmethod
-    def _table_html(cls, header, body):
-        th = "".join("<th align='left' style='color:#ffffff;padding:3px 8px'>%s</th>" % cls._inline(h) for h in header)
-        rows = "<tr bgcolor='#1a1a1a'>" + th + "</tr>"
-        for r in body:
-            rows += "<tr>" + "".join("<td style='color:#e7e4db;padding:3px 8px'>%s</td>" % cls._inline(c) for c in r) + "</tr>"
-        return ("<table border='1' width='100%' cellspacing='0' cellpadding='4' "
-                "style='border-color:#3a3a3a'>" + rows + "</table>")
-
-    @classmethod
-    def _md_html(cls, text):
-        import re as _re
-        # 数学公式先抽成占位符（避免 _ * 被当成 Markdown），最后换回渲染好的富文本
-        from houdini_agent.ui_qml.mathrender import extract_math, restore_math
-        text, maths = extract_math(text)
-        lines = text.split("\n")
-        out = []
-        i, n = 0, len(lines)
-
-        def cells(row):
-            return [c.strip() for c in row.strip().strip("|").split("|")]
-
-        def is_sep(row):
-            return bool(_re.match(r"^\s*\|?[\s:\-|]+\|?\s*$", row)) and "-" in row and "|" in row
-
-        while i < n:
-            line = lines[i].rstrip()
-            # markdown table: header row + separator row + body rows
-            if "|" in line and i + 1 < n and is_sep(lines[i + 1]):
-                header = cells(line)
-                i += 2
-                body = []
-                while i < n and lines[i].strip() and "|" in lines[i]:
-                    body.append(cells(lines[i]))
-                    i += 1
-                out.append(cls._table_html(header, body))
-                continue
-            if not line.strip():
-                if out and out[-1] != "":
-                    out.append("")
-                i += 1
-                continue
-            s = line.lstrip()
-            if s.startswith("### "):
-                out.append("<div style='color:#fafafa;font-size:14px'><b>%s</b></div>" % cls._inline(s[4:]))
-            elif s.startswith("## "):
-                out.append("<div style='color:#fafafa;font-size:15px'><b>%s</b></div>" % cls._inline(s[3:]))
-            elif s.startswith("# "):
-                out.append("<div style='color:#fafafa;font-size:16px'><b>%s</b></div>" % cls._inline(s[2:]))
-            elif _re.match(r"^[-*]\s+", s):
-                out.append("&nbsp;•&nbsp;" + cls._inline(_re.sub(r"^[-*]\s+", "", s)))
-            elif _re.match(r"^\d+\.\s+", s):
-                out.append("&nbsp;" + cls._inline(s))
-            else:
-                out.append(cls._inline(line))
-            i += 1
-        return restore_math("<br>".join(out), maths)
-
-    @staticmethod
-    def _highlight(code, lang):
-        import re as _re
-        C = {"com": "#7d786b", "kw": "#ece6d8", "fn": "#d3c4a2",
-             "attr": "#e0b083", "num": "#b3c19a", "str": "#cda988"}
-        is_py = (lang or "").lower().startswith("py")
-        if is_py:
-            kw = set("def class return if elif else for while import from as with try except "
-                     "finally lambda None True False and or not in is pass break continue global "
-                     "yield raise assert del print".split())
-            comment = r"#[^\n]*"
-        else:
-            kw = set("float int vector vector2 vector4 matrix matrix3 string void if else for "
-                     "while foreach do return struct function detail point prim vertex chi chf "
-                     "chv chs export const".split())
-            comment = r"//[^\n]*|/\*[\s\S]*?\*/"
-        pat = _re.compile(
-            r"(?P<com>%s)"
-            r"|(?P<str>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')"
-            r"|(?P<attr>[vfisp24]?@[A-Za-z_]\w*)"
-            r"|(?P<num>\b\d+\.?\d*\b)"
-            r"|(?P<id>[A-Za-z_]\w*)"
-            r"|(?P<ws>[ \t\n]+)"
-            r"|(?P<oth>.)" % comment)
-
-        def esc(t):
-            return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        def sp(c, t):
-            return "<span style='color:%s'>%s</span>" % (C[c], esc(t))
-
-        out = []
-        for m in pat.finditer(code):
-            k = m.lastgroup
-            t = m.group()
-            if k == "com":
-                out.append(sp("com", t))
-            elif k == "str":
-                out.append(sp("str", t))
-            elif k == "attr":
-                out.append(sp("attr", t))
-            elif k == "num":
-                out.append(sp("num", t))
-            elif k == "id":
-                nxt = code[m.end():m.end() + 1]
-                if t in kw:
-                    out.append(sp("kw", t))
-                elif nxt == "(":
-                    out.append(sp("fn", t))
-                else:
-                    out.append(esc(t))
-            elif k == "ws":
-                out.append(t.replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;").replace(" ", "&nbsp;").replace("\n", "<br>"))
-            else:
-                out.append(esc(t))
-        return "".join(out)
 
     # ---- fallback reply (backend not ready) ----
     def _simulate(self, text):

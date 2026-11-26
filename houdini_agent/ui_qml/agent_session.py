@@ -2,15 +2,11 @@
 """
 UI-agnostic agent backend for the QML frontend.
 
-Wraps the EXISTING backend (AIClient + HoudiniMCP) — no behavioural changes to
-either. Owns the conversation history and the system prompt, and exposes a single
-`run()` that drives `AIClient.agent_loop_auto(...)` with caller-supplied callbacks.
-
-Threading contract (enforced by the caller, mirroring the old RunMixin):
-  - `run()` executes on a BACKGROUND thread.
-  - The tool executor registered via `set_tool_executor()` is invoked by AIClient
-    on that same background thread; the caller's executor is responsible for
-    marshalling Houdini (`hou.*`) calls onto the Qt main thread.
+Provides `BaseAgentSession` (shared turn execution, history management,
+ephemeral RAG/memory injection, compaction write-back) and `AgentSession`
+(in-process HoudiniMCP backend). `BridgeAgentSession` subclasses
+`BaseAgentSession` to route Houdini tools over TCP bridge without duplicating
+session logic.
 """
 
 import copy
@@ -18,14 +14,10 @@ import re
 
 
 def _make_system_prompt(with_thinking=True):
-    """Reuse the real prompt builder (pure string builder, no UI state)."""
+    """Build the canonical Houdini TA system prompt without depending on legacy UI."""
     try:
-        from houdini_agent.ui.system_prompt_mixin import SystemPromptMixin
-
-        class _SP(SystemPromptMixin):
-            pass
-
-        return _SP()._build_system_prompt(with_thinking=with_thinking, skip_doc_index=False)
+        from houdini_agent.core.system_prompt import build_system_prompt
+        return build_system_prompt(with_thinking=with_thinking, skip_doc_index=False)
     except Exception as e:
         print("[agent_session] system prompt fallback:", e)
         return ("You are an expert Houdini technical artist embedded as an agent. "
@@ -34,27 +26,24 @@ def _make_system_prompt(with_thinking=True):
                 "and verify results before summarizing.")
 
 
-class AgentSession:
-    def __init__(self):
+class BaseAgentSession:
+    """Shared session lifecycle for in-process MCP and standalone Bridge modes."""
+
+    def _init_common(self, system_note=""):
         from houdini_agent.utils.ai_client import AIClient, HOUDINI_TOOLS
-        from houdini_agent.utils.mcp import HoudiniMCP
 
         self.client = AIClient()
-        self.mcp = HoudiniMCP()
-        # share the stop event so execute_python / execute_shell can be interrupted
-        self.mcp.set_stop_event(self.client._stop_event)
-
         self.tools = list(HOUDINI_TOOLS)
         # Meshy 集成（自包含包，import 即自注册到 ToolRegistry）
         try:
             from houdini_agent import meshy
             self.tools = self.tools + list(meshy.MESHY_TOOLS)
         except Exception as e:
-            print("[agent_session] meshy tools unavailable:", e)
-        self.history = []  # OpenAI-style message list (system prompt added per run)
+            print(f"[{self.__class__.__name__}] meshy tools unavailable:", e)
 
-        self._sys_think = _make_system_prompt(True)
-        self._sys_no_think = _make_system_prompt(False)
+        self.history = []  # OpenAI-style message list (system prompt added per run)
+        self._sys_think = _make_system_prompt(True) + system_note
+        self._sys_no_think = _make_system_prompt(False) + system_note
 
     # ---- wiring ----
     def set_tool_executor(self, fn):
@@ -73,7 +62,8 @@ class AgentSession:
     def run(self, user_text, model, provider, mode, callbacks, context_limit=128000,
             enable_thinking=True, supports_vision=False, tools=None, max_iter=None,
             think_tags=True,
-            images=None, rag=True, memory=False):
+            images=None, rag=True, memory=False,
+            initial_actual_tokens=0, state_context=""):
         self.client.reset_stop()
         incoming_images = images or []
         usable_images = incoming_images if supports_vision else []
@@ -87,10 +77,11 @@ class AgentSession:
         # think_tags=False：模型有原生推理摘要（如 ChatGPT 订阅），不再要求正文里写 <think>
         messages = self.build_messages(enable_thinking and think_tags)
 
-        # inject RAG / long-term memory as system context (right after the prompt)
+        # 对齐 Claude Agent SDK：动态 RAG / 记忆只追加到本轮末尾的 user 消息，
+        # 绝不插在历史前缀 messages[1:1]，保证整段历史 Prompt Cache 100% 稳定命中！
         extra = self._context_messages(user_text, rag, memory)
         if extra:
-            messages[1:1] = extra
+            self._append_ephemeral_context(messages, extra)
 
         if max_iter is None:
             max_iter = 15 if mode == "Ask" else 999
@@ -109,32 +100,50 @@ class AgentSession:
             max_iterations=max_iter,
             max_tokens=None,
             enable_thinking=enable_thinking,
+            think_tags=bool(think_tags),
             supports_vision=bool(supports_vision),
             tools_override=tools_override,
             context_limit=context_limit,
+            initial_actual_tokens=int(initial_actual_tokens or 0),
+            state_context=state_context or "",
             on_content=callbacks.get("on_content"),
             on_thinking=callbacks.get("on_thinking"),
             on_tool_call=callbacks.get("on_tool_call"),
             on_tool_result=callbacks.get("on_tool_result"),
             on_tool_args_delta=callbacks.get("on_tool_args_delta"),
             on_iteration_start=callbacks.get("on_iteration_start"),
+            on_compaction=callbacks.get("on_compaction"),
         )
         self._absorb(result)
         return result
 
     def _absorb(self, result):
-        """Append the assistant/tool message chain to history (mirrors _on_agent_done)."""
+        """Append the assistant/tool message chain to history (or write back compressed history)."""
         if not isinstance(result, dict):
             return
-        new_messages = result.get("new_messages", []) or []
-        for i, nm in enumerate(new_messages):
-            # drop the trailing pure-text assistant message; it is re-added below cleanly
-            if (i == len(new_messages) - 1 and nm.get("role") == "assistant"
-                    and not nm.get("tool_calls")):
-                continue
-            clean = dict(nm)
-            clean.pop("reasoning_content", None)
-            self.history.append(clean)
+        compressed = result.get("compressed_history")
+        if isinstance(compressed, list) and compressed:
+            rebuilt = []
+            for i, nm in enumerate(compressed):
+                if (i == len(compressed) - 1 and nm.get("role") == "assistant"
+                        and not nm.get("tool_calls")):
+                    continue
+                clean = dict(nm)
+                clean.pop("reasoning_content", None)
+                clean.pop("_anthropic_thinking_blocks", None)
+                rebuilt.append(clean)
+            self.history = rebuilt
+        else:
+            new_messages = result.get("new_messages", []) or []
+            for i, nm in enumerate(new_messages):
+                # drop the trailing pure-text assistant message; it is re-added below cleanly
+                if (i == len(new_messages) - 1 and nm.get("role") == "assistant"
+                        and not nm.get("tool_calls")):
+                    continue
+                clean = dict(nm)
+                clean.pop("reasoning_content", None)
+                clean.pop("_anthropic_thinking_blocks", None)
+                self.history.append(clean)
 
         final = result.get("final_content", "") or ""
         clean = re.sub(r"<think>[\s\S]*?</think>", "", final).strip()
@@ -156,6 +165,24 @@ class AgentSession:
             parts.append({"type": "image_url",
                           "image_url": {"url": "data:%s;base64,%s" % (mt, b64)}})
         return parts
+
+    @staticmethod
+    def _append_ephemeral_context(messages, extra):
+        """将每轮动态检索的 RAG / 记忆附加到最后一条 user 消息末尾，不破坏历史 Prompt Cache 前缀。"""
+        if not messages or not extra:
+            return
+        chunks = [str(m.get("content", "")).strip() for m in extra if isinstance(m, dict) and m.get("content")]
+        if not chunks:
+            return
+        block = "\n\n<retrieved_context>\n" + "\n\n".join(chunks) + "\n</retrieved_context>"
+        target = messages[-1]
+        if target.get("role") != "user":
+            return
+        c = target.get("content")
+        if isinstance(c, list):
+            target["content"] = list(c) + [{"type": "text", "text": block}]
+        else:
+            target["content"] = (str(c) if c is not None else "") + block
 
     @staticmethod
     def _context_messages(query, rag, memory):
@@ -182,3 +209,15 @@ class AgentSession:
             except Exception:
                 pass
         return out
+
+
+class AgentSession(BaseAgentSession):
+    """In-process Houdini panel session (executes tools via local HoudiniMCP)."""
+
+    def __init__(self):
+        from houdini_agent.utils.mcp import HoudiniMCP
+
+        self._init_common()
+        self.mcp = HoudiniMCP()
+        # share the stop event so execute_python / execute_shell can be interrupted
+        self.mcp.set_stop_event(self.client._stop_event)

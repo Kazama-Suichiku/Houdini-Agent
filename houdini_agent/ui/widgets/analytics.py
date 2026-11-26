@@ -107,8 +107,8 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
         reqs = stats.get('requests', 0)
         total = stats.get('total_tokens', 0)
         cost = stats.get('estimated_cost', 0.0)
-        cache_total = cache_r + cache_w
-        hit_rate = (cache_r / cache_total * 100) if cache_total > 0 else 0
+        cache_denom = total_in or (cache_r + cache_w + stats.get('cache_miss', 0))
+        hit_rate = (min(cache_r, cache_denom) / cache_denom * 100) if cache_denom > 0 else 0
 
         # 平均延迟
         latencies = [r.get('latency', 0) for r in records if r.get('latency', 0) > 0]
@@ -276,6 +276,7 @@ class TokenAnalyticsPanel(QtWidgets.QDialog):
                     output_tokens=out,
                     cache_hit=c_hit,
                     cache_miss=c_miss,
+                    cache_write=rec.get('cache_write', 0),
                     reasoning_tokens=reasoning,
                 )
             except Exception:

@@ -90,6 +90,10 @@ class AIClientStreamingMixin:
 
             if role == 'assistant':
                 content_blocks: List[Dict[str, Any]] = []
+                # 回传 Anthropic extended thinking 签名块（多轮工具调用时 Anthropic 要求原样带回）
+                for tb in (msg.get('_anthropic_thinking_blocks') or []):
+                    if isinstance(tb, dict) and tb.get('type') in ('thinking', 'redacted_thinking'):
+                        content_blocks.append(dict(tb))
                 text = msg.get('content')
                 if text:
                     content_blocks.append({'type': 'text', 'text': str(text)})
@@ -181,6 +185,71 @@ class AIClientStreamingMixin:
             })
         return anthropic_tools
 
+    @staticmethod
+    def _apply_anthropic_cache_control(payload: Dict[str, Any]) -> None:
+        """为 Anthropic Messages API 挂载 prompt caching 断点（最多 4 个 ephemeral 断点）。
+
+        对齐 Claude Agent SDK：
+        1. system 块（缓存系统提示词）
+        2. tools[-1]（缓存全部工具定义）
+        3. messages[-1] 最后一个非 thinking 内容块（为下一轮写入完整对话前缀缓存）
+        4. messages[-3]（若对话 >= 3 条，提供滑动命中锚点）
+        """
+        ephemeral = {'type': 'ephemeral'}
+
+        # 1. System prompt breakpoint
+        sys_val = payload.get('system')
+        if isinstance(sys_val, str) and sys_val.strip():
+            payload['system'] = [{
+                'type': 'text',
+                'text': sys_val,
+                'cache_control': dict(ephemeral),
+            }]
+        elif isinstance(sys_val, list) and sys_val:
+            last_sys = sys_val[-1]
+            if isinstance(last_sys, dict) and last_sys.get('type') == 'text' and last_sys.get('text'):
+                last_sys['cache_control'] = dict(ephemeral)
+
+        # 2. Tools breakpoint
+        tools_val = payload.get('tools')
+        if isinstance(tools_val, list) and tools_val:
+            last_tool = tools_val[-1]
+            if isinstance(last_tool, dict):
+                last_tool['cache_control'] = dict(ephemeral)
+
+        # 3 & 4. Conversation history breakpoints (skip thinking / empty text blocks)
+        msgs = payload.get('messages')
+        if not isinstance(msgs, list) or not msgs:
+            return
+
+        def _mark_msg(msg: dict) -> bool:
+            content = msg.get('content')
+            if isinstance(content, str):
+                if not content.strip():
+                    return False
+                msg['content'] = [{
+                    'type': 'text',
+                    'text': content,
+                    'cache_control': dict(ephemeral),
+                }]
+                return True
+            if isinstance(content, list):
+                for blk in reversed(content):
+                    if not isinstance(blk, dict):
+                        continue
+                    btype = blk.get('type', '')
+                    if btype in ('thinking', 'redacted_thinking'):
+                        continue
+                    if btype == 'text' and not str(blk.get('text') or '').strip():
+                        continue
+                    blk['cache_control'] = dict(ephemeral)
+                    return True
+            return False
+
+        _mark_msg(msgs[-1])
+        if len(msgs) >= 3:
+            _mark_msg(msgs[-3])
+
     def _chat_stream_anthropic(self,
                                 messages: List[Dict[str, Any]],
                                 model: str,
@@ -201,22 +270,25 @@ class AIClientStreamingMixin:
         # 消息转换
         system_text, anth_messages = self._convert_messages_to_anthropic(messages)
 
+        eff_max_tokens = max_tokens or 16384
         payload: Dict[str, Any] = {
             'model': model,
             'messages': anth_messages,
-            'max_tokens': max_tokens or 16384,
+            'max_tokens': eff_max_tokens,
             'stream': True,
         }
-        # temperature（Anthropic 范围 0-1）
-        if temperature is not None:
-            payload['temperature'] = min(max(temperature, 0.0), 1.0)
 
         if system_text:
             payload['system'] = system_text
 
-        # 思考模式
-        if enable_thinking:
-            payload['thinking'] = {'type': 'enabled', 'budget_tokens': min(max_tokens or 16384, 10000)}
+        # 思考模式：Anthropic 要求启用 thinking 时不得传非 1.0 的 temperature，且 budget_tokens 必须严格小于 max_tokens
+        if enable_thinking and eff_max_tokens >= 2048:
+            payload['thinking'] = {
+                'type': 'enabled',
+                'budget_tokens': min(eff_max_tokens - 1024, 10000),
+            }
+        elif temperature is not None:
+            payload['temperature'] = min(max(temperature, 0.0), 1.0)
 
         # 工具
         if tools:
@@ -227,6 +299,9 @@ class AIClientStreamingMixin:
                 payload['tool_choice'] = {'type': 'none'}
             elif tool_choice == 'required':
                 payload['tool_choice'] = {'type': 'any'}
+
+        # 对齐 Claude Agent SDK：为 system / tools / messages 挂载 ephemeral 缓存断点
+        self._apply_anthropic_cache_control(payload)
 
         # 请求头（Anthropic 格式）
         headers = {
@@ -273,6 +348,7 @@ class AIClientStreamingMixin:
                     _content_blocks: Dict[int, Dict[str, Any]] = {}  # index → block info
                     _tool_args_acc: Dict[int, str] = {}  # index → accumulated JSON args
                     _pending_usage: Dict[str, Any] = {}
+                    _raw_anthropic_usage: Dict[str, Any] = {}
                     _last_stop_reason = None
                     _got_thinking = False
                     _enable_thinking_flag = enable_thinking  # 闭包变量
@@ -284,7 +360,7 @@ class AIClientStreamingMixin:
 
                     def _process_anthropic_event(event_type: str, data_str: str):
                         """处理单个 Anthropic SSE 事件，返回要 yield 的 dict 列表"""
-                        nonlocal _content_blocks, _tool_args_acc, _pending_usage, _last_stop_reason, _got_thinking
+                        nonlocal _content_blocks, _tool_args_acc, _pending_usage, _raw_anthropic_usage, _last_stop_reason, _got_thinking
                         results = []
 
                         try:
@@ -297,18 +373,23 @@ class AIClientStreamingMixin:
                         if ev_type == 'message_start':
                             msg = data.get('message', {})
                             usage = msg.get('usage', {})
-                            if usage:
-                                _pending_usage = self._parse_usage(usage)
+                            if isinstance(usage, dict) and usage:
+                                _raw_anthropic_usage.update(usage)
+                                _pending_usage = self._parse_usage(_raw_anthropic_usage)
 
                         elif ev_type == 'content_block_start':
                             idx = data.get('index', 0)
                             block = data.get('content_block', {})
+                            btype = block.get('type', 'text')
                             _content_blocks[idx] = {
-                                'type': block.get('type', 'text'),
+                                'type': btype,
                                 'id': block.get('id', ''),
                                 'name': block.get('name', ''),
+                                'thinking': block.get('thinking', '') or '',
+                                'signature': block.get('signature', '') or '',
+                                'data': block.get('data', '') or '',
                             }
-                            if block.get('type') == 'tool_use':
+                            if btype == 'tool_use':
                                 _tool_args_acc[idx] = ''
 
                         elif ev_type == 'content_block_delta':
@@ -325,11 +406,18 @@ class AIClientStreamingMixin:
                             elif delta_type == 'thinking_delta':
                                 thinking = delta.get('thinking', '')
                                 if thinking:
+                                    if idx in _content_blocks:
+                                        _content_blocks[idx]['thinking'] += thinking
                                     if not _got_thinking:
                                         _got_thinking = True
                                         print(f"[AI Client] 🧠 Anthropic thinking (首个 chunk, len={len(thinking)}, enable={_enable_thinking_flag})")
                                     if _enable_thinking_flag:
                                         results.append({"type": "thinking", "content": thinking})
+
+                            elif delta_type == 'signature_delta':
+                                sig = delta.get('signature', '')
+                                if sig and idx in _content_blocks:
+                                    _content_blocks[idx]['signature'] += sig
 
                             elif delta_type == 'input_json_delta':
                                 partial = delta.get('partial_json', '')
@@ -349,7 +437,25 @@ class AIClientStreamingMixin:
                         elif ev_type == 'content_block_stop':
                             idx = data.get('index', 0)
                             block_info = _content_blocks.get(idx, {})
-                            if block_info.get('type') == 'tool_use':
+                            btype = block_info.get('type')
+                            if btype == 'thinking' and block_info.get('signature'):
+                                results.append({
+                                    "type": "thinking_block",
+                                    "block": {
+                                        'type': 'thinking',
+                                        'thinking': block_info.get('thinking', ''),
+                                        'signature': block_info.get('signature', ''),
+                                    }
+                                })
+                            elif btype == 'redacted_thinking' and block_info.get('data'):
+                                results.append({
+                                    "type": "thinking_block",
+                                    "block": {
+                                        'type': 'redacted_thinking',
+                                        'data': block_info.get('data', ''),
+                                    }
+                                })
+                            elif btype == 'tool_use':
                                 # 工具调用完成 → 转换为 OpenAI 格式的 tool_call
                                 tool_id = block_info.get('id', '')
                                 tool_name = block_info.get('name', '')
@@ -370,12 +476,13 @@ class AIClientStreamingMixin:
                             delta = data.get('delta', {})
                             _last_stop_reason = delta.get('stop_reason')
                             usage = data.get('usage', {})
-                            if usage:
-                                # 合并 usage
-                                parsed = self._parse_usage(usage)
-                                for k, v in parsed.items():
-                                    if isinstance(v, (int, float)):
-                                        _pending_usage[k] = _pending_usage.get(k, 0) + v
+                            if isinstance(usage, dict) and usage:
+                                # Anthropic message_delta.usage 的 output_tokens 等字段是累计终值，
+                                # 直接覆盖原始字段再统一解析，避免重复累加与污染 cache_hit_rate
+                                for k, v in usage.items():
+                                    if v is not None:
+                                        _raw_anthropic_usage[k] = v
+                                _pending_usage = self._parse_usage(_raw_anthropic_usage)
 
                         elif ev_type == 'message_stop':
                             # 映射 stop_reason: end_turn → stop, tool_use → tool_calls
@@ -504,6 +611,8 @@ class AIClientStreamingMixin:
             if tool_choice == 'auto':
                 payload['tool_choice'] = {'type': 'auto'}
 
+        self._apply_anthropic_cache_control(payload)
+
         headers = {
             'Content-Type': 'application/json',
             'x-api-key': api_key,
@@ -605,11 +714,15 @@ class AIClientStreamingMixin:
         payload = {
             'model': model,
             'messages': messages,
-            'temperature': temperature,
             'stream': True,
             # 必须加 stream_options 才能在流式响应中获取 usage 统计
             'stream_options': {'include_usage': True},
         }
+        # OpenAI o1/o3/o4 推理系列直连时不接受自定义 temperature
+        _m_low = (model or '').lower().split('/')[-1]
+        _is_o_series = provider == 'openai' and _m_low.startswith(('o1', 'o3', 'o4'))
+        if temperature is not None and not _is_o_series:
+            payload['temperature'] = temperature
         if max_tokens:
             payload['max_tokens'] = max_tokens
         if response_format:

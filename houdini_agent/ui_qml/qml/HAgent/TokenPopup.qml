@@ -16,7 +16,7 @@ Popup {
     }
     function raw(n) { return Math.round(Number(n || 0)).toLocaleString(Qt.locale(), "f", 0) }
     function clamp01(n) { return Math.max(0, Math.min(1, n || 0)) }
-    function total() { return Math.max(1, st.total || ((st.input || 0) + (st.output || 0) + (st.reasoning || 0))) }
+    function total() { return Math.max(1, st.total || ((st.input || 0) + (st.output || 0))) }
     function pct(n) { return clamp01((n || 0) / total()) }
     function pctOf(n, d) { return clamp01((n || 0) / Math.max(1, d || 0)) }
     function pctText(n) {

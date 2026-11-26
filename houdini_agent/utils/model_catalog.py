@@ -116,15 +116,15 @@ STATIC_VISION: Set[str] = {
     "glm-5.3-flashx", "kiro-auto",
     # OpenAI 直连
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
-    # OpenRouter（glm-5.3 只收文本；DeepSeek 全系默认支持图片输入）
+    # OpenRouter（glm-5.3 与 deepseek-v4-pro 仅支持文本；DeepSeek 仅 Flash / Vision 路线支持图片输入）
     "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5",
     "anthropic/claude-fable-5.1", "anthropic/claude-opus-5",
     "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna", "openai/gpt-5.6-sol",
     "google/gemini-4-argon", "google/gemini-3.8-flash",
-    "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash-vision-exp",
     "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3",
-    # DeepSeek 直连（默认支持图片输入）
-    "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp",
+    # DeepSeek 直连（仅 Flash / Vision 支持图片输入；V4 Pro / chat / reasoner 仅文本）
+    "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
 }
 
 # header._model_features 搬运 + 为新增 id 补齐（prompt caching 全 True；vision 与 STATIC_VISION 一致）
@@ -132,9 +132,10 @@ _FEAT_VIS: Dict[str, bool] = {"supports_prompt_caching": True, "supports_vision"
 _FEAT_TXT: Dict[str, bool] = {"supports_prompt_caching": True, "supports_vision": False}
 
 STATIC_FEATURES: Dict[str, Dict[str, bool]] = {
-    # DeepSeek（默认支持图片输入）
+    # DeepSeek（仅 Flash / Vision 支持图片输入；V4 Pro 仅文本）
+    "deepseek-flash":               dict(_FEAT_VIS),
     "deepseek-v4-flash":            dict(_FEAT_VIS),
-    "deepseek-v4-pro":              dict(_FEAT_VIS),
+    "deepseek-v4-pro":              dict(_FEAT_TXT),
     "deepseek-v4-flash-vision-exp": dict(_FEAT_VIS),
     # GLM
     "glm-4.7":                      dict(_FEAT_TXT),
@@ -175,7 +176,7 @@ STATIC_FEATURES: Dict[str, Dict[str, bool]] = {
     "google/gemini-4-argon":               dict(_FEAT_VIS),
     "google/gemini-3.8-flash":             dict(_FEAT_VIS),
     "deepseek/deepseek-v4.1-flash":        dict(_FEAT_VIS),
-    "deepseek/deepseek-v4-pro":            dict(_FEAT_VIS),
+    "deepseek/deepseek-v4-pro":            dict(_FEAT_TXT),
     "z-ai/glm-5.3":                        dict(_FEAT_TXT),
     "x-ai/grok-4.7":                       dict(_FEAT_VIS),
     "moonshotai/kimi-k3":                  dict(_FEAT_VIS),
@@ -553,7 +554,7 @@ _FAMILY_CONTEXT: List[Tuple[str, int]] = [
     ("gemini", 1048576), ("deepseek", 1048576), ("glm", 1048576),
     ("grok", 500000), ("kimi", 1048576), ("minimax", 1048576),
 ]
-_FAMILY_VISION: Tuple[str, ...] = ("claude", "gpt", "gemini", "grok", "kimi", "minimax", "fable", "deepseek")
+_FAMILY_VISION: Tuple[str, ...] = ("claude", "gpt", "gemini", "grok", "kimi", "minimax", "fable")
 _DEFAULT_CONTEXT = 128000
 
 
@@ -577,19 +578,30 @@ def context_limit(model: str, provider: Optional[str] = None,
 
 def supports_vision(model: str, provider: Optional[str] = None,
                     cache_path: Optional[str] = None) -> bool:
-    """是否支持图像输入：缓存 meta.vision → STATIC_VISION → 家族/渠道推断（DeepSeek 默认支持）。"""
+    """是否支持图像输入：缓存 meta.vision → STATIC_VISION / STATIC_FEATURES → 精确家族推断。
+
+    注意：DeepSeek 与 OpenRouter 均将 V4 Pro 系列（deepseek-v4-pro*）列为仅文本，
+    仅 Flash / Vision 路线（deepseek-flash / deepseek-v4-flash / deepseek-v4.1-flash / *-vision-*）
+    支持原生图片输入，因此不能对整个 deepseek 渠道一刀切返回 True。
+    """
     mid = str(model or "")
     if provider:
         cached = _cache_meta(load_cache(cache_path), provider, mid).get("vision")
         if isinstance(cached, bool):
             return cached
-        if str(provider).lower() == "deepseek":
-            return True
     if mid in STATIC_VISION:
         return True
+    static_feat = STATIC_FEATURES.get(mid)
+    if isinstance(static_feat, dict) and "supports_vision" in static_feat:
+        return bool(static_feat["supports_vision"])
     low = mid.lower()
     if "glm" in low:
         return False
+    if "deepseek" in low or (provider and str(provider).lower() == "deepseek"):
+        # DeepSeek 仅明确的 Flash / Vision / VL 模型支持视觉；Pro / Chat / Reasoner 一律仅文本
+        if any(k in low for k in ("pro", "reasoner", "chat", "coder")):
+            return False
+        return any(k in low for k in ("flash", "vision", "vl"))
     for family in _FAMILY_VISION:
         if family in low:
             return True

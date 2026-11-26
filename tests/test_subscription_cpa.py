@@ -223,10 +223,11 @@ def test_sessions_can_skip_think_tag_prompt_and_controller_does_for_codex():
     import os
     import re
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "houdini_agent", "ui_qml")
-    for mod in ("agent_session.py", "bridge_session.py"):
-        src = open(os.path.join(root, mod), encoding="utf-8").read()
-        assert re.search(r"def run\([^)]*think_tags=True", src, re.S), mod
-        assert "self.build_messages(enable_thinking and think_tags)" in src, mod
+    agent_src = open(os.path.join(root, "agent_session.py"), encoding="utf-8").read()
+    assert re.search(r"def run\([^)]*think_tags=True", agent_src, re.S)
+    assert "self.build_messages(enable_thinking and think_tags)" in agent_src
+    bridge_src = open(os.path.join(root, "bridge_session.py"), encoding="utf-8").read()
+    assert "class BridgeAgentSession(BaseAgentSession):" in bridge_src
     ctl = open(os.path.join(root, "controller.py"), encoding="utf-8").read()
     assert 'think_tags=(self._sub_kind(provider) is None)' in ctl
 

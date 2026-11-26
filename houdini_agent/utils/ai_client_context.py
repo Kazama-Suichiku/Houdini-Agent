@@ -1,26 +1,44 @@
 # -*- coding: utf-8 -*-
+"""Claude Agent SDK / Codex 风格的上下文压缩管理。
+
+核心原则（对齐 Anthropic Claude Agent SDK compaction_control）：
+1. 平时完全不动历史前缀（零 [Stale] 改写、零按工具正则微裁剪），保证 100% Prompt Cache 命中率；
+2. 仅当真实/估算上下文逼近窗口阈值（默认 85%，大窗口额外预留 16k 缓冲）或用户手动触发时，
+   执行一次性 LLM 结构化交接摘要（保留头部 system prompt + 最近少量原文尾部，替代更早历史）；
+3. 仅在 LLM 摘要不可用（离线/失败）或 API 仍报 413/超限时，按完整轮次/原子工具步干净丢弃最老历史；
+4. 绝不在对话中间或末尾插入 role='system'，且双向清洗确保 assistant.tool_calls 与 role='tool' 严格配对。
+"""
+
+import copy
 import json
 import re
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class AIClientContextMixin:
-    """Context window management: trimming, compression, summarization."""
+    """Context window management: Claude Agent SDK-style compaction & overflow recovery."""
+
+    # 已自带分页的工具，入口处不再二次截断
+    _SELF_PAGED_TOOLS = frozenset({
+        'get_houdini_node_doc', 'get_network_structure', 'get_node_parameters',
+        'list_children', 'execute_python', 'execute_shell',
+    })
+
+    _SUMMARY_PREFIXES = (
+        '[对话历史摘要]',
+        '[Compacted Context Summary]',
+        '[Context]',
+        '[上下文管理]',
+        '[历史对话摘要]',
+    )
+
+    # ------------------------------------------------------------------
+    # 工具输出入口防爆上限（现代大上下文窗口不再微裁剪，只防极端大输出）
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _paginate_result(text: str, max_lines: int = 50) -> str:
-        """将工具结果按行分页，超出部分截断并附带分页提示。
-
-        - 不超过 max_lines 行时原样返回
-        - 超过时保留前 max_lines 行，并追加分页说明
-
-        Args:
-            text: 原始工具输出文本
-            max_lines: 每页最大行数（默认 50）
-
-        Returns:
-            分页后的文本
-        """
+    def _paginate_result(text: str, max_lines: int = 200) -> str:
+        """按行上限截断超长文本，未超限原样返回。"""
         if not text:
             return text
         lines = text.split('\n')
@@ -30,101 +48,118 @@ class AIClientContextMixin:
         page = '\n'.join(lines[:max_lines])
         return (
             f"{page}\n\n"
-            f"[分页提示] 显示第 1-{max_lines} 行，共 {total} 行（已截断）。"
-            f"当前信息如已足够请直接使用。"
-            f"注意：用相同参数重复调用会得到相同结果。"
-            f"如需更多信息请换用更精确的查询条件，或使用 fetch_webpage 获取特定 URL 的完整内容（支持 start_line 翻页）。"
+            f"[输出截断] 显示前 {max_lines} 行，共 {total} 行。"
+            f"如需更多内容请使用更精确的过滤/分页参数。"
         )
 
+    @staticmethod
+    def _cap_text(text: str, max_chars: int = 20000) -> str:
+        """对极端超长工具输出做头尾保留截断，常规输出原样保留。"""
+        if not text or len(text) <= max_chars:
+            return text
+        head = int(max_chars * 0.75)
+        tail = max_chars - head
+        omitted = len(text) - max_chars
+        return f"{text[:head]}\n\n...[省略中间 {omitted} 字符]...\n\n{text[-tail:]}"
+
+    def _compress_tool_result(self, tool_name: str, result: dict) -> str:
+        """工具返回结果入口防爆处理：保留完整语义，只限制极端大块输出。"""
+        cook_note = result.get('_cook_note') if isinstance(result, dict) else None
+
+        if result.get('success'):
+            content = str(result.get('result', '') or '')
+            if tool_name not in self._SELF_PAGED_TOOLS:
+                content = self._cap_text(content, max_chars=20000)
+            if cook_note:
+                content = f"{content}\n{cook_note}"
+            return content
+
+        error = str(result.get('error', '未知错误') or '未知错误')
+        return self._cap_text(error, max_chars=4000)
+
+    @classmethod
+    def _summarize_tool_content(cls, content: str, max_len: int = 200) -> str:
+        """兼容旧 QtWidgets 路径的轻量文本截断辅助。"""
+        if not content or len(content) <= max_len:
+            return content
+        return content[:max_len] + '...[摘要]'
+
     # ------------------------------------------------------------------
-    # 消息清洗：确保发送给 API 的消息格式正确
+    # 消息清洗：确保 tool_calls / tool 配对合法
     # ------------------------------------------------------------------
 
     @staticmethod
     def _ensure_tool_call_ids(tool_calls: list) -> list:
-        """确保每个 tool_call 都有有效的 id 字段
-
-        代理 API（如 Duojie）有时不在第一个 chunk 提供 tool_call_id，
-        导致后续 role:tool 消息的 tool_call_id 为空 → API 400 错误。
-        """
+        """确保每个 tool_call 都有有效的 id / type / function 字段。"""
         import uuid
         for tc in tool_calls:
             if not tc.get('id'):
                 tc['id'] = f"call_{uuid.uuid4().hex[:24]}"
-            # 确保 type 字段存在
             if not tc.get('type'):
                 tc['type'] = 'function'
-            # 确保 function 字段完整
             fn = tc.get('function', {})
             if not fn.get('name'):
                 fn['name'] = 'unknown'
-            if not fn.get('arguments', '').strip():
+            if not str(fn.get('arguments', '')).strip():
                 fn['arguments'] = '{}'
             tc['function'] = fn
         return tool_calls
 
-    # ----------------------------------------------------------
-    # 智能摘要：提取工具结果的关键信息
-    # ----------------------------------------------------------
+    def _sanitize_working_messages(self, messages: list) -> list:
+        """发送前双向清洗消息列表，修复 tool_calls / tool 配对问题。
 
-    _PATH_RE = re.compile(r'/(?:obj|out|stage|tasks|ch|shop|img|mat|vex)/[\w/]+')
-    _COUNT_RE = re.compile(r'(?:节点数量|点数量|错误数|警告数|count|total)[：:\s]*(\d+)', re.IGNORECASE)
-
-    @classmethod
-    def _summarize_tool_content(cls, content: str, max_len: int = 200) -> str:
-        """智能摘要工具结果——提取关键信息而非简单截断
-
-        提取优先级: 路径 > 数值统计 > 第一行摘要 > 截断
+        1. 补齐缺失的 tool_call id
+        2. 移除孤儿 role:tool 消息（前面没有对应的 assistant tool_call）
+        3. 清理悬挂的 assistant.tool_calls（后面没有对应的 role:tool 响应，避免 API 400）
         """
-        if not content or len(content) <= max_len:
-            return content
+        responded_tc_ids = set()
+        for msg in messages:
+            if msg.get('role') == 'assistant' and msg.get('tool_calls'):
+                self._ensure_tool_call_ids(msg['tool_calls'])
+            elif msg.get('role') == 'tool':
+                tc_id = msg.get('tool_call_id', '')
+                if tc_id:
+                    responded_tc_ids.add(tc_id)
 
-        parts = []
+        seen_tc_ids = set()
+        sanitized = []
+        for msg in messages:
+            role = msg.get('role')
+            if role == 'assistant' and msg.get('tool_calls'):
+                kept_tcs = []
+                for tc in msg['tool_calls']:
+                    tc_id = tc.get('id', '')
+                    if tc_id and tc_id in responded_tc_ids:
+                        kept_tcs.append(tc)
+                        seen_tc_ids.add(tc_id)
+                if len(kept_tcs) == len(msg['tool_calls']):
+                    sanitized.append(msg)
+                else:
+                    cleaned = dict(msg)
+                    if kept_tcs:
+                        cleaned['tool_calls'] = kept_tcs
+                    else:
+                        cleaned.pop('tool_calls', None)
+                        if not cleaned.get('content'):
+                            cleaned['content'] = '[已省略未完成的工具调用]'
+                    sanitized.append(cleaned)
+                continue
 
-        # 1. 提取节点路径
-        paths = cls._PATH_RE.findall(content)
-        if paths:
-            unique_paths = list(dict.fromkeys(paths))[:5]  # 去重保留顺序
-            parts.append("路径: " + ", ".join(unique_paths))
+            if role == 'tool':
+                tc_id = msg.get('tool_call_id', '')
+                if not tc_id or tc_id not in seen_tc_ids:
+                    continue
+            sanitized.append(msg)
+        return sanitized
 
-        # 2. 提取数量信息
-        counts = cls._COUNT_RE.findall(content)
-        if counts:
-            parts.append("统计: " + ", ".join(counts[:4]))
-
-        # 3. 检测成功/失败状态
-        if '错误' in content[:100] or 'error' in content[:100].lower():
-            # 错误信息——保留更多内容
-            first_line = content.split('\n', 1)[0][:200]
-            parts.append(first_line)
-        elif not parts:
-            # 没提取到结构化信息，保留第一行
-            first_line = content.split('\n', 1)[0][:150]
-            parts.append(first_line)
-
-        summary = " | ".join(parts)
-        if len(summary) > max_len:
-            summary = summary[:max_len]
-        return summary + '...[摘要]'
-
-    # ----------------------------------------------------------
-    # 图片内容剥离
-    # ----------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 图片剥离（用于非视觉模型或 413 溢出恢复）
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _strip_image_content(messages: list, keep_recent_user: int = 0) -> int:
-        """就地剥离消息中的 image_url 内容，将多模态 content 转为纯文本
-
-        Args:
-            messages: 消息列表（就地修改）
-            keep_recent_user: 保留最近 N 条 user 消息的图片（0 = 全部剥离）
-
-        Returns:
-            剥离的图片数量
-        """
+        """就地剥离消息中的 base64 图片块，保留文字部分。"""
         stripped = 0
-
-        # 找出最近 N 条 user 消息的索引（从后往前）
         protected_indices: set = set()
         if keep_recent_user > 0:
             count = 0
@@ -137,12 +172,9 @@ class AIClientContextMixin:
 
         for idx, msg in enumerate(messages):
             content = msg.get('content')
-            if not isinstance(content, list):
-                continue
-            if idx in protected_indices:
+            if not isinstance(content, list) or idx in protected_indices:
                 continue
 
-            # 多模态 content: [{"type":"text","text":"..."},{"type":"image_url",...}]
             text_parts = []
             has_image = False
             for part in content:
@@ -157,653 +189,553 @@ class AIClientContextMixin:
 
             if has_image:
                 combined = '\n'.join(t for t in text_parts if t)
-                if combined:
-                    combined += '\n[图片已移除以节省上下文空间]'
-                else:
-                    combined = '[图片已移除]'
+                combined = (combined + '\n[图片已移除以节省上下文空间]') if combined else '[图片已移除]'
                 msg['content'] = combined
 
         return stripped
 
-    # ----------------------------------------------------------
-    # 渐进式裁剪
-    # ----------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Token 估算（UTF-8 CJK/ASCII 快速估算）
+    # ------------------------------------------------------------------
 
-    def _progressive_trim(self, working_messages: list, tool_calls_history: list,
-                          trim_level: int = 1, supports_vision: bool = True) -> list:
-        """渐进式裁剪上下文，根据 trim_level 逐步加大裁剪力度
-
-        Cursor 风格核心原则:
-        - **永不截断 user 消息的文本部分**
-        - **永不截断 assistant 消息**（保留完整回复——这是 Cursor 的关键设计）
-        - 只压缩 tool 结果（role='tool'）
-        - 剥离旧轮次中的图片（base64 图片是 body 膨胀的主因）
-        - 按「轮次」裁剪，保留最近 N 轮完整对话
-        - 最早的轮次优先删除
-
-        trim_level=1: 轻度 - 压缩旧轮 tool 结果，保留最近 70% 轮次，剥离旧轮图片
-        trim_level=2: 中度 - 保留最近 3 轮，较短的 tool 摘要，剥离所有旧图片
-        trim_level=3+: 重度 - 保留最近 2 轮，激进压缩 tool 结果，剥离全部图片
-        """
-        if not working_messages:
-            return working_messages
-
-        # ── 第 0 步：剥离图片（base64 图片是 413 的主因）──
-        if not supports_vision or trim_level >= 3:
-            # 非视觉模型 或 重度裁剪：剥离所有图片
-            n_stripped = self._strip_image_content(working_messages, keep_recent_user=0)
-        elif trim_level == 2:
-            # 中度裁剪：只保留最近 1 条 user 消息的图片
-            n_stripped = self._strip_image_content(working_messages, keep_recent_user=1)
-        else:
-            # 轻度裁剪：保留最近 2 条 user 消息的图片
-            n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
-
-        if n_stripped > 0:
-            print(f"[AI Client] 裁剪: 剥离了 {n_stripped} 张图片")
-
-        sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
-        body = working_messages[1:] if sys_msg else working_messages[:]
-
-        if not body:
-            return working_messages
-
-        # --- 划分轮次：以 user 消息为分界 ---
-        rounds = []  # [[msg, msg, ...], ...]
-        current_round = []
-        for m in body:
-            if m.get('role') == 'user' and current_round:
-                rounds.append(current_round)
-                current_round = []
-            current_round.append(m)
-        if current_round:
-            rounds.append(current_round)
-
-        if trim_level <= 1:
-            # 轻度：只压缩非最近 30% 轮次的 tool 结果
-            n_rounds = len(rounds)
-            protect_n = max(3, int(n_rounds * 0.7))  # 保护最近 70%
-            for r_idx, rnd in enumerate(rounds):
-                if r_idx >= n_rounds - protect_n:
-                    break
-                for m in rnd:
-                    c = m.get('content') or ''
-                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 300:
-                        m['content'] = self._summarize_tool_content(c, 300)
-                    # ★ assistant 和 user 文本完全保留 ★
-
-            keep_rounds = max(5, int(n_rounds * 0.7))
-            if n_rounds > keep_rounds:
-                rounds = rounds[-keep_rounds:]
-
-        elif trim_level == 2:
-            # 中度：保留最近 3 轮（而非 5 轮，避免 level 1 → level 2 无效裁剪）
-            rounds = rounds[-3:] if len(rounds) > 3 else rounds
-            for r_idx, rnd in enumerate(rounds):
-                if r_idx >= len(rounds) - 2:
-                    break  # 最近 2 轮的 tool 结果不压缩
-                for m in rnd:
-                    c = m.get('content') or ''
-                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 150:
-                        m['content'] = self._summarize_tool_content(c, 150)
-                    # ★ assistant 和 user 文本完全保留 ★
-
-        else:
-            # 重度：保留最近 2 轮，激进压缩 tool 结果
-            rounds = rounds[-2:] if len(rounds) > 2 else rounds
-            for rnd in rounds[:-1]:  # 最后一轮不压缩
-                for m in rnd:
-                    c = m.get('content') or ''
-                    if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 100:
-                        m['content'] = self._summarize_tool_content(c, 100)
-                    # ★ assistant 和 user 文本完全保留 ★
-
-        # 重组
-        body = [m for rnd in rounds for m in rnd]
-        result = ([sys_msg] if sys_msg else []) + body
-
-        # 恢复提示
-        history_summary = ""
-        if tool_calls_history:
-            op_history = [h for h in tool_calls_history
-                          if h['tool_name'] not in self._QUERY_TOOLS]
-            if op_history:
-                recent = op_history[-8:]
-                lines = []
-                for h in recent:
-                    r = h.get('result', {})
-                    status = 'ok' if (isinstance(r, dict) and r.get('success')) else 'err'
-                    r_str = str(r.get('result', '') if isinstance(r, dict) else r)[:60]
-                    lines.append(f"  [{status}] {h['tool_name']}: {r_str}")
-                history_summary = "\n已完成的操作:\n" + "\n".join(lines)
-
-        result.append({
-            'role': 'system',
-            'content': (
-                f'[上下文管理] 已自动裁剪历史（级别 {trim_level}）。'
-                f'{history_summary}'
-                f'\n请继续完成当前任务。不要提及此裁剪。'
-            )
-        })
-
-        print(f"[AI Client] 渐进式裁剪: level={trim_level}, "
-              f"消息 {len(working_messages)} → {len(result)}, "
-              f"轮次 {len(rounds)}")
-        return result
-
-    def _sanitize_working_messages(self, messages: list) -> list:
-        """在发送给 API 之前清洗消息列表，修复常见格式问题
-
-        修复项：
-        1. assistant 消息中 tool_calls 的 id 为空
-        2. role:tool 消息的 tool_call_id 与 assistant 中的 id 不匹配
-        3. 移除无效的 tool 消息（没有对应 assistant tool_call）
-        """
-        # 收集所有有效的 tool_call_id
-        valid_tc_ids = set()
-        for msg in messages:
-            if msg.get('role') == 'assistant' and 'tool_calls' in msg:
-                self._ensure_tool_call_ids(msg['tool_calls'])
-                for tc in msg['tool_calls']:
-                    if tc.get('id'):
-                        valid_tc_ids.add(tc['id'])
-
-        # 修复 tool 消息的 tool_call_id
-        sanitized = []
-        for msg in messages:
-            if msg.get('role') == 'tool':
-                tc_id = msg.get('tool_call_id', '')
-                if not tc_id or tc_id not in valid_tc_ids:
-                    # 跳过孤儿 tool 消息（没有对应的 assistant tool_call）
-                    continue
-            sanitized.append(msg)
-        return sanitized
-
-    # 已自带分页的工具，不再二次截断
-    _SELF_PAGED_TOOLS = frozenset({
-        'get_houdini_node_doc', 'get_network_structure', 'get_node_parameters',
-        'list_children', 'execute_python', 'execute_shell',
-    })
-
-    def _compress_tool_result(self, tool_name: str, result: dict) -> str:
-        """统一工具结果压缩逻辑（供两种 agent loop 共用）
-
-        策略：
-        - 已自带分页的工具 → 直接返回（如 get_houdini_node_doc）
-        - 查询工具 → 按行分页（默认 50 行）
-        - 操作工具 → 提取路径，保留关键信息
-        - 其他工具 → 适度截断
-        - 失败 → 保留完整错误
-        """
-        # ★ Cook 耗时反馈（实时 Cook 模式）：始终追加到结果文本末尾，
-        # 不受工具分类裁剪影响，确保 Agent 能看到 cook 耗时与慢 cook 警告。
-        cook_note = result.get('_cook_note') if isinstance(result, dict) else None
-
-        if result.get('success'):
-            content = result.get('result', '')
-            # 已自带分页逻辑的工具，直接返回不再截断
-            if tool_name in self._SELF_PAGED_TOOLS:
-                return content + (f"\n{cook_note}" if cook_note else "")
-            if tool_name in self._QUERY_TOOLS:
-                content = self._paginate_result(content, max_lines=50)
-            elif tool_name in self._OP_TOOLS:
-                if len(content) > 300:
-                    import re
-                    paths = re.findall(r'[/\w]+(?:/[\w]+)+', content)
-                    if paths:
-                        content = ' '.join(paths[:5])
-                        if len(content) > 300:
-                            content = content[:300] + '...'
-                    else:
-                        content = content[:300]
-            else:
-                # 其他工具也按行分页，但更宽松
-                content = self._paginate_result(content, max_lines=80)
-            if cook_note:
-                content = f"{content}\n{cook_note}"
-            return content
-        else:
-            error = result.get('error', '未知错误')
-            limit = 2500 if tool_name in ('execute_python', 'execute_shell', 'run_skill') else 1200
-            return error[:limit] if len(error) > limit else error
-
-    # ----------------------------------------------------------
-    # ★ 分级工具结果压缩（用于上下文压缩阶段，比 _summarize_tool_content 更智能）
-    # ----------------------------------------------------------
-
-    # 工具名 → 压缩钩子映射（tool_call_id 上的 assistant.tool_calls 保留名称信息）
-    _TIERED_COMPRESS_NEVER = frozenset({'check_errors'})  # 错误信息永不压缩
-
-    @classmethod
-    def _tiered_compress_tool(cls, tool_name: str, content: str, max_len: int = 300) -> str:
-        """根据工具类型做分级压缩，保留最有用的信息而非简单截断。
-
-        与 _summarize_tool_content（通用路径/数量提取）不同，本方法针对具体工具
-        定制压缩策略，在上下文管理阶段使用。
-        """
-        if not content or len(content) <= max_len:
-            return content
-
-        # check_errors: 永不压缩（错误消息是最重要的反馈）
-        if tool_name in cls._TIERED_COMPRESS_NEVER:
-            return content
-
-        # get_network_structure: 保留节点名/类型/连接，去掉位置坐标
-        if tool_name == 'get_network_structure':
-            lines = content.split('\n')
-            kept = []
-            for line in lines:
-                # 跳过纯位置信息行
-                if re.match(r'\s*(位置|position|pos)\s*[:：]', line, re.IGNORECASE):
-                    continue
-                # 跳过空行和装饰线
-                stripped = line.strip()
-                if not stripped or stripped.startswith('---') or stripped.startswith('==='):
-                    continue
-                kept.append(line)
-            result = '\n'.join(kept)
-            if len(result) > max_len:
-                result = result[:max_len] + '...[结构已压缩]'
-            return result
-
-        # get_node_parameters: 保留非默认/已修改参数，折叠默认值
-        if tool_name == 'get_node_parameters':
-            lines = content.split('\n')
-            kept = []
-            default_count = 0
-            for line in lines:
-                # 含 "默认" 或 "(default)" 的参数行被折叠
-                if re.search(r'\(default\)|默认值|unchanged', line, re.IGNORECASE):
-                    default_count += 1
-                    continue
-                kept.append(line)
-            if default_count > 0:
-                kept.append(f'  ...({default_count} 个默认参数已省略)')
-            result = '\n'.join(kept)
-            if len(result) > max_len:
-                result = result[:max_len] + '...[参数已压缩]'
-            return result
-
-        # execute_python: 保留 stdout，截断 traceback（保留首行错误）
-        if tool_name == 'execute_python':
-            # 如果有 traceback，只保留最后的错误行
-            tb_idx = content.find('Traceback (most recent call last)')
-            if tb_idx >= 0:
-                before_tb = content[:tb_idx].strip()
-                # 提取 traceback 最后一行（实际错误描述）
-                tb_lines = content[tb_idx:].strip().split('\n')
-                error_line = tb_lines[-1] if tb_lines else ''
-                result = before_tb
-                if error_line:
-                    result += f'\n[Error] {error_line}'
-                if len(result) > max_len:
-                    result = result[:max_len] + '...[已压缩]'
-                return result
-            # 无 traceback：正常截断
-            if len(content) > max_len:
-                return content[:max_len] + '...[输出已压缩]'
-            return content
-
-        # search_node_types / semantic_search_nodes: 保留 Top N 结果
-        if tool_name in ('search_node_types', 'semantic_search_nodes'):
-            lines = content.split('\n')
-            # 保留前 5 个有实质内容的行
-            kept = [l for l in lines if l.strip()][:5]
-            total = len([l for l in lines if l.strip()])
-            result = '\n'.join(kept)
-            if total > 5:
-                result += f'\n...共 {total} 条结果，已显示前 5 条'
-            if len(result) > max_len:
-                result = result[:max_len] + '...[搜索结果已压缩]'
-            return result
-
-        # web_search: 保留标题 + 摘要，丢弃 URL
-        if tool_name == 'web_search':
-            # 移除 URL 行（http:// 或 https:// 开头）
-            lines = content.split('\n')
-            kept = [l for l in lines if not re.match(r'\s*https?://', l.strip())]
-            result = '\n'.join(kept)
-            if len(result) > max_len:
-                result = result[:max_len] + '...[搜索已压缩]'
-            return result
-
-        # 默认：使用通用智能摘要
-        return cls._summarize_tool_content(content, max_len)
-
-    # ----------------------------------------------------------
-    # ★ 过时工具结果检测与标记
-    # ----------------------------------------------------------
-
-    # 可被后续同名调用"覆盖"的工具（查询类）
-    _STALEABLE_TOOLS = frozenset({
-        'get_network_structure', 'get_node_parameters', 'list_children',
-        'check_errors', 'get_node_inputs', 'read_selection',
-    })
-
-    @classmethod
-    def _mark_stale_tool_results(cls, working_messages: list) -> int:
-        """检测并压缩过时的工具结果。
-
-        当同一个查询工具以相同/重叠参数被多次调用时，早期的结果已过时
-        （AI 已有更新的数据）。将早期结果替换为简短标记以节省 token。
-
-        Returns:
-            被标记为过时的工具结果数量
-        """
-        # 收集 tool 消息的 (tool_call_id → 工具名, 参数) 映射
-        # 需要从 assistant 的 tool_calls 中提取工具名和参数
-        tc_id_to_info: Dict[str, Tuple[str, str]] = {}  # tc_id → (tool_name, key_arg)
-        for msg in working_messages:
-            if msg.get('role') == 'assistant' and 'tool_calls' in msg:
-                for tc in msg.get('tool_calls', []):
-                    tc_id = tc.get('id', '')
-                    fn = tc.get('function', {})
-                    name = fn.get('name', '')
-                    args_str = fn.get('arguments', '{}')
-                    # 提取关键参数（通常是 node_path 或 network_path）
-                    try:
-                        args = json.loads(args_str)
-                    except Exception:
-                        args = {}
-                    key_arg = args.get('node_path', '') or args.get('network_path', '') or args.get('box_name', '')
-                    if tc_id and name:
-                        tc_id_to_info[tc_id] = (name, key_arg)
-
-        # 从后往前扫描 tool 消息，记录每个 (tool_name, key_arg) 最后出现的位置
-        latest_seen: Dict[str, int] = {}  # "(tool_name):(key_arg)" → 最后出现的消息索引
-        tool_msg_indices = []
-        for i, msg in enumerate(working_messages):
-            if msg.get('role') == 'tool':
-                tc_id = msg.get('tool_call_id', '')
-                info = tc_id_to_info.get(tc_id)
-                if info:
-                    tool_msg_indices.append((i, info[0], info[1]))
-
-        # 反向记录最后出现位置
-        for idx, tool_name, key_arg in reversed(tool_msg_indices):
-            sig = f"{tool_name}:{key_arg}"
-            if sig not in latest_seen:
-                latest_seen[sig] = idx
-
-        # 标记较早的重复查询为过时
-        stale_count = 0
-        for idx, tool_name, key_arg in tool_msg_indices:
-            if tool_name not in cls._STALEABLE_TOOLS:
-                continue
-            sig = f"{tool_name}:{key_arg}"
-            if sig in latest_seen and latest_seen[sig] != idx:
-                # 此消息不是最新的 → 过时
-                content = working_messages[idx].get('content', '')
-                if content and not content.startswith('[Stale]'):
-                    working_messages[idx]['content'] = (
-                        f'[Stale] 此 {tool_name} 结果已被后续查询更新，详见最新结果。'
-                    )
-                    stale_count += 1
-
-        return stale_count
-
-    # ----------------------------------------------------------
-    # ★ 主动式上下文压缩（agent_loop 内使用）
-    # ----------------------------------------------------------
+    @staticmethod
+    def _estimate_text_tokens(text: Any) -> int:
+        """快速区分 ASCII 与中文/非 ASCII 字符估算 token 数。"""
+        if not text:
+            return 0
+        if not isinstance(text, str):
+            text = str(text)
+        n_chars = len(text)
+        if n_chars == 0:
+            return 0
+        n_bytes = len(text.encode('utf-8'))
+        if n_bytes == n_chars:
+            return max(1, int(n_chars / 3.8))
+        non_ascii = min(n_chars, (n_bytes - n_chars) // 2)
+        ascii_n = n_chars - non_ascii
+        return max(1, int(ascii_n / 3.8 + non_ascii * 0.75))
 
     @classmethod
     def _estimate_messages_tokens(cls, messages: list, tools: Optional[list] = None) -> int:
-        """快速估算消息列表 + 工具定义的 token 数。
-
-        使用启发式方法，避免每轮都调用 tiktoken（性能开销）。
-        """
+        """快速估算消息列表 + 工具定义的 token 数。"""
         total = 0
         for msg in messages:
             content = msg.get('content') or ''
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get('type') == 'text':
-                        total += len(part.get('text', '')) // 3
+                        total += cls._estimate_text_tokens(part.get('text', ''))
                     elif isinstance(part, dict) and part.get('type') in ('image_url', 'image'):
                         total += 765
                     elif isinstance(part, str):
-                        total += len(part) // 3
+                        total += cls._estimate_text_tokens(part)
             else:
-                # 快速估算：英文 ~4 chars/token, 中文 ~1.5 chars/token
-                # 综合取 ~3 chars/token
-                total += len(content) // 3
-            # tool_calls 开销
+                total += cls._estimate_text_tokens(content)
+
             tcs = msg.get('tool_calls')
             if tcs:
                 for tc in tcs:
                     fn = tc.get('function', {})
-                    total += len(fn.get('name', '')) + len(fn.get('arguments', '')) // 3 + 8
-            total += 4  # 消息格式开销
+                    total += cls._estimate_text_tokens(fn.get('name', ''))
+                    total += cls._estimate_text_tokens(fn.get('arguments', ''))
+                    total += 8
+            total += 4
 
-        # 工具定义 token（每个工具 ~100-200 tokens）
         if tools:
             for t in tools:
                 fn = t.get('function', {})
-                total += len(fn.get('description', '')) // 4
+                total += cls._estimate_text_tokens(fn.get('name', ''))
+                total += cls._estimate_text_tokens(fn.get('description', ''))
                 params = fn.get('parameters', {})
-                total += len(json.dumps(params)) // 4 if params else 0
-                total += 30  # 函数结构开销
+                if params:
+                    try:
+                        total += cls._estimate_text_tokens(json.dumps(params, ensure_ascii=False))
+                    except Exception:
+                        total += cls._estimate_text_tokens(str(params))
+                total += 24
 
         return total
+
+    @staticmethod
+    def _compaction_threshold(context_limit: int) -> int:
+        """计算自动触发压缩的 token 阈值（对齐 Claude Code / Agent SDK 预留输出缓冲）。"""
+        limit = max(1, int(context_limit or 128000))
+        ratio_cap = int(limit * 0.85)
+        if limit >= 32000:
+            return min(ratio_cap, max(int(limit * 0.5), limit - 16000))
+        return ratio_cap
+
+    # ------------------------------------------------------------------
+    # 消息分组与安全摘要构造
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _split_leading_system(messages: list) -> Tuple[list, list]:
+        """分离头部所有连续的 role='system' 消息与正文消息。"""
+        idx = 0
+        n = len(messages)
+        while idx < n and messages[idx].get('role') == 'system':
+            idx += 1
+        return list(messages[:idx]), list(messages[idx:])
+
+    @staticmethod
+    def _group_into_rounds(body: list) -> list:
+        """按 user 消息为边界划分对话轮次。"""
+        rounds = []
+        cur = []
+        for m in body:
+            if m.get('role') == 'user' and cur:
+                rounds.append(cur)
+                cur = []
+            cur.append(m)
+        if cur:
+            rounds.append(cur)
+        return rounds
+
+    @staticmethod
+    def _split_round_into_atomic_steps(rnd: list) -> list:
+        """将单轮拆成不可分割的原子步（assistant.tool_calls + 紧随的 role='tool' 绑定为一步）。"""
+        steps = []
+        i = 0
+        n = len(rnd)
+        while i < n:
+            m = rnd[i]
+            if m.get('role') == 'assistant' and m.get('tool_calls'):
+                group = [m]
+                i += 1
+                while i < n and rnd[i].get('role') == 'tool':
+                    group.append(rnd[i])
+                    i += 1
+                steps.append(group)
+            else:
+                steps.append([m])
+                i += 1
+        return steps
+
+    @staticmethod
+    def _make_summary_messages(summary_text: str, next_role: Optional[str]) -> list:
+        """构造全协议兼容的压缩交接消息（绝不插入 mid-conversation role='system'）。"""
+        msgs = [{'role': 'user', 'content': summary_text}]
+        if next_role == 'user':
+            msgs.append({
+                'role': 'assistant',
+                'content': '已了解上述上下文压缩摘要，将继续当前任务。',
+            })
+        return msgs
+
+    def _pick_summary_model(self, model: str = '', provider: str = '') -> Tuple[str, str]:
+        """选择用于生成压缩摘要的模型：默认使用当前会话已验证可用的 provider/model。"""
+        prov = (provider or '').strip().lower()
+        mdl = (model or '').strip()
+        if prov and mdl:
+            return mdl, prov
+        if hasattr(self, '_get_api_key') and self._get_api_key('deepseek'):
+            return 'deepseek-v4-flash', 'deepseek'
+        return mdl or 'gpt-5.2', prov or 'openai'
+
+    def _split_compact_head_and_tail(self, body: list, keep_recent_rounds: int = 2) -> Tuple[list, list, list]:
+        """将正文切分为 (preserved_head, to_compact, kept_tail)：
+        - 多轮对话（>= keep_recent_rounds + 1 轮）：压缩早期轮次，保留最近 keep_recent_rounds 轮原文
+        - 少轮但单轮长工具链（原子步 > 4）：保留原始 user 提问与最近 2 个原子步，压缩中间步骤
+        - 极少轮但单条巨长：整段压缩为交接摘要（tail 为空）
+        """
+        rounds = self._group_into_rounds(body)
+        if len(rounds) >= keep_recent_rounds + 1:
+            to_compact = [m for r in rounds[:-keep_recent_rounds] for m in r]
+            kept_tail = [m for r in rounds[-keep_recent_rounds:] for m in r]
+            return [], to_compact, kept_tail
+
+        # 少于 keep_recent_rounds + 1 轮：按原子步切分
+        steps = []
+        for rnd in rounds:
+            steps.extend(self._split_round_into_atomic_steps(rnd))
+
+        if len(steps) > 4:
+            head = steps[:1] if steps[0][0].get('role') == 'user' else []
+            keep_tail_steps = 2
+            middle = steps[len(head):-keep_tail_steps]
+            tail = steps[-keep_tail_steps:]
+            return (
+                [m for st in head for m in st],
+                [m for st in middle for m in st],
+                [m for st in tail for m in st],
+            )
+
+        # 只有 1~4 步但依然需要压缩（例如用户发了超长文本或大图）
+        return [], list(body), []
+
+    def _fallback_trim_to_target(self, leading_sys: list, body: list,
+                                 target_tokens: int,
+                                 tools: Optional[list] = None,
+                                 keep_recent_images: int = 1) -> list:
+        """离线/摘要失败时的干净兜底：剥离旧图 + 按完整轮次/原子步丢弃最老历史。"""
+        body_copy = copy.deepcopy(body)
+        self._strip_image_content(body_copy, keep_recent_user=keep_recent_images)
+
+        rounds = self._group_into_rounds(body_copy)
+        orig_rounds = len(rounds)
+        has_existing_summary = bool(
+            rounds and rounds[0]
+            and isinstance(rounds[0][0].get('content'), str)
+            and any(rounds[0][0]['content'].lstrip().startswith(p) for p in self._SUMMARY_PREFIXES)
+        )
+        dropped_rounds = 0
+        dropped_steps = 0
+
+        def _cur_tokens(rnds):
+            return self._estimate_messages_tokens(
+                leading_sys + [m for r in rnds for m in r], tools
+            )
+
+        min_keep = 2 if has_existing_summary else 2
+        while len(rounds) > min_keep and _cur_tokens(rounds) > target_tokens:
+            drop_idx = 1 if has_existing_summary else 0
+            rounds.pop(drop_idx)
+            dropped_rounds += 1
+
+        if _cur_tokens(rounds) > target_tokens and rounds:
+            for r_idx in range(len(rounds)):
+                if _cur_tokens(rounds) <= target_tokens:
+                    break
+                if has_existing_summary and r_idx == 0:
+                    continue
+                steps = self._split_round_into_atomic_steps(rounds[r_idx])
+                if len(steps) <= 3:
+                    continue
+                head = steps[:1] if steps[0][0].get('role') == 'user' else []
+                middle = steps[len(head):]
+                min_tail = 2 if r_idx == len(rounds) - 1 else 1
+                while len(middle) > min_tail and _cur_tokens(rounds) > target_tokens:
+                    middle.pop(0)
+                    dropped_steps += 1
+                    rounds[r_idx] = [m for st in (head + middle) for m in st]
+
+        kept_body = [m for r in rounds for m in r]
+        if (dropped_rounds > 0 or dropped_steps > 0) and not has_existing_summary:
+            note = f"[Compacted Context Summary]\n已省略早期 {dropped_rounds} 轮对话"
+            if dropped_steps > 0:
+                note += f"及 {dropped_steps} 个早期工具步骤"
+            note += f"（共 {orig_rounds} 轮），请基于保留的最近上下文继续当前任务。"
+            next_role = kept_body[0].get('role') if kept_body else None
+            kept_body = self._make_summary_messages(note, next_role) + kept_body
+
+        return self._sanitize_working_messages(leading_sys + kept_body)
+
+    # ------------------------------------------------------------------
+    # 核心压缩入口：自动压缩 / 溢出恢复 / 手动压缩（统一走一套逻辑）
+    # ------------------------------------------------------------------
+
+    def _compact_messages(self, working_messages: list,
+                          context_limit: int,
+                          supports_vision: bool = True,
+                          tools: Optional[list] = None,
+                          model: str = '',
+                          provider: str = '',
+                          keep_recent_rounds: int = 2,
+                          use_llm: bool = True,
+                          state_context: str = '',
+                          meta_out: Optional[dict] = None) -> Tuple[list, bool]:
+        """执行一次 Claude Agent SDK 风格的上下文压缩，返回 (新消息列表, 是否使用了 LLM 摘要)。"""
+        leading_sys, body = self._split_leading_system(copy.deepcopy(working_messages))
+        if not body:
+            return working_messages, False
+
+        before_tokens = self._estimate_messages_tokens(working_messages, tools)
+        target = int(context_limit * 0.60)
+        head_keep, to_compact, kept_tail = self._split_compact_head_and_tail(
+            body, keep_recent_rounds=keep_recent_rounds
+        )
+
+        # 剥离被压缩段内的旧图片（保留尾部最新图片，若不支持视觉则全剥）
+        self._strip_image_content(to_compact, keep_recent_user=0)
+        if not supports_vision:
+            self._strip_image_content(head_keep, keep_recent_user=0)
+            self._strip_image_content(kept_tail, keep_recent_user=0)
+
+        used_llm = False
+        summary_text = None
+        summary_usage: Dict[str, Any] = {}
+        s_model, s_prov = self._pick_summary_model(model, provider)
+
+        if use_llm and to_compact:
+            try:
+                from houdini_agent.utils.token_optimizer import LLMSummarizer
+                summary_text = LLMSummarizer.summarize_messages(
+                    ai_client=self,
+                    messages=to_compact,
+                    model=s_model,
+                    provider=s_prov,
+                    usage_out=summary_usage,
+                )
+                if summary_text:
+                    used_llm = True
+            except Exception as e:
+                print(f"[AI Client] LLM 压缩摘要失败，回退干净裁剪: {e}")
+
+        state_suffix = ""
+        if state_context and state_context.strip():
+            state_suffix = "\n\n# Active Plan / Todo State\n" + state_context.strip()
+
+        if summary_text:
+            header = (
+                "[Compacted Context Summary]\n"
+                "The earlier conversation history was compacted into the following checkpoint. "
+                "Continue seamlessly from this state without mentioning the compaction:\n\n"
+                + summary_text
+                + state_suffix
+            )
+            next_role = kept_tail[0].get('role') if kept_tail else None
+            summary_msgs = self._make_summary_messages(header, next_role)
+            new_body = head_keep + summary_msgs + kept_tail
+            result = self._sanitize_working_messages(leading_sys + new_body)
+            after_tokens = self._estimate_messages_tokens(result, tools)
+            # 确认确实缩减了体积；若仍远超上限再做一次尾部兜底
+            if after_tokens > int(context_limit * 0.80):
+                result = self._fallback_trim_to_target(
+                    leading_sys, new_body, target, tools=tools,
+                    keep_recent_images=1 if supports_vision else 0,
+                )
+                after_tokens = self._estimate_messages_tokens(result, tools)
+            print(f"[AI Client] 🗜️ 上下文压缩完成 (LLM): "
+                  f"{len(working_messages)} → {len(result)} 条消息, "
+                  f"~{after_tokens} tokens")
+            if isinstance(meta_out, dict):
+                meta_out.update({
+                    'before_tokens': before_tokens,
+                    'after_tokens': after_tokens,
+                    'before_count': len(working_messages),
+                    'after_count': len(result),
+                    'used_llm': True,
+                    'usage': summary_usage,
+                    'model': s_model,
+                    'provider': s_prov,
+                })
+            return result, True
+
+        # LLM 不可用/离线：干净丢弃最老轮次或原子步到目标容量
+        result = self._fallback_trim_to_target(
+            leading_sys, body, target, tools=tools,
+            keep_recent_images=1 if supports_vision else 0,
+        )
+        if state_suffix:
+            # 将活跃 Plan / Todo 附在压缩说明里，确保离线兜底也不忘任务进度
+            for m in result:
+                c = m.get('content')
+                if isinstance(c, str) and c.lstrip().startswith('[Compacted Context Summary]'):
+                    m['content'] = c + state_suffix
+                    break
+        after_tokens = self._estimate_messages_tokens(result, tools)
+        print(f"[AI Client] 🗜️ 上下文压缩完成 (Fallback): "
+              f"{len(working_messages)} → {len(result)} 条消息, "
+              f"~{after_tokens} tokens")
+        if isinstance(meta_out, dict):
+            meta_out.update({
+                'before_tokens': before_tokens,
+                'after_tokens': after_tokens,
+                'before_count': len(working_messages),
+                'after_count': len(result),
+                'used_llm': False,
+                'usage': summary_usage,
+                'model': s_model,
+                'provider': s_prov,
+            })
+        return result, False
 
     def _smart_compress_in_loop(self, working_messages: list,
                                 tool_calls_history: list,
                                 context_limit: int,
                                 supports_vision: bool = True,
-                                tools: Optional[list] = None) -> list:
-        """主动式上下文压缩，在 agent loop 内每轮迭代前调用。
+                                tools: Optional[list] = None,
+                                model: str = '',
+                                provider: str = '',
+                                current_tokens: Optional[int] = None,
+                                state_context: str = '',
+                                meta_out: Optional[dict] = None) -> list:
+        """Agent 循环内自动压缩（Claude Agent SDK 风格）。
 
-        分层压缩策略：
-        1. 标记过时工具结果 → 替换为简短标记
-        2. 对旧轮次工具结果做分级压缩（按工具类型）
-        3. 剥离旧轮次图片
-        4. 仍超限则按轮次裁剪
-
-        与 _progressive_trim 的区别：
-        - _progressive_trim 是错误恢复（被动），本方法是主动预防
-        - 本方法使用分级压缩而非简单截断
-        - 本方法不会删除最近轮次的数据
+        - 未达阈值：直接原样返回，零修改前缀，100% 保护 Prompt Cache；
+        - 达到阈值：执行一次完整的 LLM 结构化压缩交接（失败时回退干净裁剪）。
         """
         if not working_messages:
             return working_messages
 
-        target = int(context_limit * 0.75)  # 压缩目标：75% 容量
-
-        # ── 第 1 步：标记过时的工具结果 ──
-        stale_count = self._mark_stale_tool_results(working_messages)
-        if stale_count > 0:
-            print(f"[AI Client] 🔄 标记了 {stale_count} 个过时工具结果")
-
-        current = self._estimate_messages_tokens(working_messages, tools)
-        if current <= target:
+        threshold = self._compaction_threshold(context_limit)
+        est = self._estimate_messages_tokens(working_messages, tools)
+        cur = max(int(current_tokens or 0), est)
+        if cur < threshold:
             return working_messages
 
-        # ── 第 2 步：剥离旧轮次图片 ──
-        n_stripped = self._strip_image_content(working_messages, keep_recent_user=2)
-        if n_stripped > 0:
-            print(f"[AI Client] 🖼 剥离了 {n_stripped} 张旧图片")
-            current = self._estimate_messages_tokens(working_messages, tools)
-            if current <= target:
-                return working_messages
-
-        # ── 第 3 步：分级压缩旧轮次的工具结果 ──
-        sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
-        body = working_messages[1:] if sys_msg else working_messages[:]
-
-        # 划分轮次（以 user 消息为分界）
-        rounds: list = []
-        cur_round: list = []
-        for m in body:
-            if m.get('role') == 'user' and cur_round:
-                rounds.append(cur_round)
-                cur_round = []
-            cur_round.append(m)
-        if cur_round:
-            rounds.append(cur_round)
-
-        n_rounds = len(rounds)
-        protect_n = max(2, n_rounds // 2)  # 保护最近 50% 的轮次
-
-        # 从最老的轮次开始，使用分级压缩
-        # 先从 assistant.tool_calls 中提取工具名映射
-        tc_id_to_name: Dict[str, str] = {}
-        for m in body:
-            if m.get('role') == 'assistant' and 'tool_calls' in m:
-                for tc in m.get('tool_calls', []):
-                    tc_id = tc.get('id', '')
-                    fn_name = tc.get('function', {}).get('name', '')
-                    if tc_id and fn_name:
-                        tc_id_to_name[tc_id] = fn_name
-
-        for r_idx in range(n_rounds - protect_n):
-            for m in rounds[r_idx]:
-                if m.get('role') == 'tool':
-                    c = m.get('content') or ''
-                    if len(c) > 200:
-                        # 获取工具名（从 tool_call_id 反查）
-                        tc_id = m.get('tool_call_id', '')
-                        t_name = tc_id_to_name.get(tc_id, '')
-                        m['content'] = self._tiered_compress_tool(t_name, c, 200)
-
-        current = self._estimate_messages_tokens(
-            ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
-            tools
+        compacted, _ = self._compact_messages(
+            working_messages=working_messages,
+            context_limit=context_limit,
+            supports_vision=supports_vision,
+            tools=tools,
+            model=model,
+            provider=provider,
+            keep_recent_rounds=2,
+            use_llm=True,
+            state_context=state_context,
+            meta_out=meta_out,
         )
-        if current <= target:
-            body = [m for rnd in rounds for m in rnd]
-            return ([sys_msg] if sys_msg else []) + body
+        if isinstance(meta_out, dict) and cur > meta_out.get('before_tokens', 0):
+            meta_out['before_tokens'] = cur
+        return compacted
 
-        # ── 第 4 步：仍超限 → 尝试 LLM 摘要（如果轮次足够多） ──
-        if len(rounds) >= 6:
-            try:
-                llm_result = self._llm_summarize_history(
-                    ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
-                    tool_calls_history, int(target / 0.75),  # 传入原始 context_limit
-                )
-                llm_tokens = self._estimate_messages_tokens(llm_result, tools)
-                if llm_tokens < current:
-                    return llm_result
-            except Exception as e:
-                print(f"[AI Client] LLM 摘要失败，回退裁剪: {e}")
+    def _progressive_trim(self, working_messages: list, tool_calls_history: list,
+                          trim_level: int = 1, supports_vision: bool = True,
+                          context_limit: int = 128000,
+                          model: str = '', provider: str = '') -> list:
+        """API 实际返回上下文超限 / 413 时的溢出恢复。
 
-        # ── 第 5 步：仍超限 → 裁剪最老的轮次 ──
-        while len(rounds) > 2 and current > target:
-            rounds.pop(0)
-            current = self._estimate_messages_tokens(
-                ([sys_msg] if sys_msg else []) + [m for rnd in rounds for m in rnd],
-                tools
+        - level 1：优先尝试标准 LLM 压缩交接（并剥离旧图）
+        - level 2+：剥离全部图片，只保留最近 1~2 轮 / 最近 4 个原子步，确保重试必过
+        """
+        if not working_messages:
+            return working_messages
+
+        if trim_level <= 1:
+            compacted, _ = self._compact_messages(
+                working_messages=working_messages,
+                context_limit=context_limit,
+                supports_vision=supports_vision,
+                model=model,
+                provider=provider,
+                keep_recent_rounds=2,
+                use_llm=bool(model and provider),
             )
+            if len(compacted) < len(working_messages) or (
+                self._estimate_messages_tokens(compacted) < self._estimate_messages_tokens(working_messages)
+            ):
+                return compacted
 
-        body = [m for rnd in rounds for m in rnd]
-        result = ([sys_msg] if sys_msg else []) + body
+        # 强力兜底：剥离全部图片，仅保留最近少量完整轮次/原子步
+        msgs = copy.deepcopy(working_messages)
+        self._strip_image_content(msgs, keep_recent_user=0)
+        leading_sys, body = self._split_leading_system(msgs)
+        if not body:
+            return msgs
 
-        # 添加裁剪提示
-        n_dropped = n_rounds - len(rounds)
-        if n_dropped > 0:
-            # 在系统消息后插入裁剪提示
-            insert_idx = 1 if sys_msg else 0
-            # 附带操作历史摘要
-            history_lines = []
-            if tool_calls_history:
-                op_history = [h for h in tool_calls_history
-                              if h['tool_name'] not in self._QUERY_TOOLS]
-                for h in op_history[-6:]:
-                    r = h.get('result', {})
-                    status = 'ok' if (isinstance(r, dict) and r.get('success')) else 'err'
-                    r_str = str(r.get('result', '') if isinstance(r, dict) else r)[:50]
-                    history_lines.append(f"  [{status}] {h['tool_name']}: {r_str}")
+        rounds = self._group_into_rounds(body)
+        keep_n = 2 if trim_level == 2 else 1
+        kept_rounds = rounds[-keep_n:] if len(rounds) > keep_n else rounds
 
-            hint = f'[Context] 已自动压缩 {n_dropped} 个早期对话轮次以保持上下文窗口。'
-            if history_lines:
-                hint += '\n已完成的操作:\n' + '\n'.join(history_lines)
-            hint += '\n请继续当前任务，不要提及此压缩。'
-            result.insert(insert_idx, {'role': 'system', 'content': hint})
+        # 若最后保留轮本身仍包含超多工具步，按原子步保留 user + 最近 4 步
+        if kept_rounds and len(kept_rounds[-1]) > 12:
+            steps = self._split_round_into_atomic_steps(kept_rounds[-1])
+            if len(steps) > 5:
+                head = steps[:1] if steps[0][0].get('role') == 'user' else []
+                tail = steps[-4:]
+                kept_rounds[-1] = [m for st in (head + tail) for m in st]
 
-        print(f"[AI Client] 🗜️ 主动压缩: {n_rounds} 轮 → {len(rounds)} 轮, "
-              f"~{self._estimate_messages_tokens(result, tools)} tokens (目标 {target})")
+        kept_body = [m for r in kept_rounds for m in r]
+        if len(kept_rounds) < len(rounds) or len(kept_body) < len(body):
+            note = (
+                f"[Compacted Context Summary]\n"
+                f"由于上下文超限，已自动裁剪早期历史（保留最近 {len(kept_rounds)} 轮）。"
+                f"请继续完成当前任务，不要提及此裁剪。"
+            )
+            next_role = kept_body[0].get('role') if kept_body else None
+            kept_body = self._make_summary_messages(note, next_role) + kept_body
 
+        result = self._sanitize_working_messages(leading_sys + kept_body)
+        print(f"[AI Client] 溢出恢复: level={trim_level}, 消息 {len(working_messages)} → {len(result)}")
         return result
 
-    def _llm_summarize_history(self, working_messages: list,
-                                tool_calls_history: list,
-                                context_limit: int,
-                                model: str = '',
-                                provider: str = '') -> list:
-        """使用 LLM 生成上下文摘要，替换旧轮次。
+    def compress_history(self, history: list,
+                         context_limit: int = 128000,
+                         model: str = '',
+                         provider: str = '',
+                         supports_vision: bool = True,
+                         tools: Optional[list] = None,
+                         use_llm: bool = True,
+                         state_context: str = '') -> Tuple[list, Dict[str, Any]]:
+        """手动压缩会话历史（对齐 Claude Code / Codex 的 /compact）。"""
+        if not history:
+            return [], {'compressed': False, 'reason': '当前会话为空，无需压缩'}
 
-        仅在 _smart_compress_in_loop 裁剪后仍然过长时调用。
-        使用廉价模型生成摘要，避免阻塞主 agent loop 过久。
+        before_tokens = self._estimate_messages_tokens(history, None)
+        before_count = len(history)
 
-        Returns:
-            替换后的消息列表
-        """
-        try:
-            from houdini_agent.utils.token_optimizer import LLMSummarizer
+        leading_sys, body = self._split_leading_system(copy.deepcopy(history))
+        if len(body) <= 2 and before_tokens < max(1500, int(context_limit * 0.10)):
+            return history, {
+                'compressed': False,
+                'reason': '上下文较短，无需压缩',
+                'before_tokens': before_tokens,
+                'after_tokens': before_tokens,
+                'before_count': before_count,
+                'after_count': before_count,
+            }
 
-            # 分离系统消息和正文
-            sys_msg = working_messages[0] if working_messages[0].get('role') == 'system' else None
-            body = working_messages[1:] if sys_msg else working_messages[:]
+        # 手动 /compact：优先把早期历史用 LLM 压缩为结构化交接摘要，保留最近 1~2 轮原文
+        keep_n = 2 if len(self._group_into_rounds(body)) >= 4 else 1
+        head_keep, to_compact, kept_tail = self._split_compact_head_and_tail(
+            body, keep_recent_rounds=keep_n
+        )
 
-            # 划分轮次
-            rounds = []
-            cur = []
-            for m in body:
-                if m.get('role') == 'user' and cur:
-                    rounds.append(cur)
-                    cur = []
-                cur.append(m)
-            if cur:
-                rounds.append(cur)
+        self._strip_image_content(to_compact, keep_recent_user=0)
+        self._strip_image_content(kept_tail, keep_recent_user=1 if supports_vision else 0)
 
-            n_rounds = len(rounds)
-            if n_rounds < 4:
-                return working_messages  # 太少，不值得摘要
-
-            # 摘要前半部分（保留最近 3 轮完整）
-            to_summarize = rounds[:-3]
-            to_keep = rounds[-3:]
-
-            # 确定摘要模型（优先用 deepseek-v4-flash，否则用当前模型）
-            summary_model = 'deepseek-v4-flash'
-            summary_provider = 'deepseek'
-            # 检查是否有 deepseek key
-            if not self._get_api_key('deepseek'):
-                summary_model = model or 'gpt-5.2'
-                summary_provider = provider or 'openai'
-
-            summary_text = LLMSummarizer.summarize_rounds(
-                ai_client=self,
-                rounds=to_summarize,
-                model=summary_model,
-                provider=summary_provider,
-            )
-
-            if not summary_text:
-                print("[AI Client] LLM 摘要生成失败，使用裁剪策略")
-                return working_messages
-
-            # 构建新消息列表：系统消息 + 摘要 + 保留的最近轮次
-            result = []
-            if sys_msg:
-                result.append(sys_msg)
-
-            result.append({
-                'role': 'system',
-                'content': (
-                    f'[对话历史摘要] 以下是早期 {len(to_summarize)} 轮对话的摘要，'
-                    '请基于此上下文继续当前任务：\n\n' + summary_text
+        used_llm = False
+        summary_text = None
+        summary_usage: Dict[str, Any] = {}
+        if use_llm and to_compact and model and provider:
+            try:
+                from houdini_agent.utils.token_optimizer import LLMSummarizer
+                s_model, s_prov = self._pick_summary_model(model, provider)
+                summary_text = LLMSummarizer.summarize_messages(
+                    ai_client=self,
+                    messages=to_compact,
+                    model=s_model,
+                    provider=s_prov,
+                    usage_out=summary_usage,
                 )
-            })
+                if summary_text:
+                    used_llm = True
+            except Exception as e:
+                print(f"[AI Client] 手动压缩 LLM 摘要失败，回退规则摘要: {e}")
 
-            for rnd in to_keep:
-                result.extend(rnd)
+        if not summary_text and to_compact:
+            try:
+                from houdini_agent.utils.token_optimizer import TokenOptimizer
+                summary_text = TokenOptimizer()._generate_balanced_summary(to_compact)
+            except Exception:
+                summary_text = f"已压缩 {len(to_compact)} 条早期历史消息。"
 
-            new_tokens = self._estimate_messages_tokens(result)
-            print(f"[AI Client] 📝 LLM 摘要: {n_rounds} 轮 → 摘要 + {len(to_keep)} 轮, "
-                  f"~{new_tokens} tokens")
+        if summary_text:
+            state_suffix = ""
+            if state_context and state_context.strip():
+                state_suffix = "\n\n# Active Plan / Todo State\n" + state_context.strip()
+            header = (
+                "[Compacted Context Summary]\n"
+                "以下是早期对话的结构化压缩摘要，请基于此上下文继续当前任务：\n\n"
+                + summary_text
+                + state_suffix
+            )
+            next_role = kept_tail[0].get('role') if kept_tail else None
+            new_body = head_keep + self._make_summary_messages(header, next_role) + kept_tail
+        else:
+            new_body = body
 
-            return result
+        result = self._sanitize_working_messages(leading_sys + new_body)
+        after_tokens = self._estimate_messages_tokens(result, None)
 
-        except Exception as e:
-            print(f"[AI Client] LLM 摘要异常: {e}")
-            return working_messages
+        if after_tokens >= before_tokens and len(result) >= before_count:
+            return history, {
+                'compressed': False,
+                'reason': '上下文已较精简，无需压缩',
+                'before_tokens': before_tokens,
+                'after_tokens': before_tokens,
+                'before_count': before_count,
+                'after_count': before_count,
+            }
+
+        return result, {
+            'compressed': True,
+            'before_tokens': before_tokens,
+            'after_tokens': after_tokens,
+            'before_count': before_count,
+            'after_count': len(result),
+            'used_llm': used_llm,
+            'usage': summary_usage,
+        }

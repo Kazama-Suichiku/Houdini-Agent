@@ -64,6 +64,7 @@ Item {
                                    : block.kind === "planstream" ? cPlanS
                                    : block.kind === "meshy"    ? cMeshy
                                    : block.kind === "concept"  ? cConcept
+                                   : block.kind === "compaction" ? cCompact
                                    : cProse
                     Component { id: cThink; ThinkingBlock { block: bl.block; width: bl.width } }
                     Component { id: cExec;  ExecBlock     { block: bl.block; width: bl.width } }
@@ -79,6 +80,31 @@ Item {
                     Component { id: cPlanS; PlanStreamBlock { block: bl.block; width: bl.width } }
                     Component { id: cMeshy; MeshyCard { block: bl.block; width: bl.width } }
                     Component { id: cConcept; ConceptGalleryCard { block: bl.block; width: bl.width } }
+                    Component {
+                        id: cCompact
+                        RowLayout {
+                            width: bl.width
+                            spacing: 8
+                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.borderSoft }
+                            Rectangle {
+                                color: Theme.surface
+                                border.color: Theme.border
+                                border.width: 1
+                                radius: Theme.radSm
+                                implicitHeight: Math.round(22 * Theme.scale)
+                                implicitWidth: cmpTxt.implicitWidth + 16
+                                Text {
+                                    id: cmpTxt
+                                    anchors.centerIn: parent
+                                    text: "COMPACTED  " + (bl.block.label || "")
+                                    color: Theme.textDim
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: Theme.fMicro
+                                }
+                            }
+                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.borderSoft }
+                        }
+                    }
                 }
             }
         }

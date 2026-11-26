@@ -231,11 +231,16 @@ class ContextMixin:
         else:
             self.token_stats_btn.setText(tok_display)
 
-        # 计算 cache 命中率
-        cache_read = self._token_stats['cache_read']
-        cache_write = self._token_stats['cache_write']
-        cache_total = cache_read + cache_write
-        hit_rate_display = f"{(cache_read / cache_total * 100):.1f}%" if cache_total > 0 else "N/A"
+        # 计算 cache 命中率（以总输入 input_tokens 为分母，避免 OpenAI/CPA 恒为 100%）
+        cache_read = self._token_stats.get('cache_read', 0)
+        cache_write = self._token_stats.get('cache_write', 0)
+        cache_denom = self._token_stats.get('input_tokens', 0) or (
+            cache_read + cache_write + self._token_stats.get('cache_miss', 0)
+        )
+        hit_rate_display = (
+            f"{(min(cache_read, cache_denom) / cache_denom * 100):.1f}%"
+            if cache_denom > 0 else "N/A"
+        )
 
         reasoning = self._token_stats.get('reasoning_tokens', 0)
         reasoning_line = tr('token.reasoning_line', reasoning) if reasoning > 0 else ""
