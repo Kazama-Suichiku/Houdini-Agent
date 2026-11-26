@@ -49,7 +49,7 @@ ROLE_PAYLOAD = Qt.UserRole + 2
 MODEL_MAP = {k: list(v) for k, v in catalog.STATIC_MODELS.items()}
 PROVIDER_LABELS = {
     "duojie": "Duojie", "openrouter": "OpenRouter", "openai": "OpenAI",
-    "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅",
+    "codex": "ChatGPT 订阅", "claude_sub": "Claude 订阅", "antigravity": "Google 反重力",
     "deepseek": "DeepSeek", "glm": "GLM", "custom": "Custom",
 }
 CONTEXT_LIMITS = dict(catalog.STATIC_CONTEXT)
@@ -230,6 +230,10 @@ UI_EN = {
     "Claude 订阅": "Claude plan", "登录 Claude 订阅…": "Sign in to Claude plan…",
     "请先登录 Claude 订阅": "Sign in to your Claude plan first",
     "退出 Claude 订阅登录？": "Sign out of Claude plan?",
+    "Google 反重力": "Google Antigravity", "登录 Google 反重力…": "Sign in to Google Antigravity…",
+    "请先登录 Google 反重力": "Sign in to Google Antigravity first",
+    "退出 Google 反重力登录？": "Sign out of Google Antigravity?",
+    "Google 账号": "Google account",
     "已在浏览器打开登录页，登录并授权后会自动完成。": "The sign-in page is open in your browser. Sign in and authorize to finish.",
     "本机端口被占用，请关闭占用它的程序后重试：": "A local port is in use. Close the program using it and retry: ",
     "将删除这台电脑上保存的登录凭据：": "This removes the sign-in credentials saved on this computer: ",
@@ -1262,23 +1266,34 @@ class Controller(QObject):
 
         def work():
             result = {}
-            codex_synced = False
+            sub_synced = False
             try:
                 result = catalog.refresh_all(timeout=10)
             except Exception:
                 result = {}
-            # 已登录 ChatGPT 订阅时同步拉取 Codex 对话与生图模型（自动感知新版 gpt-image-*）
+            # 已登录 ChatGPT / Claude / Google 反重力订阅时同步拉取最新模型（自动升级 CPA 并同步全部订阅模型）
             try:
                 from houdini_agent.subscription import manager
-                if manager.logged_in("codex") and manager.installed():
-                    if (not quiet) or manager.healthy() or manager.image_models_stale():
-                        manager.ensure_running(timeout=12)
-                        manager.refresh_models("codex")
-                        codex_synced = True
+                logged_kinds = [k for k in ("codex", "claude", "antigravity") if manager.logged_in(k)]
+                if logged_kinds:
+                    need_sub = (
+                        (not quiet)
+                        or manager.healthy()
+                        or any(manager.models_stale(k) for k in logged_kinds)
+                        or ("codex" in logged_kinds and manager.image_models_stale())
+                    )
+                    if need_sub:
+                        manager.ensure_running(timeout=20)
+                        for k in logged_kinds:
+                            try:
+                                manager.refresh_models(k)
+                                sub_synced = True
+                            except Exception:
+                                pass
             except Exception:
                 pass
-            if codex_synced:
-                result["_codex_synced"] = True
+            if sub_synced:
+                result["_sub_synced"] = True
             try:
                 self._sigModels.emit(json.dumps(result, ensure_ascii=False))
             except Exception:
@@ -1294,8 +1309,8 @@ class Controller(QObject):
             result = {}
         if not isinstance(result, dict):
             result = {}
-        codex_synced = bool(result.pop("_codex_synced", False))
-        ok_any = codex_synced
+        sub_synced = bool(result.pop("_sub_synced", False) or result.pop("_codex_synced", False))
+        ok_any = sub_synced
         try:
             for p, ids in result.items():
                 if not ids:
@@ -1321,7 +1336,7 @@ class Controller(QObject):
             self._models_refreshing = False
             self.modelsRefreshingChanged.emit()
             self.modelsChanged.emit()
-            if codex_synced:
+            if sub_synced:
                 self.imageModelChanged.emit()
                 self.providerChanged.emit()
         if self._models_refresh_quiet:
@@ -1336,8 +1351,11 @@ class Controller(QObject):
             need = any(catalog.is_stale(p) for p in catalog.PROVIDER_SOURCES)
             if not need:
                 from houdini_agent.subscription import manager
-                if manager.logged_in("codex") and manager.installed() and manager.image_models_stale():
-                    need = True
+                for k in ("codex", "claude", "antigravity"):
+                    if manager.logged_in(k) and (manager.models_stale(k)
+                                                 or (k == "codex" and manager.image_models_stale())):
+                        need = True
+                        break
             if need:
                 self._start_models_refresh(quiet=True)
         except Exception:
@@ -1502,9 +1520,11 @@ class Controller(QObject):
                 accs = manager.accounts(kind)
             except Exception:
                 pass
-            brand = "Claude" if kind == "claude" else "ChatGPT"
-            label = ((self.tr("账号：") + (accs[0].get("email") or brand)) if accs
-                     else self.tr("登录 %s 订阅…" % brand))
+            brand = {"claude": "Claude", "antigravity": "Google 反重力"}.get(kind, "ChatGPT")
+            login_lbl = (self.tr("登录 Google 反重力…") if kind == "antigravity"
+                         else self.tr("登录 %s 订阅…" % brand))
+            label = ((self.tr("账号：") + (accs[0].get("email") or self.tr(brand))) if accs
+                     else login_lbl)
             items += [{"sep": True}, {"label": label, "val": "__sub_account__", "checked": False}]
             if accs:
                 items.append({"label": self.tr("退出登录"), "val": "__sub_logout__", "checked": False})
@@ -2954,12 +2974,13 @@ class Controller(QObject):
             accs = manager.accounts(kind)
         except Exception:
             accs = []
-        brand = "Claude" if kind == "claude" else "ChatGPT"
+        brand = {"claude": "Claude", "antigravity": "Google 反重力"}.get(kind, "ChatGPT")
         who = ", ".join(a.get("email") or brand for a in accs)
         body = self.tr("将删除这台电脑上保存的登录凭据：") + who
         if kind == "codex":
             body += "\n\n" + self.tr("OpenAI 账号本身不受影响；要彻底撤销授权，请在 ChatGPT 网页的安全设置里移除 Codex。")
-        self._request_confirm("退出 %s 订阅登录？" % brand, body, lambda: self.subscriptionLogout(""))
+        title = "退出 Google 反重力登录？" if kind == "antigravity" else ("退出 %s 订阅登录？" % brand)
+        self._request_confirm(title, body, lambda: self.subscriptionLogout(""))
 
     @Slot(str)
     def subscriptionLogout(self, file_name):

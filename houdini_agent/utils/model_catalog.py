@@ -57,11 +57,20 @@ STATIC_MODELS: Dict[str, List[str]] = {
                    "z-ai/glm-5.3", "x-ai/grok-4.7", "moonshotai/kimi-k3", "minimax/minimax-m3"],
     "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
     # ChatGPT 订阅（本机 CPA + Codex OAuth）；实际列表由 subscription 模块单独刷新，这里只做兜底
-    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+    "codex": ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6.1-terra",
+              "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
               "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
     # Claude 订阅（本机 CPA + Claude Code OAuth）；Anthropic 不允许第三方使用订阅，同样只做兜底
-    "claude_sub": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
-                   "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"],
+    "claude_sub": ["claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5",
+                   "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"],
+    # Google 反重力（本机 CPA + Google OAuth，支持 Gemini / Claude 模型）；实际列表由 subscription 模块刷新
+    "antigravity": ["gemini-4-neon-xhigh", "gemini-4-hydrogen-xhigh",
+                    "gemini-4-argon-high", "gemini-4-carbon-high",
+                    "claude-opus-5-5-high", "claude-sonnet-5-5-high",
+                    "gemini-3.8-flash-high", "gemini-3.8-flash-tiered",
+                    "gemini-3-flash", "gemini-3.5-flash-lite",
+                    "claude-opus-4-6-thinking", "claude-sonnet-4-6",
+                    "gpt-oss-120b-medium"],
     "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
     "glm": ["glm-4.7"],
     "custom": [],
@@ -94,6 +103,8 @@ STATIC_CONTEXT: Dict[str, int] = {
     # 2026-11 新增目录条目
     "glm-5.3-flashx": 1048576,
     "kiro-auto": 200000,  # Claude 系路由模型，沿用其它 Claude 条目的保守 200K 约定
+    "claude-fable-5-2": 1000000, "anthropic/claude-fable-5.2": 1000000,
+    "gpt-6.2-sol": 1050000, "gpt-6.2-astra": 1050000, "gpt-6.1-terra": 1050000,
 }
 
 # 现有 VISION_MODELS + 新增 glm-5.3-flashx / kiro-auto

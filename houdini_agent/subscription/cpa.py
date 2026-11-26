@@ -35,27 +35,33 @@ import time
 import zipfile
 from pathlib import Path
 
-CPA_VERSION = "8.0.28"
+CPA_VERSION = "8.1.4"
 _REPO = "router-for-me/CLIProxyAPI"
 
 # 当前版本各平台发布包的 sha256（取自官方 release 的 checksums.txt），下载后逐一校验
 _SHA256 = {
-    "CLIProxyAPI_8.0.28_windows_amd64.zip": "c4a4466c23ae0493ea2db784334bfeb2ed19b00514b90241fd49e0d858a9f935",
-    "CLIProxyAPI_8.0.28_windows_aarch64.zip": "9a117fd2fc2d726f53423de560122e545f3fe24f9a6a17afd2c52adaeb49aac0",
-    "CLIProxyAPI_8.0.28_darwin_aarch64.tar.gz": "b70932382334e5388dc25265078cbcdf2e951b3b5fa7cd23d8ab3efb0a9fceef",
-    "CLIProxyAPI_8.0.28_darwin_amd64.tar.gz": "619e6892b56832d964d989e5be4a23e2277b22e39c160de7ba3ca60d66b2c5fd",
-    "CLIProxyAPI_8.0.28_linux_amd64.tar.gz": "1644171946913c858842081053abb6f67234bb41ce2691602bf834361293c17f",
-    "CLIProxyAPI_8.0.28_linux_aarch64.tar.gz": "b1956286131e7295d5d0347dc1caff96d2135813b2af0fdb82c3b00119abfa3a",
+    "CLIProxyAPI_8.1.4_windows_amd64.zip": "665b670d42a5ceeadd33a6f03dffaa362cde920b726ab6b117c4def94ff81b09",
+    "CLIProxyAPI_8.1.4_windows_aarch64.zip": "7fe1c3259c88e9bd0b4a7dfdad67105a1dc43ddca0896ce94c7d648ec1364713",
+    "CLIProxyAPI_8.1.4_darwin_aarch64.tar.gz": "9d9e2350d4af9c2cd1c3636a5892e3b669829284f3a54b252fe1bdfb6b49d93a",
+    "CLIProxyAPI_8.1.4_darwin_amd64.tar.gz": "733f276d73df67724f5dee338a0e8db552d308525d27e614984b372061aec37f",
+    "CLIProxyAPI_8.1.4_linux_amd64.tar.gz": "d36d5304eded3884cd0c4168c41a7638a3234631a64a54644069b963ae287cea",
+    "CLIProxyAPI_8.1.4_linux_aarch64.tar.gz": "1ac19c4468969a3fa85c483ef7e34c5646d6e0d610a520a0dd51af13613d6619",
 }
 # 下载来源：官网镜像（国内更稳）→ GitHub Release。sha256 固定，任一来源都安全。
 _MIRROR_URL = "https://houdini-agent.com/download/cpa/{asset}"
 _GITHUB_URL = "https://github.com/" + _REPO + "/releases/download/v{ver}/{asset}"
 
 # Codex 订阅下可见的模型（CPA 内置 Codex 目录，visibility=list），按推荐顺序
-CODEX_MODELS = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
-                "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
+CODEX_MODELS = [
+    "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6.1-terra",
+    "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+]
 # Codex 订阅下内置生图模型兜底表（实际列表会随 CPA /v1/models 自动同步更新，包括未来新版本）
 CODEX_IMAGE_MODELS = [
+    "gpt-image-2.6",
+    "gpt-image-2.6-sunburst",
+    "gpt-image-2.6-flare",
     "gpt-image-2.5",
     "gpt-image-2.5-sunburst",
     "gpt-image-2.5-flare",
@@ -63,18 +69,23 @@ CODEX_IMAGE_MODELS = [
     "gpt-image-1.5",
 ]
 # Codex 渠道的上下文窗口与 API 直连不同（同名模型直连多为 1M），单独维护
-CODEX_CONTEXT = {"gpt-6.1-sol": 500000}
+CODEX_CONTEXT = {"gpt-6.2-sol": 500000, "gpt-6.1-sol": 500000, "gpt-6.1-terra": 500000}
 CODEX_DEFAULT_CONTEXT = 272000
 
 # 各模型支持的推理强度与默认档（CPA 内置 Codex 目录的 supported_reasoning_levels / default_reasoning_level）
 _EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
 CODEX_EFFORTS = {
-    "gpt-6.1-sol": _EFFORT_ORDER, "gpt-6-astra": _EFFORT_ORDER, "gpt-6-sol": _EFFORT_ORDER,
+    "gpt-6.2-sol": _EFFORT_ORDER, "gpt-6.2-astra": _EFFORT_ORDER,
+    "gpt-6.1-sol": _EFFORT_ORDER, "gpt-6.1-terra": _EFFORT_ORDER,
+    "gpt-6-astra": _EFFORT_ORDER, "gpt-6-sol": _EFFORT_ORDER,
     "gpt-5.6-sol": _EFFORT_ORDER, "gpt-5.6-terra": _EFFORT_ORDER,
     "gpt-6-luna": _EFFORT_ORDER[:5], "gpt-5.6-luna": _EFFORT_ORDER[:5],
     "gpt-5.5": _EFFORT_ORDER[:4],
 }
-CODEX_DEFAULT_EFFORT = {"gpt-6.1-sol": "low", "gpt-5.6-sol": "low"}
+CODEX_DEFAULT_EFFORT = {
+    "gpt-6.2-sol": "low", "gpt-6.2-astra": "low",
+    "gpt-6.1-sol": "low", "gpt-6.1-terra": "low", "gpt-5.6-sol": "low",
+}
 
 
 def codex_efforts(model) -> list:
@@ -88,53 +99,115 @@ def codex_default_effort(model) -> str:
 
 # Claude 订阅（CPA 的 Claude Code OAuth）。注意：Anthropic 不允许第三方产品使用 Claude 订阅，
 # 服务端可能拒绝或限制账号；界面上会向用户说明，是否使用由用户自己决定。
-CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
-                 "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"]
+CLAUDE_MODELS = [
+    "claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5",
+    "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
+]
 CLAUDE_CONTEXT = {m: 1000000 for m in CLAUDE_MODELS}     # CPA 内置目录 context_length
+CLAUDE_CONTEXT.update({"claude-opus-4-7": 1000000, "claude-opus-4-6": 1000000, "claude-fable-5": 1000000})
 CLAUDE_DEFAULT_CONTEXT = 200000
 CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
+# Google 反重力（CPA 的 -antigravity-login，使用 Google 账号 OAuth 接入 Gemini / Claude 模型）
+ANTIGRAVITY_MODELS = [
+    "gemini-4-neon-xhigh", "gemini-4-hydrogen-xhigh",
+    "gemini-4-argon-high", "gemini-4-carbon-high",
+    "claude-opus-5-5-high", "claude-sonnet-5-5-high",
+    "gemini-3.8-flash-high", "gemini-3.8-flash-tiered",
+    "gemini-3-flash", "gemini-3.5-flash-lite",
+    "claude-opus-4-6-thinking", "claude-sonnet-4-6",
+    "gpt-oss-120b-medium",
+]
+ANTIGRAVITY_CONTEXT = {
+    "gemini-4-neon-xhigh": 1048576, "gemini-4-hydrogen-xhigh": 1048576,
+    "gemini-4-argon-high": 1048576, "gemini-4-carbon-high": 1048576,
+    "gemini-3.8-flash-high": 1048576, "gemini-3.8-flash-tiered": 1048576,
+    "gemini-3-flash": 1048576, "gemini-3.5-flash-lite": 1048576, "gemini-3.1-flash-lite": 1048576,
+    "claude-opus-5-5-high": 1000000, "claude-sonnet-5-5-high": 1000000,
+    "claude-opus-4-6-thinking": 200000, "claude-sonnet-4-6": 200000,
+    "gpt-oss-120b-medium": 114000,
+}
+ANTIGRAVITY_DEFAULT_CONTEXT = 1048576
+ANTIGRAVITY_EFFORTS = ["low", "medium", "high"]
+ANTIGRAVITY_XHIGH_EFFORTS = ["low", "medium", "high", "xhigh"]
+
 # 订阅类型：provider key（界面里的供应商）→ CPA 凭据类型
-KINDS = {"codex": "codex", "claude_sub": "claude"}
+KINDS = {"codex": "codex", "claude_sub": "claude", "antigravity": "antigravity"}
 
 
 def kind_of(provider):
-    """供应商是否是订阅类型；是则返回 CPA 凭据类型（codex / claude），否则 None。"""
+    """供应商是否是订阅类型；是则返回 CPA 凭据类型（codex / claude / antigravity），否则 None。"""
     return KINDS.get(str(provider or ""))
 
 
 def default_models(kind) -> list:
-    return list(CLAUDE_MODELS if kind == "claude" else CODEX_MODELS)
+    if kind == "claude":
+        return list(CLAUDE_MODELS)
+    if kind == "antigravity":
+        return list(ANTIGRAVITY_MODELS)
+    return list(CODEX_MODELS)
 
 
 def model_context(kind, model) -> int:
+    m = str(model or "")
     if kind == "claude":
-        return CLAUDE_CONTEXT.get(str(model or ""), CLAUDE_DEFAULT_CONTEXT)
-    return CODEX_CONTEXT.get(str(model or ""), CODEX_DEFAULT_CONTEXT)
+        return CLAUDE_CONTEXT.get(m, CLAUDE_DEFAULT_CONTEXT)
+    if kind == "antigravity":
+        return ANTIGRAVITY_CONTEXT.get(m, ANTIGRAVITY_DEFAULT_CONTEXT)
+    return CODEX_CONTEXT.get(m, CODEX_DEFAULT_CONTEXT)
 
 
 def effort_levels(kind, model) -> list:
-    return list(CLAUDE_EFFORTS) if kind == "claude" else codex_efforts(model)
+    if kind == "claude":
+        return list(CLAUDE_EFFORTS)
+    if kind == "antigravity":
+        m = str(model or "").lower()
+        if "gpt-oss" in m:
+            return []
+        return list(ANTIGRAVITY_XHIGH_EFFORTS if "xhigh" in m else ANTIGRAVITY_EFFORTS)
+    return codex_efforts(model)
 
 
 def default_effort(kind, model) -> str:
-    return "medium" if kind == "claude" else codex_default_effort(model)
+    if kind in ("claude", "antigravity"):
+        return "medium"
+    return codex_default_effort(model)
 
 
-_HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review"}
+_HIDDEN_MODELS = {"gpt-reserve", "codex-auto-review", "gpt-6-chat-thinking"}
+# Anthropic 已退役的旧版 Claude 3.x 与 4.0/4.1 带日期快照，不再塞进下拉列表干扰选择
+_RETIRED_CLAUDE_RE = re.compile(
+    r"^claude-3-|^claude-(?:opus|sonnet|haiku)-4(?:-[01])?-\d{8}$", re.I
+)
+_CLAUDE_VER_RE = re.compile(r"^claude-([a-z]+)-(\d+)(?:[-.](\d+))?", re.I)
+_CLAUDE_TIER_ORDER = {"fable": 0, "mythos": 0, "opus": 1, "sonnet": 2, "haiku": 3}
 _IMAGE_TOKEN_RE = re.compile(r"(?:^|[-_/])image(?:$|[-_/.0-9])", re.I)
 _VERSION_RE = re.compile(r"(\d+(?:\.\d+)*)")
 _IMAGE_VARIANT_ORDER = {"": 0, "sunburst": 1, "flare": 2, "pro": 3, "mini": 4}
 _OPENAI_IMAGE_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
 
 
-def _model_kind(model_id) -> str:
-    """CPA 把所有已登录渠道的模型合在一个 /v1/models 里，按名字分回各订阅。"""
-    return "claude" if str(model_id or "").startswith("claude-") else "codex"
+def _model_kind(model_id, owned_by="") -> str:
+    """CPA 把所有已登录渠道的模型合在一个 /v1/models 里，优先按 owned_by，其次按名字分回各订阅。"""
+    ob = str(owned_by or "").strip().lower()
+    if ob == "antigravity":
+        return "antigravity"
+    if ob in ("anthropic", "claude"):
+        return "claude"
+    if ob in ("openai", "codex"):
+        return "codex"
+    low = str(model_id or "").strip().lower()
+    if low.startswith(("gemini-", "gpt-oss-")):
+        return "antigravity"
+    if low.startswith("claude-"):
+        if low.endswith(("-high", "-xhigh", "-thinking")):
+            return "antigravity"
+        return "claude"
+    return "codex"
 
 
 def is_image_model(model_id) -> bool:
-    """判断 CPA /v1/models 里的模型 ID 是否是生图模型（自动兼容未来 gpt-image-* 等新系列）。"""
+    """判断 CPA /v1/models 里的模型 ID 是否是 Codex 生图模型（自动兼容未来 gpt-image-* 等新系列）。"""
     m = str(model_id or "").strip()
     if not m or m in _HIDDEN_MODELS or _model_kind(m) != "codex":
         return False
@@ -143,10 +216,38 @@ def is_image_model(model_id) -> bool:
             or bool(_IMAGE_TOKEN_RE.search(low)))
 
 
+def _is_any_image_model(model_id) -> bool:
+    """任意渠道的图片生成模型（含 Codex gpt-image-* 与 Antigravity gemini-*-image），均不列为对话模型。"""
+    low = str(model_id or "").strip().lower()
+    return bool(low) and (low.startswith(("gpt-image", "chatgpt-image", "dall-e"))
+                          or bool(_IMAGE_TOKEN_RE.search(low)))
+
+
 def _is_chat_model(model_id) -> bool:
-    """CPA 的 /v1/models 还会列出 gpt-image-* 等图片生成模型，不能用来对话。"""
+    """过滤非对话模型（gpt-image-* / gemini-*-image）、隐藏模型及已退役的旧版 Claude 3.x / 4.0 快照。"""
     m = str(model_id or "").strip()
-    return bool(m) and m not in _HIDDEN_MODELS and not is_image_model(m)
+    if not m or m in _HIDDEN_MODELS or _is_any_image_model(m):
+        return False
+    if _RETIRED_CLAUDE_RE.match(m):
+        return False
+    return True
+
+
+def _version_desc_key(model_id: str):
+    """按版本号降序排序新发现的对话模型（如 claude-opus-6 / claude-fable-5-3 / gpt-6.3-sol 排在前面）。"""
+    low = str(model_id or "").strip().lower()
+    mc = _CLAUDE_VER_RE.match(low)
+    if mc:
+        tier = _CLAUDE_TIER_ORDER.get(mc.group(1), 5)
+        ver = (int(mc.group(2)), int(mc.group(3) or 0))
+        dated = 1 if re.search(r"-\d{8}$", low) else 0
+        return (dated, -ver[0], -ver[1], tier, low)
+    mv = _VERSION_RE.search(low)
+    if mv:
+        ver = tuple(int(p) for p in mv.group(1).split("."))
+        padded = tuple(-x for x in (ver + (0, 0, 0))[:4])
+        return (0, padded[0], padded[1], padded[2], low)
+    return (1, 0, 0, 0, low)
 
 
 def _image_model_sort_key(model_id: str):
@@ -467,22 +568,52 @@ class CPAManager:
         except Exception:
             return False
 
+    def _fallback_exe(self):
+        """离线兜底：若目标 CPA_VERSION 尚未下载，查找历史已安装的任意版本可执行文件。"""
+        bin_root = self.base / "bin"
+        if not bin_root.is_dir():
+            return None
+        name = self.exe.name
+        cands = sorted(bin_root.glob("*/" + name), reverse=True)
+        for p in cands:
+            if p.is_file():
+                return p
+        return None
+
     def ensure_running(self, timeout=20.0) -> bool:
-        """服务没在跑就拉起来并等到可用。已有我们的实例在跑（含上次异常退出遗留的）直接复用。"""
+        """服务没在跑就拉起来并等到可用。CPA 升级后自动下载新版并切换，不再停留在旧版静态目录。"""
         with self._lock:
-            if self.healthy():
-                return True
-            if not self.installed():
-                raise CPAError("订阅组件尚未安装，请先在「ChatGPT 订阅」里登录")
             st = self._load_state()
+            target_exe = self.exe
+            if not self.installed():
+                # 已登录用户升级到新版 Houdini Agent 时自动下载新版 CPA；离线则回退旧版二进制
+                if any(self.logged_in(k) for k in KINDS.values()):
+                    try:
+                        self.install()
+                    except Exception:
+                        fb = self._fallback_exe()
+                        if fb is not None:
+                            target_exe = fb
+                        else:
+                            raise
+                else:
+                    raise CPAError("订阅组件尚未安装，请先在订阅供应商里登录")
+            using_ver = target_exe.parent.name
+            if self.healthy() and st.get("cpa_version") == using_ver:
+                return True
+            # 若旧版 CPA 还在运行：先停掉自己拉起的；若外部遗留旧实例占着端口，顺延换空闲端口启动新版
+            if self._proc is not None and self._proc.poll() is None:
+                self.stop()
             if _port_open(st["port"]):
-                # 端口被别的程序（或用户自己跑的 CPA）占着：换一个空闲端口
+                # 端口被别的程序（或旧版本遗留 CPA）占着：换一个空闲端口
                 st["port"] = _free_port()
+            st["cpa_version"] = using_ver
             self.write_config()
             log = open(self.base / "cpa.log", "ab")
             try:
+                # 不传 -local-model：允许 CPA 启动后在后台自动拉取最新 models.json（离线自动回退内置目录）
                 self._proc = subprocess.Popen(
-                    [str(self.exe), "-config", str(self.config_path), "-local-model"],
+                    [str(target_exe), "-config", str(self.config_path)],
                     cwd=str(self.base), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                     env=self._subprocess_env(), creationflags=_NO_WINDOW)
             finally:
@@ -555,8 +686,12 @@ class CPAManager:
 
     def cached_models(self, kind="codex") -> list:
         st = self._load_state()
-        models = [m for m in (st.get(self._models_key(kind)) or [])
-                  if _is_chat_model(m) and _model_kind(m) == kind]
+        raw = st.get(self._models_key(kind)) or []
+        if kind == "antigravity":
+            # antigravity 渠道自带 claude-sonnet-4-6 等同名模型，缓存已按 owned_by 隔离，这里只做聊天模型过滤
+            models = [m for m in raw if _is_chat_model(m)]
+        else:
+            models = [m for m in raw if _is_chat_model(m) and _model_kind(m) == kind]
         return models or default_models(kind)
 
     def cached_image_models(self, kind="codex") -> list:
@@ -578,23 +713,49 @@ class CPAManager:
             return True
         return (time.time() - float(ts)) >= max_age
 
+    def models_stale(self, kind="codex", max_age=6 * 3600) -> bool:
+        """该订阅渠道的模型缓存尚未刷新、超过 max_age 秒，或 CPA 版本已升级。"""
+        st = self._load_state()
+        if st.get("cpa_version") != CPA_VERSION:
+            return True
+        if not st.get(self._models_key(kind)):
+            return True
+        ts = st.get("models_updated_at_" + kind)
+        if not isinstance(ts, (int, float)):
+            return True
+        return (time.time() - float(ts)) >= max_age
+
     def refresh_models(self, kind="codex") -> list:
-        """从本机服务拉取模型（需已登录且服务在跑），同时更新对话模型与 Codex 生图模型缓存。"""
+        """从本机服务拉取模型（需已登录且服务在跑），按 owned_by 拆分更新各订阅的对话与生图模型缓存。"""
         r = _requests().get(self.base_url() + "/models", timeout=5,
                             headers={"Authorization": "Bearer " + self.client_key()},
                             proxies={"http": None, "https": None})
         r.raise_for_status()
-        raw_ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
-        ids = [i for i in raw_ids if _is_chat_model(i) and _model_kind(i) == kind]
+        items = [m for m in (r.json().get("data") or []) if isinstance(m, dict) and m.get("id")]
+        ids = [
+            m["id"] for m in items
+            if _is_chat_model(m["id"]) and _model_kind(m["id"], m.get("owned_by", "")) == kind
+        ]
+        # 去重保序
+        ids = list(dict.fromkeys(ids))
         prefer = default_models(kind)
-        ordered = [m for m in prefer if m in ids] + sorted(i for i in ids if i not in prefer)
+        extras = sorted((i for i in ids if i not in prefer), key=_version_desc_key)
+        top_key = min((_version_desc_key(m)[:3] for m in prefer), default=(0, 0, 0))
+        newer = [i for i in extras if _version_desc_key(i)[:3] < top_key]
+        older = [i for i in extras if _version_desc_key(i)[:3] >= top_key]
+        # 未来刚发布、高于静态表版本的新模型自动置顶；已推荐模型保序居中；其余按版本号降序排后
+        ordered = newer + [m for m in prefer if m in ids] + older
         st = self._load_state()
         changed = False
         if ordered:
             st[self._models_key(kind)] = ordered
+            st["models_updated_at_" + kind] = time.time()
             changed = True
         if kind == "codex":
-            img_ids = _sort_image_models(i for i in raw_ids if is_image_model(i) and _model_kind(i) == "codex")
+            img_ids = _sort_image_models(
+                m["id"] for m in items
+                if is_image_model(m["id"]) and _model_kind(m["id"], m.get("owned_by", "")) == "codex"
+            )
             if img_ids:
                 st["image_models"] = img_ids
                 st["image_models_updated_at"] = time.time()
@@ -687,7 +848,7 @@ class CPAManager:
 
     # ---------------------------------------------------------------- login
     def login(self, device=False, on_event=None, kind="codex"):
-        """阻塞执行一次登录（调用方放后台线程）。kind = codex / claude（Claude 只有浏览器登录）。
+        """阻塞执行一次登录（调用方放后台线程）。kind = codex / claude / antigravity（仅 Codex 有设备码登录）。
         on_event(event, data)：event = "url"（浏览器登录链接）/ "device"（{"url","code"}）。
         返回 {"ok": bool, "code": ..., "message": str}。"""
         if not self.installed():
@@ -698,12 +859,17 @@ class CPAManager:
         if kind == "claude":
             flags = ["-claude-login", "-no-browser"]
             callback_port = "54545"
+        elif kind == "antigravity":
+            flags = ["-antigravity-login", "-no-browser"]
+            callback_port = "51121"
         else:
             flags = ["-codex-device-login", "-no-browser"] if device else ["-codex-login", "-no-browser"]
             callback_port = "1455"
+        # 用 PIPE 保持 stdin 打开：Antigravity 等 OAuth 流程 15 秒后会异步提示粘贴回调 URL，
+        # 若传 DEVNULL 会立刻读到 EOF 导致登录被 15 秒中断！
         proc = subprocess.Popen(
             [str(self.exe), "-config", str(self.config_path)] + flags,
-            cwd=str(self.base), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            cwd=str(self.base), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
             env=self._subprocess_env(), creationflags=_NO_WINDOW)
         with self._lock:
             self._login = {"proc": proc, "cancelled": False}
@@ -724,8 +890,10 @@ class CPAManager:
                     continue
                 tail.append(line)
                 del tail[:-20]
-                # 授权链接：Codex 在 auth.openai.com，Claude 在 claude.ai
-                if line.startswith("https://") and "authorize" in line:
+                # 授权链接：Codex 在 auth.openai.com，Claude 在 claude.ai，Google 反重力在 accounts.google.com/o/oauth2/
+                if line.startswith("https://") and (
+                    "authorize" in line or "/oauth2/" in line or "accounts.google.com" in line
+                ):
                     emit("url", line)
                 m = re.search(r"Codex device URL:\s*(\S+)", line)
                 if m:
@@ -745,6 +913,11 @@ class CPAManager:
             proc.wait()
             return {"ok": False, "code": "timeout", "message": "登录超时（15 分钟内未完成授权）"}
         finally:
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except Exception:
+                pass
             t.join(timeout=2)
             with self._lock:
                 cancelled = bool(self._login and self._login.get("cancelled"))

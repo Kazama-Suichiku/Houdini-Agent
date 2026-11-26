@@ -72,7 +72,7 @@ Popup {
                 Text {
                     Layout.fillWidth: true; elide: Text.ElideRight
                     color: Theme.textBright; font.family: Theme.fontBody; font.pixelSize: Theme.fSm
-                    text: (modelData.email || dlg.loc("ChatGPT 账号")) + (modelData.plan ? ("  ·  " + modelData.plan) : "")
+                    text: (modelData.email || (dlg.st.kind === "antigravity" ? dlg.loc("Google 账号") : dlg.loc("ChatGPT 账号"))) + (modelData.plan ? ("  ·  " + modelData.plan) : "")
                 }
                 Pill {
                     label: dlg.loc("退出登录"); visible: !dlg.busy
@@ -141,7 +141,7 @@ Popup {
                 onClicked: if (controller) controller.subscriptionLogin(false)
             }
             Pill {
-                visible: !dlg.loggedIn && !dlg.busy && dlg.st.kind !== "claude"   // Claude 只有浏览器登录
+                visible: !dlg.loggedIn && !dlg.busy && dlg.st.kind === "codex"   // 仅 Codex 支持设备码登录
                 label: dlg.loc("设备码登录")
                 onClicked: if (controller) controller.subscriptionLogin(true)
             }

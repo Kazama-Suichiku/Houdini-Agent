@@ -21,6 +21,8 @@ from .cpa import (  # noqa: F401
     CODEX_IMAGE_MODELS,
     CODEX_CONTEXT,
     CLAUDE_MODELS,
+    ANTIGRAVITY_MODELS,
+    ANTIGRAVITY_CONTEXT,
     codex_efforts,
     codex_default_effort,
     kind_of,

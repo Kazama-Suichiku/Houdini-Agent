@@ -484,3 +484,101 @@ def test_generate_concepts_routes_codex_without_meshy_key(mgr, tmp_path, monkeyp
     assert all(cpa.os.path.isfile(item["image"]) for item in out)
     assert {s[0] for s in seen} == {"sci-fi helmet", "steampunk goggles"}
     assert all(s[1] == "gpt-image-2.5" and s[2] == "16:9" for s in seen)
+
+
+def test_claude_models_filter_retired_and_promote_newest(mgr, monkeypatch):
+    assert "claude-fable-5-2" in cpa.CLAUDE_MODELS
+    assert cpa.model_context("claude", "claude-fable-5-2") == 1000000
+    assert "gpt-6.2-sol" in cpa.CODEX_MODELS
+    assert cpa.model_context("codex", "gpt-6.2-sol") == 500000
+
+    # 旧缓存里的已退役 Claude 3.x / 4.0 快照在读取时即被过滤
+    st = mgr._load_state()
+    st["models_claude"] = [
+        "claude-opus-5-5", "claude-3-5-haiku-20241022", "claude-3-7-sonnet-20250219",
+        "claude-opus-4-20250514", "claude-opus-4-1-20250805", "claude-sonnet-4-20250514",
+        "claude-fable-5-2",
+    ]
+    assert mgr.cached_models("claude") == ["claude-opus-5-5", "claude-fable-5-2"]
+    assert mgr.models_stale("claude") is True
+
+    class _FakeReq:
+        def get(self, url, **kw):
+            return _JsonResp(200, {
+                "data": [
+                    {"id": "claude-3-5-haiku-20241022"},
+                    {"id": "claude-3-7-sonnet-20250219"},
+                    {"id": "claude-opus-4-20250514"},
+                    {"id": "claude-sonnet-4-6"},
+                    {"id": "claude-opus-4-7"},
+                    {"id": "claude-opus-5-5"},
+                    {"id": "claude-fable-5-2"},
+                    {"id": "claude-sonnet-5-5"},
+                    {"id": "claude-opus-6"},
+                ]
+            })
+
+    monkeypatch.setattr(cpa, "_requests", lambda: _FakeReq())
+    ordered = mgr.refresh_models("claude")
+    # 未来更高版本置顶，推荐列表居中，较老但仍在役的按版本降序排后，已退役模型全部过滤
+    assert ordered == [
+        "claude-opus-6",
+        "claude-opus-5-5",
+        "claude-fable-5-2",
+        "claude-sonnet-5-5",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+    ]
+
+
+def test_antigravity_provider_models_and_routing(mgr, monkeypatch):
+    from houdini_agent.utils.ai_client_providers import AIClientProvidersMixin
+    import houdini_agent.subscription as sub
+
+    assert cpa.kind_of("antigravity") == "antigravity"
+    assert "gemini-4-neon-xhigh" in cpa.default_models("antigravity")
+    assert cpa.model_context("antigravity", "gemini-4-neon-xhigh") == 1048576
+    assert cpa.effort_levels("antigravity", "gemini-4-neon-xhigh") == ["low", "medium", "high", "xhigh"]
+    assert cpa.effort_levels("antigravity", "gemini-4-argon-high") == ["low", "medium", "high"]
+    assert cpa.effort_levels("antigravity", "gpt-oss-120b-medium") == []
+
+    # owned_by 能把 Antigravity 的 claude-opus-5-5-high / claude-sonnet-4-6 与 Claude 订阅彻底隔离，
+    # 且过滤掉 gemini-3.1-flash-image 非对话图片模型
+    class _FakeReq:
+        def get(self, url, **kw):
+            return _JsonResp(200, {
+                "data": [
+                    {"id": "gemini-4-neon-xhigh", "owned_by": "antigravity"},
+                    {"id": "claude-opus-5-5-high", "owned_by": "antigravity"},
+                    {"id": "claude-sonnet-4-6", "owned_by": "antigravity"},
+                    {"id": "gemini-3.1-flash-image", "owned_by": "antigravity"},
+                    {"id": "claude-opus-5-5", "owned_by": "anthropic"},
+                    {"id": "gpt-6.2-sol", "owned_by": "openai"},
+                ]
+            })
+
+    monkeypatch.setattr(cpa, "_requests", lambda: _FakeReq())
+    ag_models = mgr.refresh_models("antigravity")
+    assert ag_models == ["gemini-4-neon-xhigh", "claude-opus-5-5-high", "claude-sonnet-4-6"]
+    assert mgr.refresh_models("claude") == ["claude-opus-5-5"]
+    assert mgr.refresh_models("codex") == ["gpt-6.2-sol"]
+
+    # 账号隔离与路由
+    monkeypatch.setattr(sub, "manager", mgr)
+    c = AIClientProvidersMixin()
+    c._api_keys = {}
+    assert c.has_api_key("antigravity") is False
+    with pytest.raises(RuntimeError):
+        c._get_api_url("antigravity", "gemini-4-neon-xhigh")
+    mgr.auth_dir.mkdir(parents=True, exist_ok=True)
+    (mgr.auth_dir / "antigravity-g@gmail.com.json").write_text(
+        json.dumps({"type": "antigravity", "email": "g@gmail.com", "access_token": "SECRET"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mgr, "ensure_running", lambda timeout=20.0: True)
+    assert c.has_api_key("antigravity") is True
+    assert c._get_api_url("antigravity", "gemini-4-neon-xhigh").endswith("/v1/chat/completions")
+    assert c._get_vendor_name("antigravity") == "Google 反重力"
+    assert c.get_masked_key("antigravity").startswith("g@gmail.com")
+    assert "SECRET" not in json.dumps(mgr.accounts("antigravity"))
+    assert mgr.logout(kind="antigravity") == 1 and not mgr.logged_in("antigravity")

@@ -154,7 +154,7 @@ def test_static_dujie_updated():
 
 def test_static_tables_keys_and_new_entries():
     assert set(mc.STATIC_MODELS) == {"duojie", "openrouter", "openai", "codex",
-                                     "claude_sub", "deepseek", "glm", "custom"}
+                                     "claude_sub", "antigravity", "deepseek", "glm", "custom"}
     assert mc.STATIC_MODELS["custom"] == []
     assert mc.STATIC_CONTEXT["glm-5.3-flashx"] == 1048576
     assert mc.STATIC_CONTEXT["kiro-auto"] == 200000

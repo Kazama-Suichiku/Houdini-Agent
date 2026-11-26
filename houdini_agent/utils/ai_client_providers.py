@@ -105,8 +105,8 @@ class AIClientProvidersMixin:
 
     @staticmethod
     def _sub_kind(provider):
-        """订阅供应商（codex / claude_sub）→ CPA 凭据类型；其它返回 None。"""
-        return {'codex': 'codex', 'claude_sub': 'claude'}.get((provider or '').lower())
+        """订阅供应商（codex / claude_sub / antigravity）→ CPA 凭据类型；其它返回 None。"""
+        return {'codex': 'codex', 'claude_sub': 'claude', 'antigravity': 'antigravity'}.get((provider or '').lower())
 
     def _get_api_key(self, provider: str) -> Optional[str]:
         provider = (provider or 'openai').lower()
@@ -143,7 +143,8 @@ class AIClientProvidersMixin:
                 accs = []
             if not accs:
                 return 'Not Set'
-            who = accs[0].get('email') or ('Claude' if provider == 'claude_sub' else 'ChatGPT')
+            fallback_who = {'claude_sub': 'Claude', 'antigravity': 'Google Antigravity'}.get(provider, 'ChatGPT')
+            who = accs[0].get('email') or fallback_who
             return who[:16] + ('...' if len(who) > 16 else '')
         if provider == 'custom':
             if self._CUSTOM_API_URL:
@@ -230,7 +231,7 @@ class AIClientProvidersMixin:
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）',
             'duojie': '拼好饭', 'openrouter': 'OpenRouter',
-            'codex': 'ChatGPT 订阅', 'claude_sub': 'Claude 订阅',
+            'codex': 'ChatGPT 订阅', 'claude_sub': 'Claude 订阅', 'antigravity': 'Google 反重力',
             'custom': 'Custom',
         }
         return names.get(provider, provider)
@@ -321,8 +322,9 @@ class AIClientProvidersMixin:
             'glm': 'glm-4.7',
             'duojie': 'claude-opus-5-5',
             'openrouter': 'anthropic/claude-sonnet-5.5',
-            'codex': 'gpt-6.1-sol',
+            'codex': 'gpt-6.2-sol',
             'claude_sub': 'claude-opus-5-5',
+            'antigravity': 'gemini-4-neon-xhigh',
         }
         return defaults.get(provider, 'gpt-5.6-sol')
 
