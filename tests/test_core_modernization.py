@@ -283,6 +283,7 @@ def test_modularized_controller_exposes_all_mixin_slots_and_local_dispatch():
 # ── 6. Multi-instance Bridge write-target lock (A.hip -> B.hip protection) ──
 
 def test_bridge_write_target_blocks_write_after_auto_heal_to_different_hip():
+    pytest.importorskip('PySide6')
     from types import SimpleNamespace
     from houdini_agent.ui_qml.mixins.bridge_mixin import ControllerBridgeMixin
 
