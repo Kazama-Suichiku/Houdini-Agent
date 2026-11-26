@@ -249,7 +249,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
       <button class="tsw" data-t="day" title="日光 Daylight"></button>
     </div>
     <button class="nav-btn" id="langtog">EN</button>
-    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.3</a>
+    <a class="nav-btn solid" href="/download/HoudiniAgent-Setup.exe" download>&#8595; v2.1.4</a>
   </header>
 </div>
 
@@ -273,7 +273,7 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
   <div class="ctrl-bar">
     <div class="filters" id="relFilters">
-      <button class="fpill active" data-f="all"><span class="zh">全部版本 (20)</span><span class="en">All (20)</span></button>
+      <button class="fpill active" data-f="all"><span class="zh">全部版本 (21)</span><span class="en">All (21)</span></button>
       <button class="fpill" data-f="2.1"><span class="zh">2.1 订阅与生图系列</span><span class="en">2.1 Subscription &amp; Image</span></button>
       <button class="fpill" data-f="milestone"><span class="zh">重大里程碑</span><span class="en">Major Milestones</span></button>
       <button class="fpill" data-f="2.0"><span class="zh">2.0 历史版本</span><span class="en">2.0 Archive</span></button>
@@ -296,7 +296,11 @@ footer{border-top:1px solid var(--border-soft);padding:34px 0 48px;font-family:v
 
 <script>
 const RELEASES = [
-  {ver:"2.1.3", date:"2026-11-25", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"MULTI-INSTANCE",
+  {ver:"2.1.4", date:"2026-11-26", size:"71.1 MB", latest:true, series:"2.1", milestone:true, badge:"ANTIGRAVITY + LIVE CPA",
+   sha:"e22e9dc662ff7d0d4c111c9e089579cf099dc3987bbf7e5f74694d5c6b7d7660",
+   zh:"新增内置「Google 反重力（Antigravity）」OAuth 订阅登录（免 API Key 直连 Gemini 4 / Claude 5.5 系列）；升级本机 CPA 至 8.1.4 并开启远程模型目录自动拉新，已登录用户无感自动升级；Claude 订阅同步最新 claude-fable-5-2 并自动过滤已退役的 3.x / 4.0 旧快照，Codex 同步最新 gpt-6.2-sol / gpt-6.2-astra / gpt-6.1-terra 与 gpt-image-2.6* 生图模型。",
+   en:"Added built-in Google Antigravity OAuth sign-in (Gemini 4 & Claude models, zero API key); upgraded local CPA to 8.1.4 with automatic live catalog syncing and seamless background upgrade; Claude picks up claude-fable-5-2 while filtering retired legacy snapshots, and Codex picks up gpt-6.2-sol / gpt-6.2-astra / gpt-image-2.6*."},
+  {ver:"2.1.3", date:"2026-11-25", size:"71.1 MB", latest:false, series:"2.1", milestone:true, badge:"MULTI-INSTANCE",
    sha:"b352529a8ab3caf8f6b49003ce22a9feb5bdd68ce7799619f918583ca406b012",
    zh:"支持同版本多开与不同版本 Houdini（如 20.5 + 21.0）同时接入并跨文件操作：修复 Windows 端口复用导致多开抢占同一端口的问题，独立登记各实例的 PID、版本号与 .hip 文件名；状态栏新增一键实例切换下拉与再启动入口；Agent 新增 list_houdini_instances、switch_houdini_instance、run_in_houdini_instance 与 transfer_nodes_between_instances，可跨打开的工程直接查看、修改并无损复制节点网络。",
    en:"Full multi-instance Houdini & cross-file support (same-version multiple windows + cross-version e.g. 20.5 & 21.0): fixed Windows port collision, added per-instance discovery with PID, version & .hip filename, added a 1-click instance switcher in the context bar, and introduced 4 cross-instance Agent tools including lossless node transfer across open .hip files."},
